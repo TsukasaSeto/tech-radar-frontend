@@ -1,1 +1,14 @@
-[]
+[
+  "https://react.dev/learn",
+  "https://react.dev/reference/react",
+  "https://react.dev/learn/you-might-not-need-an-effect",
+  "https://react.dev/learn/sharing-state-between-components",
+  "https://react.dev/learn/extracting-state-logic-into-a-reducer",
+  "https://react.dev/reference/react/memo",
+  "https://react.dev/reference/react/useMemo",
+  "https://react.dev/reference/react/useCallback",
+  "https://react.dev/learn/rendering-lists",
+  "https://react.dev/reference/react/Suspense",
+  "https://react.dev/reference/react/use",
+  "https://react.dev/learn/reusing-logic-with-custom-hooks"
+]
