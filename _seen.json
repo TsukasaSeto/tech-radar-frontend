@@ -1,1 +1,11 @@
-[]
+[
+  "https://www.typescriptlang.org/docs/handbook/2/everyday-types.html",
+  "https://www.typescriptlang.org/tsconfig",
+  "https://www.typescriptlang.org/docs/handbook/2/types-from-types.html",
+  "https://www.typescriptlang.org/docs/handbook/typescript-in-5-minutes.html",
+  "https://www.typescriptlang.org/docs/handbook/2/narrowing.html",
+  "https://www.typescriptlang.org/docs/handbook/2/generics.html",
+  "https://www.typescriptlang.org/docs/handbook/utility-types.html",
+  "https://www.typescriptlang.org/docs/handbook/type-inference.html",
+  "https://www.typescriptlang.org/docs/handbook/2/functions.html"
+]
