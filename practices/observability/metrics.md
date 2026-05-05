@@ -220,6 +220,77 @@ monitors:
 
 ---
 
+### 4. メトリクスに高カーディナリティ属性を付与し、スパイクからトレースへの調査チェーンを構築する
+
+メトリクスを記録する際に `userId`・`projectId`・`region` などの属性を必ず付与する。
+スパイク検知後に属性でフィルタリングし、影響を受けたリクエストのトレースに直接ジャンプできる体制を作る。
+
+**根拠**:
+- 従来のインフラ監視ツールはメトリクス集約時に高カーディナリティフィールドを削除するため、「東海岸ユーザーのみ遅い」などの細粒度の質問に答えられない
+- メトリクスにコンテキスト属性（ユーザーID・リージョン等）を含めることで、スパイクの影響範囲を即座に特定できる
+- Sentry Application Metrics は属性ベースのフィルタリングからトレース・エラーへの直接ジャンプをサポートする
+
+**コード例**:
+```ts
+// OpenTelemetry: カスタムメトリクスに高カーディナリティ属性を付与
+import { metrics } from '@opentelemetry/api';
+
+const meter = metrics.getMeter('frontend');
+const checkoutFailed = meter.createCounter('checkout.failed');
+
+async function handleCheckout(cart: Cart, user: User) {
+  try {
+    await submitOrder(cart);
+  } catch (error) {
+    // 高カーディナリティ属性を付与 → スパイク時に特定ユーザー・リージョンを絞り込み可能
+    checkoutFailed.add(1, {
+      'user.id': user.id,
+      'user.region': user.region,
+      'payment.method': cart.paymentMethod,
+      'error.type': (error as Error).name,
+    });
+    throw error;
+  }
+}
+
+// Sentry SDK: より簡易な代替手段（Sentry を既に導入済みのプロジェクト向け）
+import * as Sentry from '@sentry/nextjs';
+
+async function handleCheckout(cart: Cart, user: User) {
+  try {
+    await submitOrder(cart);
+  } catch (error) {
+    // Counter: 発生率の追跡
+    Sentry.metrics.increment('checkout.failed', 1, {
+      tags: { region: user.region, paymentMethod: cart.paymentMethod },
+    });
+
+    // Distribution: 値の分布（例: カートアイテム数）
+    Sentry.metrics.distribution('cart.item_count', cart.items.length, {
+      tags: { userId: user.id },
+    });
+    throw error;
+  }
+}
+```
+
+**調査フロー**:
+```
+1. メトリクスダッシュボードでスパイクを検知
+2. 属性フィルター（例: region=us-east）でスパイクの範囲を絞り込み
+3. 影響ユーザーのトレース / エラーレポートに直接ジャンプ
+4. 根本原因（特定の決済手段・リージョン・プロジェクト）を特定
+```
+
+**出典**:
+- [Introducing Application Metrics: Track the signal, see the spike, jump to the trace](https://blog.sentry.io/introducing-application-metrics/) (Sentry Blog / 2026-05-05)
+
+**バージョン**: @sentry/nextjs 8+ または @opentelemetry/api 1.0+
+**確信度**: 高
+**最終更新**: 2026-05-05
+
+---
+
 ## 関連プラクティス
 
 - [`observability/tracing.md`](./tracing.md) - OpenTelemetry のトレース設定
