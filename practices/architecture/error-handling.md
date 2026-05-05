@@ -223,3 +223,10 @@ export default function DashboardPage() {
 **バージョン**: Next.js 13+, React 18+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+## 関連プラクティス
+
+- [`api-client/error-handling.md`](../api-client/error-handling.md) - HTTP/API エラーの分類・リトライ・ネットワークエラー処理
+- [`observability/error-tracking.md`](../observability/error-tracking.md) - Sentry によるエラー追跡とアラート
