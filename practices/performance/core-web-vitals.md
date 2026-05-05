@@ -167,3 +167,9 @@ function SearchResults({ items }: { items: Item[] }) {
 **バージョン**: React 18+, Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+## 関連プラクティス
+
+- [`observability/rum.md`](../observability/rum.md) - web-vitals ライブラリで LCP/INP/CLS を本番計測しアナリティクスに送信する方法

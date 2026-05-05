@@ -177,3 +177,10 @@ Sentry.init({
 **バージョン**: @sentry/nextjs 8+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+## 関連プラクティス
+
+- [`observability/logging.md`](../observability/logging.md) - ロギングの詳細ガイド（Pino 設定・ログレベル設計・PII マスキング）
+- [`observability/error-tracking.md`](../observability/error-tracking.md) - Sentry の詳細設定とリリーストラッキング
