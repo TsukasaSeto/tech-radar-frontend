@@ -133,5 +133,6 @@
   "https://getpino.io/#/docs/child-loggers",
   "https://docs.datadoghq.com/real_user_monitoring/browser/",
   "https://docs.datadoghq.com/opentelemetry/",
-  "https://developer.chrome.com/docs/crux/methodology/"
+  "https://developer.chrome.com/docs/crux/methodology/",
+  "https://blog.sentry.io/introducing-application-metrics/"
 ]
