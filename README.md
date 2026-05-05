@@ -1,4 +1,4 @@
-# Tech Radar
+# Tech Radar Frontend
 
 フロントエンド技術のベストプラクティスを継続的に蓄積するリポジトリ。
 Claude Code Routines が自動的に最新記事から実用的なプラクティスを抽出し、
