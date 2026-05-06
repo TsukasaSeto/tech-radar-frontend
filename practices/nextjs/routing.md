@@ -61,6 +61,26 @@ export default async function BlogPost({ params }: { params: { slug: string } })
 **確信度**: 高
 **最終更新**: 2026-05-05
 
+#### 追加根拠 (2026-05-06)
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Next.js App RouterでSSG+SEOページを100枚量産する設計パターン](https://zenn.dev/keisuke58/articles/nextjs-ssg-seo-100pages) (Zenn / 2026-05-05) ※2026-05-06に実際にfetch成功
+
+`generateStaticParams` のデータソースは必ずしもDBフェッチである必要はなく、TypeScript 定数配列を直接使う方法が有効なケースがあることが実証された。
+更新頻度が低くSEOが重要なデータ（例：再開発プロジェクト一覧等）は TypeScript 定数で管理することで、DBアクセスなしのSSGと相性がよくなり、エッジ配信でのキャッシュ効率も高まる。
+
+```typescript
+// TypeScript定数をソースにするパターン
+export async function generateStaticParams() {
+  return PROJECTS.map((p) => ({ id: p.id }));
+}
+```
+
+SEO対応の3点セットとして **Metadata API + sitemap.ts + robots.ts** の組み合わせが有効であることも確認された。
+また、`"use client"` ディレクティブと `metadata` エクスポートは同一ファイルに共存できないため、メタデータは `layout.tsx` に分離する必要があることも実践上の重要な制約として確認された。
+
+**確信度**: 既存（高）→ 高（コミュニティ実証付き）
+
 ---
 
 ### 3. Parallel Routes と Intercepting Routes でモーダルUIを実装する
@@ -133,20 +153,17 @@ function NavMenu() {
 **コード例**:
 ```
 app/
-├── (marketing)/          # URL: /about, /blog（マーケティングページ群）
-│   ├── layout.tsx        # マーケティング専用レイアウト
+├── (marketing)/          # URL: /about, /blog
+│   ├── layout.tsx
 │   ├── about/page.tsx    # /about
 │   └── blog/page.tsx     # /blog
-├── (auth)/               # URL: /login, /register（未認証ページ群）
-│   ├── layout.tsx        # 認証フロー専用レイアウト
+├── (auth)/               # URL: /login, /register
+│   ├── layout.tsx
 │   ├── login/page.tsx    # /login
-│   └── register/page.tsx # /register
-└── (dashboard)/          # URL: /dashboard（認証済みページ群）
-    ├── layout.tsx        # サイドバー付きダッシュボードレイアウト
+│   └── register/page.tsx
+└── (dashboard)/
+    ├── layout.tsx
     └── dashboard/page.tsx
-
-// Bad: グループを使わず全レイアウトをルートlayout.tsxに押し込む
-// app/layout.tsx で条件分岐によりレイアウトを切り替えようとする（複雑で保守困難）
 ```
 
 **出典**:
@@ -160,57 +177,27 @@ app/
 
 ### 6. Intercepting Routes のマッチング規則（`(.)` / `(..)` / `(...)`）を正しく使う
 
-Intercepting Routes はフォルダの相対的な深さに基づいたマッチング記法を持つ。モーダルや先読みプレビューなどの高度なUIパターンを正確に実装するために記法を理解する。
+Intercepting Routes はフォルダの相対的な深さに基づいたマッチング記法を持つ。
 
 **根拠**:
 - 記法を誤るとルートがインターセプトされず、単純なページ遷移になってしまう
-- クライアントナビゲーションとURLの直接アクセスで異なる表示を提供できる（URLシェア可能なモーダル等）
+- URL直接アクセスとクライアントナビゲーションで異なる表示を提供できる
 
 **コード例**:
 ```
-# マッチング規法
 # (.)  — 同じ階層のセグメントと一致
 # (..) — 一つ上の階層と一致
 # (...) — app ルートからと一致
 
 app/
-├── feed/
-│   └── page.tsx                      # /feed
 ├── @modal/
-│   └── (.)photos/[id]/page.tsx       # /feed からナビゲート時にインターセプト
-├── photos/
-│   └── [id]/page.tsx                 # URL直接アクセス時はフルページ表示
-└── layout.tsx                        # @modal スロットを受け取る
-```
-
-```tsx
-// app/layout.tsx — @modal スロットを受け取る
-export default function RootLayout({
-  children,
-  modal,
-}: {
-  children: React.ReactNode;
-  modal: React.ReactNode;
-}) {
-  return (
-    <html>
-      <body>
-        {children}
-        {modal}  {/* モーダルはここに描画 */}
-      </body>
-    </html>
-  );
-}
-
-// app/@modal/default.tsx — モーダルなし時のデフォルト
-export default function Default() {
-  return null;
-}
+│   └── (.)photos/[id]/page.tsx
+├── photos/[id]/page.tsx
+└── layout.tsx
 ```
 
 **出典**:
 - [Next.js Docs: Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes) (Next.js公式 / 2024)
-- [Next.js Docs: Parallel Routes](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes) (Next.js公式 / 2024)
 
 **バージョン**: Next.js 15+
 **確信度**: 高
