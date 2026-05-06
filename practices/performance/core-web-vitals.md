@@ -170,6 +170,79 @@ function SearchResults({ items }: { items: Item[] }) {
 
 ---
 
+### 4. `web-vitals` ライブラリで Core Web Vitals を本番計測してアナリティクスに送信する
+
+RUM（Real User Monitoring）として `web-vitals` ライブラリを使い、実ユーザー環境での
+LCP・INP・CLS を継続的に収集する。ラボデータ（Lighthouse）だけでは現実の問題を捉えられない。
+
+**根拠**:
+- Lighthouse はシミュレーション環境での計測であり、実ユーザーの環境差異を反映しない
+- `web-vitals` ライブラリは PerformanceObserver API を抽象化し、主要3指標を正確に計測する
+- `navigator.sendBeacon` でページ離脱時も確実にデータ送信できる
+- attribution ビルドを使うと「どの要素が問題か」の診断情報も取得できる
+
+**コード例**:
+```tsx
+// Good: web-vitals ライブラリで全指標を計測してアナリティクスに送信
+import { onCLS, onINP, onLCP } from 'web-vitals';
+
+type Metric = { name: string; value: number; rating: string; id: string; delta: number };
+
+function sendToAnalytics(metric: Metric) {
+  // navigator.sendBeacon でページ離脱時も送信が保証される
+  const body = JSON.stringify({
+    metricName: metric.name,
+    value: metric.value,
+    rating: metric.rating,  // 'good' | 'needs-improvement' | 'poor'
+    id: metric.id,
+    delta: metric.delta,    // 前回計測からの差分
+  });
+  navigator.sendBeacon('/api/vitals', body);
+}
+
+// 各指標を登録
+onCLS(sendToAnalytics);
+onINP(sendToAnalytics);
+onLCP(sendToAnalytics);
+
+// attribution ビルドで「なぜ遅いか」の診断情報も取得
+import { onINP } from 'web-vitals/attribution';
+
+onINP((metric) => {
+  const { interactionTarget, inputDelay, processingDuration, presentationDelay } =
+    metric.attribution;
+  console.log('遅いインタラクション要素:', interactionTarget);
+  console.log('入力遅延:', inputDelay, 'ms');
+  console.log('処理時間:', processingDuration, 'ms');
+});
+
+// Next.js App Router での組み込み（app/layout.tsx または専用コンポーネント）
+// 'use client' コンポーネント内で useEffect で呼び出す
+'use client';
+import { useEffect } from 'react';
+
+export function WebVitalsReporter() {
+  useEffect(() => {
+    import('web-vitals').then(({ onCLS, onINP, onLCP }) => {
+      onCLS(sendToAnalytics);
+      onINP(sendToAnalytics);
+      onLCP(sendToAnalytics);
+    });
+  }, []);
+  return null;
+}
+```
+
+**出典**:
+- [GoogleChrome/web-vitals README](https://github.com/GoogleChrome/web-vitals) (Google Chrome / 2024)
+- [web.dev: Measuring performance in the field](https://web.dev/articles/vitals-measurement-getting-started) (web.dev)
+
+**バージョン**: web-vitals 4+, React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`observability/rum.md`](../observability/rum.md) - web-vitals ライブラリで LCP/INP/CLS を本番計測しアナリティクスに送信する方法
