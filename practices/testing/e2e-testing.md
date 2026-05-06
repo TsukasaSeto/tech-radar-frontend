@@ -168,3 +168,142 @@ test('商品をカートに追加して購入できる', async ({ page }) => {
 **バージョン**: Playwright 1.40+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. Playwright の Fixture でテストの前提条件を宣言的に共有する
+
+認証状態・DBシード・共通コンテキストなどの前提条件は `test.extend()` で Fixture として定義し、
+テストファイルをまたいで再利用する。`beforeEach` のコピーペーストを排除できる。
+
+**根拠**:
+- Fixture は依存関係を宣言的に記述でき、必要なテストだけがセットアップコストを払う
+- `scope: 'worker'` を使うと同じワーカー内で Fixture を1度だけ初期化でき、認証などの重い処理を最小化できる
+- Page Object と組み合わせることでテストコードを最大限に簡潔にできる
+
+**コード例**:
+```ts
+// e2e/fixtures.ts
+import { test as base, expect } from '@playwright/test';
+import { LoginPage } from './pages/login-page';
+import { DashboardPage } from './pages/dashboard-page';
+
+// Fixture の型定義
+type TestFixtures = {
+  loginPage: LoginPage;
+  dashboardPage: DashboardPage;
+  authenticatedPage: void; // 認証済み状態を保証するフィクスチャ
+};
+
+export const test = base.extend<TestFixtures>({
+  // loginPage フィクスチャ: Page Object を自動的に用意
+  loginPage: async ({ page }, use) => {
+    const loginPage = new LoginPage(page);
+    await use(loginPage);
+  },
+
+  // authenticatedPage フィクスチャ: ログイン済み状態を保証
+  authenticatedPage: async ({ page }, use) => {
+    // ストレージから認証状態を復元（global setup で保存済み）
+    await page.goto('/dashboard');
+    await expect(page).toHaveURL('/dashboard'); // 認証済みであることを確認
+    await use(); // テスト実行
+  },
+
+  dashboardPage: async ({ page, authenticatedPage }, use) => {
+    // authenticatedPage フィクスチャに依存（自動的に認証処理が走る）
+    const dashboardPage = new DashboardPage(page);
+    await use(dashboardPage);
+  },
+});
+
+export { expect };
+
+// e2e/dashboard.spec.ts - フィクスチャを使ったテスト
+import { test, expect } from './fixtures';
+
+test('ダッシュボードに統計データが表示される', async ({ dashboardPage }) => {
+  // authenticatedPage フィクスチャが自動的に認証処理を済ませてくれる
+  await expect(dashboardPage.statsSection).toBeVisible();
+  await expect(dashboardPage.totalSalesCard).toContainText('売上');
+});
+
+test('ログインページのテスト（認証不要）', async ({ loginPage }) => {
+  await loginPage.goto();
+  await expect(loginPage.submitButton).toBeEnabled();
+});
+```
+
+**出典**:
+- [Playwright Docs: Fixtures](https://playwright.dev/docs/test-fixtures) (Playwright公式)
+- [Playwright Docs: Authentication](https://playwright.dev/docs/auth) (Playwright公式)
+
+**バージョン**: Playwright 1.40+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. `toHaveScreenshot()` で視覚的回帰テストを自動化する
+
+Playwright の `expect(page).toHaveScreenshot()` でスクリーンショットを撮影・比較し、
+UIの意図しない見た目の変化を自動的に検出する。
+ピクセル単位の差分検出でリグレッションを防ぐ。
+
+**根拠**:
+- CSSの変更やサードパーティライブラリのアップデートによる意図しないUI崩れを自動検出できる
+- スクリーンショットは CI のアーティファクトとして保存でき、差分を視覚的にレビューできる
+- `maxDiffPixelRatio` で許容誤差を設定でき、アンチエイリアスや描画差異によるフレーキーを軽減できる
+
+**コード例**:
+```ts
+// e2e/visual.spec.ts
+import { test, expect } from '@playwright/test';
+
+test.describe('視覚的回帰テスト', () => {
+  test('トップページが期待通りに表示される', async ({ page }) => {
+    await page.goto('/');
+
+    // アニメーションが完了するまで待機してから撮影
+    await page.waitForLoadState('networkidle');
+
+    // ページ全体のスクリーンショットと比較
+    await expect(page).toHaveScreenshot('top-page.png', {
+      maxDiffPixelRatio: 0.02, // 2%以内の差異は許容
+    });
+  });
+
+  test('商品カードコンポーネントが正しく表示される', async ({ page }) => {
+    await page.goto('/products');
+
+    // 特定の要素だけをスクリーンショット
+    const productCard = page.getByTestId('product-card').first();
+    await expect(productCard).toHaveScreenshot('product-card.png');
+  });
+
+  test('ダークモードでも正しく表示される', async ({ page }) => {
+    // カラースキームを設定
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    await expect(page).toHaveScreenshot('top-page-dark.png', {
+      maxDiffPixelRatio: 0.02,
+    });
+  });
+});
+
+// playwright.config.ts - スクリーンショット設定
+// expect: {
+//   toHaveScreenshot: { threshold: 0.2 }, // ピクセル差異の許容閾値
+// },
+// スクリーンショット更新: npx playwright test --update-snapshots
+```
+
+**出典**:
+- [Playwright Docs: Visual Comparisons](https://playwright.dev/docs/test-snapshots) (Playwright公式)
+- [Playwright API: toHaveScreenshot](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1) (Playwright公式)
+
+**バージョン**: Playwright 1.40+
+**確信度**: 高
+**最終更新**: 2026-05-06

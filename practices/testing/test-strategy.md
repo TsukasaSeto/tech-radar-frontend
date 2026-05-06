@@ -212,3 +212,149 @@ it('should render user greeting', () => {
 **バージョン**: Vitest 1+, Jest 27+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. テストピラミッドとテストダイヤモンドをフロントエンド文脈で使い分ける
+
+従来のテストピラミッド（ユニット > 統合 > E2E）に加え、フロントエンドではコンポーネント統合テストを厚くした
+「テストダイヤモンド」モデルが有効な場合がある。プロジェクトの特性に応じて戦略を選択する。
+
+**根拠**:
+- フロントエンドのビジネスロジックは UIコンポーネントに分散しているため、コンポーネント統合テストが最もROIが高い
+- Testing Library + MSW の組み合わせにより、ブラウザなしで統合テストを高速実行できるようになった
+- 純粋な関数が少なく、副作用の多いUIコードはユニットテストの比率を下げ、統合レベルを厚くする方が現実的
+
+**コード例**:
+```
+テストピラミッド（バックエンド寄りの伝統的モデル）:
+       /\
+      /E2E\
+     /------\
+    /  Integ. \
+   /------------\
+  /  Unit Tests  \
+ /-----------------\
+ 比率: Unit 70% / Integ 20% / E2E 10%
+
+テストダイヤモンド（フロントエンド推奨モデル）:
+     /------\
+    / Comp.   \   ← コンポーネント統合テストを最も厚く
+   /  Integ.   \
+  /-------------\
+ /  Unit Tests   \  ← 純粋関数・hooks のユニットテスト
+/-----------------\
+      /E2E\        ← 最重要フローのみ
+比率: Unit 30% / Component Integ 50% / E2E 20%
+
+判断基準:
+- SPAでビジネスロジックがUIに密結合 → ダイヤモンド型
+- ライブラリ・ユーティリティ中心     → ピラミッド型
+- BFF/フルスタック構成               → ハイブリッド
+```
+
+```ts
+// コンポーネント統合テストの例（MSW + Testing Library）
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { CheckoutFlow } from '@/components/CheckoutFlow';
+// MSWのハンドラが /api/cart, /api/order などをモック
+
+it('should complete checkout flow end-to-end', async () => {
+  const user = userEvent.setup();
+  render(<CheckoutFlow />);
+
+  // 住所入力
+  await user.type(screen.getByLabelText('郵便番号'), '150-0001');
+  await screen.findByDisplayValue('東京都渋谷区'); // 住所自動補完
+
+  // 支払い
+  await user.click(screen.getByRole('radio', { name: 'クレジットカード' }));
+  await user.click(screen.getByRole('button', { name: '注文を確定する' }));
+
+  await expect(screen.findByText('ご注文ありがとうございます')).resolves.toBeInTheDocument();
+});
+```
+
+**出典**:
+- [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (Martin Fowler)
+- [Static vs Unit vs Integration vs E2E Testing](https://kentcdodds.com/blog/unit-vs-integration-vs-e2e-tests) (Kent C. Dodds)
+
+**バージョン**: Vitest 2+, @testing-library/react 14+
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
+
+### 6. MSW でAPIモッキング戦略を統一し、テスト・開発・Storybook で共有する
+
+MSW（Mock Service Worker）のハンドラをテスト・開発サーバー・Storybook で共有する単一モック戦略を採用する。
+環境ごとにモックを重複定義するアンチパターンを排除し、モックの一貫性を保つ。
+
+**根拠**:
+- テスト・開発・Storybook でモックを共有することで、「テストは通るがブラウザで壊れる」問題を防ぐ
+- MSW 2.x の `http` ハンドラはリクエスト/レスポンスの型安全なインターセプトをサポートする
+- `server.use()` によるテストごとのハンドラ上書きで、エラーケース・ローディング状態を細かくテストできる
+
+**コード例**:
+```ts
+// src/mocks/handlers/users.ts - 共通ハンドラ定義
+import { http, HttpResponse, delay } from 'msw';
+
+export const userHandlers = [
+  // 正常系
+  http.get('/api/users', async () => {
+    await delay(100); // 現実的な遅延をシミュレート
+    return HttpResponse.json([
+      { id: '1', name: 'Alice', role: 'admin' },
+      { id: '2', name: 'Bob', role: 'member' },
+    ]);
+  }),
+
+  http.get('/api/users/:id', ({ params }) => {
+    if (params.id === '999') {
+      return new HttpResponse(null, { status: 404 });
+    }
+    return HttpResponse.json({ id: params.id, name: 'Alice' });
+  }),
+];
+
+// src/mocks/browser.ts - ブラウザ用（開発サーバー・Storybook）
+import { setupWorker } from 'msw/browser';
+import { userHandlers } from './handlers/users';
+export const worker = setupWorker(...userHandlers);
+
+// src/mocks/server.ts - Node.js 用（Vitest）
+import { setupServer } from 'msw/node';
+import { userHandlers } from './handlers/users';
+export const server = setupServer(...userHandlers);
+
+// テストでのエラーケース上書き
+it('should show error state when API fails', async () => {
+  server.use(
+    http.get('/api/users', () => {
+      return HttpResponse.json(
+        { message: 'Internal Server Error' },
+        { status: 500 }
+      );
+    })
+  );
+
+  render(<UserList />);
+  await expect(screen.findByRole('alert')).resolves.toHaveTextContent('エラーが発生しました');
+});
+
+// Storybook での利用（.storybook/preview.ts）
+// import { initialize, mswLoader } from 'msw-storybook-addon';
+// initialize();
+// export const loaders = [mswLoader];
+```
+
+**出典**:
+- [MSW Docs: Integrations](https://mswjs.io/docs/integrations) (MSW公式)
+- [MSW Docs: Network behavior](https://mswjs.io/docs/network-behavior) (MSW公式)
+- [Storybook: Mock Service Worker Addon](https://storybook.js.org/addons/msw-storybook-addon) (Storybook公式)
+
+**バージョン**: msw 2+, Vitest 2+
+**確信度**: 高
+**最終更新**: 2026-05-06
