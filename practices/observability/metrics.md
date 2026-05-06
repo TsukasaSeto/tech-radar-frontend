@@ -220,6 +220,143 @@ monitors:
 
 ---
 
+### 4. ダッシュボードは P50/P75/P90/P99 パーセンタイルで設計し、平均値トラップを避ける
+
+レイテンシ・処理時間などの分布メトリクスはパーセンタイルで可視化し、
+「遅いユーザー」を平均値で見えなくしないダッシュボード設計を行う。
+
+**根拠**:
+- 平均値（mean）は外れ値の影響を受け、ユーザー体験の実態を過小評価する（例：99% のユーザーが 100ms でも 1% が 30s ならば平均は 400ms 程度で「問題なし」に見える）
+- P99 は「最も遅い 1% のユーザー」を示し、SLO 違反検知や高優先度ユーザーの保護に不可欠
+- Google の Core Web Vitals も p75 を基準としており、分布ベース評価が業界標準になっている
+- OpenTelemetry の `Histogram` 計装と Datadog の `distribution` メトリクスタイプを組み合わせることでパーセンタイルを自動計算できる
+
+**コード例**:
+```ts
+// Good
+// lib/metrics.ts - Histogram でレイテンシを計測（パーセンタイル計算対応）
+import { metrics } from '@opentelemetry/api';
+
+const meter = metrics.getMeter('frontend');
+
+// Histogram: バックエンドがパーセンタイルを自動計算してくれる
+const apiLatencyHistogram = meter.createHistogram('api.request.duration', {
+  description: 'API リクエストのレイテンシ分布',
+  unit: 'ms',
+  // 境界値のヒントを与えることで精度を高める
+  advice: {
+    explicitBucketBoundaries: [10, 25, 50, 100, 250, 500, 1000, 2500, 5000],
+  },
+});
+
+export async function fetchWithMetrics(url: string, options?: RequestInit) {
+  const start = performance.now();
+  const endpoint = new URL(url).pathname;
+
+  try {
+    const res = await fetch(url, options);
+    const duration = performance.now() - start;
+
+    apiLatencyHistogram.record(duration, {
+      'http.route': endpoint,
+      'http.status_code': res.status,
+      'http.method': options?.method ?? 'GET',
+    });
+
+    return res;
+  } catch (error) {
+    const duration = performance.now() - start;
+    apiLatencyHistogram.record(duration, {
+      'http.route': endpoint,
+      'error': 'true',
+    });
+    throw error;
+  }
+}
+
+// Bad
+// 平均値のみを計測するゲージはパーセンタイルを計算できない
+const avgLatency = meter.createObservableGauge('api.avg_latency');
+// 平均値だけでは「遅いユーザー」が見えない
+```
+
+```yaml
+# Datadog ダッシュボード定義例（Terraform / JSON で IaC 管理）
+# widgets:
+#   - レイテンシ分布ウィジェット（ヒートマップ）
+#     query: "p50:api.request.duration{service:frontend}"
+#             "p75:api.request.duration{service:frontend}"
+#             "p90:api.request.duration{service:frontend}"
+#             "p99:api.request.duration{service:frontend}"
+#
+#   - SLO ウィジェット
+#     target: p99 < 1000ms （99% のリクエストが 1 秒以内）
+#     warning: p99 < 800ms
+```
+
+**出典**:
+- [OpenTelemetry: Histogram](https://opentelemetry.io/docs/concepts/signals/metrics/#histogram) (OpenTelemetry公式)
+- [Google SRE Book: Monitoring Distributed Systems](https://sre.google/sre-book/monitoring-distributed-systems/) (Google SRE / 2016)
+
+**バージョン**: @opentelemetry/api 1.0+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. Alerting Fatigue を避けるしきい値設計をSLOベースで行う
+
+アラートのしきい値は「感覚」ではなくSLO（サービスレベル目標）から逆算して設計し、
+アラート疲れによる重大インシデントの見落としを防ぐ。
+
+**根拠**:
+- しきい値が低すぎると誤アラートが多発し、開発チームがアラートを無視するようになる（Alerting Fatigue）
+- SLO から Error Budget を計算し、「Error Budget の消費速度」をアラート基準にする（Burn Rate アラート）ことで誤検知を削減できる
+- アラートは「人間が今すぐ行動する必要がある」場合のみ発火させる設計が重要
+- Datadog・Grafana の Composite Monitor 機能で複数条件の AND/OR アラートを設定し、誤検知をさらに削減できる
+
+**コード例**:
+```yaml
+# Good: SLO ベースの Burn Rate アラート（Datadog）
+# 例: 月次 SLO 99.9% → Error Budget = 0.1% = 月43.8分
+monitors:
+  # Fast Burn: 1時間で Error Budget の 5% を消費しているか
+  - name: "SLO Burn Rate: Fast (1h window)"
+    type: slo alert
+    slo_id: "<your-slo-id>"
+    time_window: 1h
+    burn_rate_threshold: 14.4   # 1/0.001 * 5% / (1h/720h) = 14.4x
+    message: |
+      SLO の高速消費を検知。今すぐ対応が必要です。
+      @pagerduty-critical
+
+  # Slow Burn: 6時間で Error Budget の 10% を消費しているか
+  - name: "SLO Burn Rate: Slow (6h window)"
+    type: slo alert
+    slo_id: "<your-slo-id>"
+    time_window: 6h
+    burn_rate_threshold: 6.0
+    message: |
+      SLO の緩やかな消費を検知。作業時間内に確認してください。
+      @slack-oncall
+
+# Bad: 固定しきい値アラート（誤検知が多い）
+  - name: "API Error Rate > 1%"  # トラフィック急増時に誤検知しやすい
+    type: metric alert
+    query: "sum(last_5m):sum:system.api.error.as_count() / sum:system.api.requests.as_count() * 100 > 1"
+    # SLO との関連がなく、Error Budget を使い切っても気づかない場合がある
+```
+
+**出典**:
+- [Google SRE Workbook: Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) (Google SRE / 公開)
+- [Datadog Docs: SLO-based Alerts](https://docs.datadoghq.com/service_management/service_level_objectives/burn_rate/) (Datadog公式)
+
+**バージョン**: Datadog 最新版
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`observability/tracing.md`](./tracing.md) - OpenTelemetry のトレース設定

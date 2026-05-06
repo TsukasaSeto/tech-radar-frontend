@@ -215,6 +215,86 @@ export async function processOrder(orderId: string, userId: string) {
 
 ---
 
+### 4. `trace.getActiveSpan()` でコンテキスト伝播を確認し、孤立スパンを防ぐ
+
+`trace.getActiveSpan()` を使って現在アクティブなスパンの有無を確認し、
+トレースコンテキストが途切れていないかをランタイムで検証する。
+
+**根拠**:
+- ブラウザ側でのトレーシングは、`async/await` の境界やコールバックでコンテキストが失われやすい
+- `trace.getActiveSpan()` が `undefined` を返す場合、そのスパンは親と紐付かない「孤立スパン」になる
+- `@opentelemetry/sdk-trace-web` と `ZoneContextManager` を組み合わせると、Zone.js ベースでコンテキストを維持できる
+- 開発時に `getActiveSpan()` チェックをアサーションとして使うことで、コンテキスト喪失バグを早期発見できる
+
+**コード例**:
+```ts
+// Good
+// lib/tracer-browser.ts - ブラウザ向け OTel 初期化（@opentelemetry/sdk-trace-web）
+import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
+import { ZoneContextManager } from '@opentelemetry/context-zone';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
+import { trace, context } from '@opentelemetry/api';
+
+const provider = new WebTracerProvider();
+provider.register({
+  // ZoneContextManager で async コンテキストを正確に伝播
+  contextManager: new ZoneContextManager(),
+  propagator: new W3CTraceContextPropagator(),
+});
+
+const tracer = trace.getTracer('browser-app', '1.0.0');
+
+// アクティブスパンの確認ユーティリティ
+export function assertActiveSpan(operationName: string): void {
+  const span = trace.getActiveSpan();
+  if (!span && process.env.NODE_ENV !== 'production') {
+    console.warn(
+      `[OTel] No active span in "${operationName}". ` +
+      'This operation will not be traced. Check context propagation.',
+    );
+  }
+}
+
+// 子スパンを安全に開始する（親スパンがない場合でも実行は継続）
+export async function withChildSpan<T>(
+  name: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const activeSpan = trace.getActiveSpan();
+
+  // 親スパンが存在する場合のみ子スパンを作成
+  if (activeSpan) {
+    return tracer.startActiveSpan(name, async (childSpan) => {
+      try {
+        return await fn();
+      } finally {
+        childSpan.end();
+      }
+    });
+  }
+
+  // 親スパンがなければそのまま実行（孤立スパン生成を避ける）
+  return fn();
+}
+
+// Bad
+// コンテキスト確認なしにスパンを作成すると、孤立スパンが増えてトレースが断片化する
+tracer.startActiveSpan('user.action', (span) => {
+  // 親スパンとの関連が保証されていない
+  span.end();
+});
+```
+
+**出典**:
+- [OpenTelemetry JS: Context API](https://opentelemetry.io/docs/languages/js/context/) (OpenTelemetry公式 / 2024)
+- [OpenTelemetry JS README](https://github.com/open-telemetry/opentelemetry-js/blob/main/README.md) (open-telemetry/opentelemetry-js)
+
+**バージョン**: @opentelemetry/api 2.0+, @opentelemetry/sdk-trace-web 2.0+, @opentelemetry/context-zone 2.0+
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`observability/logging.md`](./logging.md) - リクエスト ID とログの相関

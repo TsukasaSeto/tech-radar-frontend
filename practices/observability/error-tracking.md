@@ -324,6 +324,71 @@ export default function DashboardPage() {
 
 ---
 
+### 6. `fingerprint` でエラーをグルーピングし、アラートノイズを削減する
+
+Sentry の `fingerprint` フィールドを使ってエラーのグルーピングルールを明示的に定義し、
+同種エラーが別々の Issue に分散することを防ぐ。
+
+**根拠**:
+- Sentry はデフォルトでスタックトレースベースにエラーをグルーピングするが、動的なメッセージや外部ライブラリのエラーは同種でも別 Issue になりやすい
+- `fingerprint` を明示することで「同じ原因」のエラーを1つの Issue にまとめ、影響範囲の正確な把握とアラート制御が可能になる
+- `beforeSend` 内で `event.fingerprint` を設定することで、エラーの種類・機能ドメイン・HTTPステータスコードを軸にグルーピングを制御できる
+- Issue 数が適切にまとまることで、アラートのしきい値設定とエスカレーション設計が機能するようになる
+
+**コード例**:
+```ts
+// Good
+// instrumentation-client.ts
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+
+  beforeSend(event, hint) {
+    const error = hint.originalException;
+
+    // API エラーはステータスコードとエンドポイントでグルーピング
+    if (error instanceof ApiError) {
+      event.fingerprint = [
+        'api-error',
+        String(error.statusCode),
+        error.endpoint,           // 例: '/api/orders'
+      ];
+    }
+
+    // ネットワークエラーは種別でグルーピング（URLは含めない）
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      event.fingerprint = ['network-error', 'fetch-failed'];
+    }
+
+    // 機能ドメインタグを付与してダッシュボードでフィルタしやすくする
+    if (event.tags?.feature) {
+      event.fingerprint = [
+        ...(event.fingerprint ?? ['{{ default }}']),
+        event.tags.feature as string,
+      ];
+    }
+
+    return event;
+  },
+});
+
+// Bad
+// fingerprintを設定しないと、同一エラーが複数の Issue に分散する
+// 例: fetch エラーのメッセージに URL が含まれ、エンドポイントごとに別 Issue になる
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  // fingerprint 未設定 → 同種エラーが Issue に散乱する
+});
+```
+
+**出典**:
+- [Sentry Docs: Fingerprinting](https://docs.sentry.io/concepts/data-management/event-grouping/fingerprint-rules/) (Sentry公式)
+
+**バージョン**: @sentry/nextjs 8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計

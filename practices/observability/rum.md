@@ -261,6 +261,76 @@ onINP(({ name, value, rating, attribution }) => {
 
 ---
 
+### 5. Long Animation Frames API でJSブロッキングの根本原因を特定する
+
+`PerformanceObserver` で `long-animation-frame` エントリを監視し、
+50ms 超の長いアニメーションフレームを引き起こすスクリプトを特定して報告する。
+
+**根拠**:
+- Long Animation Frames（LoAF）API は Long Tasks API の後継で、レンダリングまで含めたブロッキングを計測できる
+- `web-vitals` attribution ビルドの `longAnimationFrameEntries` で INP との相関を確認できる
+- LoAF エントリには `scripts` 配列が含まれ、どのスクリプトがブロッキングしたかのソースURLと実行時間を提供する
+- Chrome 123+ でサポートされ、`durationThreshold` を `50` に設定するとフレームドロップ相当のブロッキングを捕捉できる
+
+**コード例**:
+```ts
+// Good
+// lib/loaf-observer.ts - Long Animation Frames の監視
+export function observeLongAnimationFrames() {
+  if (!('PerformanceLongAnimationFrameTiming' in window)) {
+    return; // 未サポートブラウザはスキップ
+  }
+
+  const observer = new PerformanceObserver((list) => {
+    for (const entry of list.getEntries()) {
+      const loaf = entry as PerformanceLongAnimationFrameTiming;
+
+      // 100ms 超のフレームのみ報告（ノイズ削減）
+      if (loaf.duration < 100) continue;
+
+      const scripts = loaf.scripts.map((s) => ({
+        sourceURL: s.sourceURL,
+        invokerType: s.invokerType,   // 'event-listener' | 'user-callback' | 'resolve-promise' etc.
+        duration: s.duration,
+        executionStart: s.executionStart,
+      }));
+
+      sendToAnalytics({
+        type: 'long-animation-frame',
+        duration: loaf.duration,
+        blockingDuration: loaf.blockingDuration,
+        scripts,
+        renderStart: loaf.renderStart,
+        styleAndLayoutStart: loaf.styleAndLayoutStart,
+      });
+    }
+  });
+
+  observer.observe({ type: 'long-animation-frame', buffered: true });
+  return () => observer.disconnect();
+}
+
+// Bad
+// Long Tasks API のみ使う（レンダリング時間を含まないため原因特定が困難）
+const observer = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    // Long Tasks はスクリプトのソース情報を持たない
+    console.warn('Long task detected', entry.duration);
+  }
+});
+observer.observe({ type: 'longtask' }); // LoAF に移行することを推奨
+```
+
+**出典**:  
+- [Long Animation Frames API](https://developer.chrome.com/docs/web-platform/long-animation-frames) (Chrome Developers / 2024)
+- [web-vitals: longAnimationFrameEntries](https://github.com/GoogleChrome/web-vitals/blob/main/README.md#attribution) (GoogleChrome / GitHub)
+
+**バージョン**: Chrome 123+, web-vitals 4+（attribution ビルド）
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`performance/core-web-vitals.md`](../performance/core-web-vitals.md) - LCP・INP・CLS の最適化手法
