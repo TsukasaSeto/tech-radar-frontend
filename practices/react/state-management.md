@@ -145,3 +145,16 @@ function UserProfile({ userId }: { userId: string }) {
 **バージョン**: React 18+, TanStack Query v5+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+#### 追加根拠 (2026-05-06)
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Zustandで始める「一番シンプルな」React状態管理](https://zenn.dev/yasuhikasa/articles/48d93374b240db) (Zenn / 2026-05-06) ※2026-05-06に実際にfetch成功
+- [【SWR】SWRの使い方を超絶シンプルに整理する](https://zenn.dev/yuitonn/articles/5018829bfc6205) (Zenn / 2026-05-04) ※2026-05-06に実際にfetch成功
+
+サーバー状態（データフェッチ）には SWR、クライアント状態（UIのグローバル状態）には Zustand という分離パターンがコミュニティで実践されていることが確認された。
+Zustand は `create()` 一行でストアを定義し、Provider 不要の軽量設計でクライアントUI状態を管理する。
+SWR は `useSWR()` 一行でサーバーデータの取得・キャッシュ・再検証を全て控え、`useState` + `useEffect` による手動実装を不要にする。
+セレクターパターン `useStore((state) => state.count)` により、読んでいる値のみに反応して再レンダリングするためパフォーマンスの最適化も容易。
+
+**確信度**: 既存（高）→ 高（コミュニティ実証付き）
