@@ -201,3 +201,192 @@ function ProductGrid({ products }: { products: Product[] }) {
 **バージョン**: CSS Living Standard, Tailwind CSS 3+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. CSS Container Queries でコンポーネント単位のレスポンシブを実装する
+
+Viewport幅ではなく親コンテナの幅に応じてスタイルを変化させる `@container` クエリを活用する。
+サイドバーに配置されるカードや、再利用コンポーネントのような「置かれる場所によって見た目が変わる」UIに最適。
+
+**根拠**:
+- メディアクエリはビューポート幅に依存するため、コンポーネントの再利用時にスタイルが崩れやすい
+- Container Queries はコンポーネントが置かれたコンテキスト（親の幅）を基準にできる
+- Chrome 105+、Firefox 110+、Safari 16+ でサポートされておりモダンブラウザでは実用段階
+
+**コード例**:
+```css
+/* Good: コンテナを定義し、子要素からクエリする */
+.card-wrapper {
+  container-type: inline-size;  /* 横幅をクエリ対象に */
+  container-name: card;         /* 名前付きコンテナ（省略可） */
+}
+
+/* コンテナ幅が 400px 以下のとき縦積みレイアウト */
+@container card (max-width: 400px) {
+  .card {
+    flex-direction: column;
+  }
+  .card__image {
+    width: 100%;
+  }
+}
+
+/* コンテナ幅が 401px 以上のとき横並びレイアウト */
+@container card (min-width: 401px) {
+  .card {
+    flex-direction: row;
+  }
+  .card__image {
+    width: 200px;
+    flex-shrink: 0;
+  }
+}
+
+/* Bad: ビューポート幅でのメディアクエリ（コンテキスト依存で崩れる） */
+@media (max-width: 768px) {
+  .card {
+    flex-direction: column;  /* サイドバー配置時も誤発動する */
+  }
+}
+```
+
+```tsx
+// React コンポーネントでの使用例
+function ProductCard() {
+  return (
+    // wrapper に container-type を付与
+    <div className="[container-type:inline-size]">  {/* Tailwind arbitrary value */}
+      <div className="flex @[400px]:flex-row flex-col">
+        <img className="@[400px]:w-48 w-full" src="..." alt="..." />
+        <div className="p-4">
+          <h2>商品名</h2>
+          <p>説明文</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+// ※ Tailwind v3.2+ では @tailwindcss/container-queries プラグインで @[] 構文を使用
+```
+
+**出典**:
+- [CSS Containment Module Level 3: Container queries](https://www.w3.org/TR/css-contain-3/#container-queries) (W3C Spec)
+- [CSS container queries - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_containment/Container_queries) (MDN Web Docs / 2023)
+
+**バージョン**: Chrome 105+, Firefox 110+, Safari 16+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. CSS Nesting のネイティブサポートを活用する
+
+プリプロセッサ（Sass/Less）を使わずに、CSS ネイティブのネスト構文で
+セレクタを階層的に記述する。
+
+**根拠**:
+- Chrome 112+、Firefox 117+、Safari 17.2+ でサポート済み（2024年時点でモダンブラウザは全対応）
+- Sass のネスト記法と互換性が高く、移行コストが低い
+- ビルドステップなしでネスト構造が使え、コンポーネントスタイルの見通しが良くなる
+
+**コード例**:
+```css
+/* Good: CSS ネイティブネスト */
+.card {
+  padding: 1rem;
+  border-radius: 0.5rem;
+  background: white;
+
+  /* 子要素のスタイル */
+  & .card__title {
+    font-size: 1.25rem;
+    font-weight: bold;
+  }
+
+  /* 擬似クラス */
+  &:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  }
+
+  /* メディアクエリもネスト可能 */
+  @media (max-width: 640px) {
+    padding: 0.75rem;
+  }
+
+  /* 状態バリアント */
+  &.is-featured {
+    border: 2px solid var(--color-primary);
+  }
+}
+
+/* Bad: フラットな記述（Sass なしの従来手法） */
+.card { padding: 1rem; }
+.card .card__title { font-size: 1.25rem; }
+.card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+.card.is-featured { border: 2px solid var(--color-primary); }
+```
+
+**出典**:
+- [CSS Nesting - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_nesting) (MDN Web Docs)
+- [CSS Nesting Module Level 1](https://www.w3.org/TR/css-nesting-1/) (W3C Spec)
+
+**バージョン**: Chrome 112+, Firefox 117+, Safari 17.2+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. `:has()` 疑似クラスで親要素を条件スタイリングする
+
+`:has()` を使い、子要素の状態に応じて親要素のスタイルを変更する。
+「チェックされたチェックボックスを含むラベル」や「画像を含むカード」のような
+従来 JavaScript が必要だったパターンを純粋な CSS で実現できる。
+
+**根拠**:
+- CSS の長年の課題だった「親セレクタ」がネイティブで実現された
+- Chrome 105+、Firefox 121+、Safari 15.4+ でサポート済み
+- フォームのバリデーション状態など、動的なスタイル変更をJSなしで実装できる
+
+**コード例**:
+```css
+/* Good: チェックボックスが checked の親 label をハイライト */
+.option-label:has(input[type="checkbox"]:checked) {
+  background-color: var(--color-primary-light);
+  border-color: var(--color-primary);
+  font-weight: bold;
+}
+
+/* 画像を含む場合と含まない場合でカードのレイアウトを切り替え */
+.card:has(img) {
+  grid-template-columns: 200px 1fr;
+}
+.card:not(:has(img)) {
+  grid-template-columns: 1fr;
+}
+
+/* フォームが invalid な入力を含む場合にサブミットボタンを無効化 */
+form:has(input:invalid) .submit-button {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* 入力済みの input を持つフィールドのラベルを浮かせる（Floating Label） */
+.field:has(input:not(:placeholder-shown)) .field__label {
+  transform: translateY(-1.5rem) scale(0.85);
+  color: var(--color-primary);
+}
+
+/* Bad: 同等の処理を JS で行う（避けるべき） */
+// checkbox.addEventListener('change', e => {
+//   label.classList.toggle('is-checked', e.target.checked);
+// });
+```
+
+**出典**:
+- [:has() CSS pseudo-class - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/:has) (MDN Web Docs)
+- [CSS Selectors Level 4: :has()](https://www.w3.org/TR/selectors-4/#relational) (W3C Spec)
+
+**バージョン**: Chrome 105+, Firefox 121+, Safari 15.4+
+**確信度**: 高
+**最終更新**: 2026-05-06

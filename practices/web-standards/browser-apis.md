@@ -187,3 +187,165 @@ localStorage.setItem('authToken', token);  // XSS で盗まれる可能性があ
 **バージョン**: すべてのモダンブラウザ
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. View Transitions API でページ・状態遷移にアニメーションを付ける
+
+SPA でのルーティング遷移やUI状態の切り替えには `document.startViewTransition()` を使い、
+宣言的なCSSアニメーションで滑らかな遷移を実装する。
+
+**根拠**:
+- ブラウザがスナップショットのキャプチャと合成を自動で行い、実装コストが低い
+- CSS の `view-transition-name` で要素ごとにヒーローアニメーションが実現できる
+- Chrome 111+、Safari 18+（Same-Document）でサポート済み；Cross-Document は Chrome 126+
+
+**コード例**:
+```tsx
+// Good: Next.js App Router + View Transitions
+// ルーター遷移にラップする（Next.js の場合は experimental.viewTransition が必要）
+
+// シンプルな状態遷移の例
+function TabPanel({ tabs }: { tabs: Tab[] }) {
+  const [active, setActive] = useState(0);
+
+  const switchTab = (index: number) => {
+    // View Transitions API でアニメーション
+    if (!document.startViewTransition) {
+      setActive(index);  // 非対応ブラウザは即時切り替え
+      return;
+    }
+    document.startViewTransition(() => {
+      setActive(index);  // DOM の更新を transition の中で行う
+    });
+  };
+
+  return (
+    <div>
+      <div role="tablist">
+        {tabs.map((tab, i) => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={active === i}
+            onClick={() => switchTab(i)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {/* view-transition-name でヒーロー要素を指定 */}
+      <div
+        style={{ viewTransitionName: 'tab-content' }}
+        role="tabpanel"
+      >
+        {tabs[active].content}
+      </div>
+    </div>
+  );
+}
+```
+
+```css
+/* デフォルトのクロスフェードをカスタマイズ */
+::view-transition-old(tab-content) {
+  animation: 200ms ease-out both fade-out;
+}
+::view-transition-new(tab-content) {
+  animation: 200ms ease-in both fade-in;
+}
+
+/* アクセシビリティ: モーション低減設定を尊重 */
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+}
+
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
+```
+
+**出典**:
+- [View Transitions API - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/API/View_Transitions_API) (MDN Web Docs)
+- [Smooth transitions with the View Transition API](https://developer.chrome.com/docs/web-platform/view-transitions/) (Chrome for Developers)
+
+**バージョン**: Chrome 111+ (Same-Document), Chrome 126+ (Cross-Document), Safari 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. `AbortController` で fetch リクエストをキャンセルする
+
+コンポーネントのアンマウントやユーザーの操作によって不要になった fetch は
+`AbortController` でキャンセルし、不要なネットワーク処理とメモリリークを防ぐ。
+
+**根拠**:
+- コンポーネントがアンマウントされても fetch が完了すると `setState` が呼ばれ、メモリリークや警告が発生する
+- `AbortController` は `fetch`・`axios`・`EventSource` など複数のAPIに対応する
+- React では `useEffect` のクリーンアップ関数でキャンセルするパターンが標準的
+
+**コード例**:
+```tsx
+// Good: useEffect + AbortController でリクエストをキャンセル
+'use client';
+import { useEffect, useState } from 'react';
+
+function UserProfile({ userId }: { userId: string }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    async function fetchUser() {
+      try {
+        const res = await fetch(`/api/users/${userId}`, { signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        setUser(data);
+      } catch (err) {
+        if ((err as Error).name === 'AbortError') {
+          return;  // キャンセルは正常系なので無視
+        }
+        setError('データの取得に失敗しました');
+      }
+    }
+
+    fetchUser();
+
+    // クリーンアップ: userId が変わるかアンマウント時にキャンセル
+    return () => controller.abort();
+  }, [userId]);
+
+  if (error) return <p role="alert">{error}</p>;
+  if (!user) return <p>読み込み中...</p>;
+  return <div>{user.name}</div>;
+}
+
+// Bad: クリーンアップなし（メモリリーク・競合状態の原因）
+useEffect(() => {
+  fetch(`/api/users/${userId}`)
+    .then(r => r.json())
+    .then(data => setUser(data));  // アンマウント後も setState が呼ばれる
+}, [userId]);
+
+// 複数リクエストを同時キャンセルする場合も同一 signal を渡すだけ
+const controller = new AbortController();
+await Promise.all([
+  fetch('/api/a', { signal: controller.signal }),
+  fetch('/api/b', { signal: controller.signal }),
+]);
+controller.abort();  // 両方を一度でキャンセル
+```
+
+**出典**:
+- [MDN: AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) (MDN Web Docs)
+- [MDN: Fetch API - Canceling a request](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#canceling_a_request) (MDN Web Docs)
+
+**バージョン**: Chrome 66+, Firefox 57+, Safari 12.1+
+**確信度**: 高
+**最終更新**: 2026-05-06

@@ -194,3 +194,164 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 **バージョン**: Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `<dialog>` 要素でモーダルをネイティブ実装する
+
+モーダルダイアログの実装には `<div>` + z-index の手動制御ではなく、
+HTMLネイティブの `<dialog>` 要素と `showModal()` メソッドを使う。
+
+**根拠**:
+- ブラウザがフォーカストラップ・Escapeキー・`::backdrop` を自動的に提供する
+- `aria-modal` などのARIA属性を手動管理する必要がなく、セマンティクスが保証される
+- Chrome 37+、Firefox 98+、Safari 15.4+ で完全サポート済み（top-layer に配置され z-index 不要）
+
+**コード例**:
+```html
+<!-- Good: ネイティブ dialog 要素 -->
+<dialog id="confirm-dialog" aria-labelledby="dialog-title">
+  <h2 id="dialog-title">削除の確認</h2>
+  <p>このアイテムを削除してもよろしいですか？</p>
+  <div class="dialog-actions">
+    <!-- type="submit" は form[method="dialog"] と連動して dialog を閉じる -->
+    <form method="dialog">
+      <button type="button" id="cancel-btn">キャンセル</button>
+      <button type="submit" value="confirm">削除する</button>
+    </form>
+  </div>
+</dialog>
+
+<!-- Bad: div でモーダルを自作（フォーカス管理・z-index・ARIA を全手動） -->
+<div class="modal-overlay" style="z-index: 9999;" role="dialog" aria-modal="true">
+  <div class="modal-content">...</div>
+</div>
+```
+
+```tsx
+// React での使用例
+'use client';
+import { useEffect, useRef } from 'react';
+
+function ConfirmDialog({
+  open,
+  onClose,
+  onConfirm,
+  title,
+  description,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  title: string;
+  description: string;
+}) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      dialog.showModal();  // top-layer に表示、フォーカストラップ自動適用
+    } else {
+      dialog.close();
+    }
+  }, [open]);
+
+  // dialog の close イベント（Escape キーでも発火）を親に通知
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onClose}
+      className="rounded-lg p-6 backdrop:bg-black/50"
+      aria-labelledby="dialog-title"
+    >
+      <h2 id="dialog-title" className="text-lg font-bold">{title}</h2>
+      <p className="mt-2 text-gray-600">{description}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        <button onClick={onClose} className="btn-secondary">キャンセル</button>
+        <button onClick={onConfirm} className="btn-danger">確認</button>
+      </div>
+    </dialog>
+  );
+}
+```
+
+**出典**:
+- [The dialog element - HTML Living Standard](https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element) (WHATWG)
+- [MDN: `<dialog>`: The Dialog element](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/dialog) (MDN Web Docs)
+
+**バージョン**: Chrome 37+, Firefox 98+, Safari 15.4+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. Popover API でポップオーバーUIをネイティブ実装する
+
+ツールチップ・ドロップダウン・通知バナーなどのポップオーバーUIには
+`popover` 属性と `popovertarget` 属性を使い、JavaScript を最小化する。
+
+**根拠**:
+- ブラウザが top-layer への配置・Escape 閉じ・Light Dismiss（外クリックで閉じる）を自動提供
+- `<dialog>` と異なりフォーカストラップを行わず、ページとのインタラクションを維持できる
+- Chrome 114+、Firefox 125+、Safari 17+ でサポート済み
+
+**コード例**:
+```html
+<!-- Good: Popover API をネイティブ使用（JS 不要） -->
+<button popovertarget="user-menu">メニューを開く</button>
+
+<div id="user-menu" popover>
+  <ul>
+    <li><a href="/profile">プロフィール</a></li>
+    <li><a href="/settings">設定</a></li>
+    <li><button popovertarget="user-menu" popovertargetaction="hide">閉じる</button></li>
+  </ul>
+</div>
+
+<!-- popover="manual": Light Dismiss を無効化（JS で明示的に制御） -->
+<div id="notification" popover="manual">
+  <p>保存しました</p>
+</div>
+
+<!-- Bad: JS で手動実装（外クリック監視・z-index・ARIA を全手動） -->
+<div id="dropdown" class="dropdown hidden" style="z-index: 1000;">
+  ...
+</div>
+```
+
+```tsx
+// React での使用例（型定義は現時点で手動拡張が必要な場合あり）
+function NotificationToast({ message }: { message: string }) {
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  const show = () => (popoverRef.current as any)?.showPopover();
+  const hide = () => (popoverRef.current as any)?.hidePopover();
+
+  useEffect(() => {
+    show();
+    const timer = setTimeout(hide, 3000);  // 3秒後に自動非表示
+    return () => clearTimeout(timer);
+  }, [message]);
+
+  return (
+    <div
+      ref={popoverRef}
+      // @ts-expect-error -- popover is not yet in React's JSX types
+      popover="manual"
+      className="fixed bottom-4 right-4 rounded-lg bg-gray-800 px-4 py-2 text-white"
+    >
+      {message}
+    </div>
+  );
+}
+```
+
+**出典**:
+- [Popover API - HTML Living Standard](https://html.spec.whatwg.org/multipage/popover.html) (WHATWG)
+- [MDN: Popover API](https://developer.mozilla.org/en-US/docs/Web/API/Popover_API) (MDN Web Docs)
+
+**バージョン**: Chrome 114+, Firefox 125+, Safari 17+
+**確信度**: 高
+**最終更新**: 2026-05-06
