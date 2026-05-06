@@ -226,6 +226,159 @@ export default function DashboardPage() {
 
 ---
 
+### 4. Error Boundary にフォールバック UI とリカバリー手段を必ず設ける
+
+クライアントコンポーネントのランタイムエラーを `react-error-boundary` でキャッチし、
+ユーザーが操作を継続できるフォールバック UI（再試行ボタン・ホームへの導線）を提供する。
+エラーの種類に応じて「再試行で回復できるか」「ページリロードが必要か」を区別して設計する。
+
+**根拠**:
+- React の Error Boundary は render 中の例外のみキャッチし、イベントハンドラ内の例外はキャッチしない（別途処理が必要）
+- フォールバックなしでは画面が空白になりユーザー体験を著しく損なう
+- `react-error-boundary` の `onError` コールバックで Sentry 等への報告を一元化できる
+
+**コード例**:
+```tsx
+// shared/components/AppErrorBoundary.tsx
+import { ErrorBoundary, FallbackProps } from 'react-error-boundary';
+import * as Sentry from '@sentry/nextjs';
+
+function ErrorFallback({ error, resetErrorBoundary }: FallbackProps) {
+  const isNetworkError = error.message.includes('fetch');
+
+  return (
+    <div role="alert" className="rounded border border-red-200 bg-red-50 p-4">
+      <h2 className="font-semibold text-red-800">エラーが発生しました</h2>
+      <p className="mt-1 text-sm text-red-600">
+        {isNetworkError
+          ? 'ネットワーク接続を確認して再試行してください。'
+          : '予期しないエラーが発生しました。'}
+      </p>
+      <div className="mt-3 flex gap-2">
+        <button
+          onClick={resetErrorBoundary}
+          className="rounded bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700"
+        >
+          再試行
+        </button>
+        <a href="/" className="rounded border px-3 py-1.5 text-sm hover:bg-gray-50">
+          ホームに戻る
+        </a>
+      </div>
+    </div>
+  );
+}
+
+export function AppErrorBoundary({ children }: { children: React.ReactNode }) {
+  return (
+    <ErrorBoundary
+      FallbackComponent={ErrorFallback}
+      onError={(error, info) => {
+        Sentry.captureException(error, {
+          extra: { componentStack: info.componentStack },
+        });
+      }}
+      onReset={() => {
+        // 必要に応じてキャッシュや状態をリセット
+      }}
+    >
+      {children}
+    </ErrorBoundary>
+  );
+}
+
+// Bad: フォールバックなし
+<ErrorBoundary>
+  <RiskyComponent />
+</ErrorBoundary>
+// → エラー時に空白になる
+```
+
+**出典**:
+- [react-error-boundary](https://github.com/bvaughn/react-error-boundary) (Brian Vaughn / GitHub)
+- [React Docs: Error Boundaries](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary) (React公式)
+
+**バージョン**: react-error-boundary 4+, React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. 非同期処理のエラーは必ず型付きで分類し、ユーザー向けメッセージに変換する
+
+API呼び出し・データ取得処理のエラーをそのままユーザーに表示せず、
+エラー種別（ネットワーク・認証・バリデーション・サーバー）に応じた
+ユーザーフレンドリーなメッセージに変換して表示する。
+
+**根拠**:
+- `error.message` をそのまま表示するとスタックトレースや内部情報が漏洩する
+- エラー種別の分類により、ユーザーが次に何をすべきか（再試行・ログイン・入力修正）を明示できる
+- 型付き分類によって処理漏れを TypeScript が検出できる
+
+**コード例**:
+```ts
+// shared/lib/api-error.ts
+export type ApiErrorType =
+  | 'UNAUTHORIZED'    // 401: 再ログインが必要
+  | 'FORBIDDEN'       // 403: 権限なし
+  | 'NOT_FOUND'       // 404: リソース不在
+  | 'VALIDATION'      // 422: 入力値エラー
+  | 'SERVER_ERROR'    // 5xx: サーバー側の問題
+  | 'NETWORK_ERROR';  // fetch失敗: ネットワーク問題
+
+export class AppError extends Error {
+  constructor(
+    public readonly type: ApiErrorType,
+    public readonly userMessage: string,
+    public readonly cause?: unknown
+  ) {
+    super(userMessage);
+  }
+}
+
+export function classifyHttpError(status: number, body?: unknown): AppError {
+  switch (true) {
+    case status === 401:
+      return new AppError('UNAUTHORIZED', 'ログインが必要です。再度サインインしてください。');
+    case status === 403:
+      return new AppError('FORBIDDEN', 'この操作を行う権限がありません。');
+    case status === 404:
+      return new AppError('NOT_FOUND', 'お探しのページまたはデータが見つかりません。');
+    case status >= 500:
+      return new AppError('SERVER_ERROR', 'サーバーエラーが発生しました。しばらく経ってから再試行してください。');
+    default:
+      return new AppError('SERVER_ERROR', '予期しないエラーが発生しました。');
+  }
+}
+
+// 使用例
+async function fetchUser(id: string) {
+  try {
+    const res = await fetch(`/api/users/${id}`);
+    if (!res.ok) throw classifyHttpError(res.status);
+    return await res.json();
+  } catch (e) {
+    if (e instanceof AppError) throw e;
+    throw new AppError('NETWORK_ERROR', 'ネットワーク接続を確認してください。', e);
+  }
+}
+
+// Bad: エラーをそのまま表示
+catch (e) {
+  setError(e.message); // "TypeError: Failed to fetch" などが表示される
+}
+```
+
+**出典**:
+- [MDN: Error handling best practices](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Control_flow_and_error_handling) (MDN Web Docs)
+- [TypeScript Handbook: Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html) (TypeScript公式)
+
+**バージョン**: TypeScript 5+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`api-client/error-handling.md`](../api-client/error-handling.md) - HTTP/API エラーの分類・リトライ・ネットワークエラー処理
