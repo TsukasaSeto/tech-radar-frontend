@@ -339,3 +339,12 @@ const bad = {
 **最終更新**: 2026-05-06
 
 ---
+
+#### 追加根拠 (2026-05-06) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [TypeScript Handbook: Narrowing - Discriminated Unions](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Narrowing.md) (microsoft/TypeScript-Website / v2ブランチ) ※2026-05-06に実際にfetch成功
+
+Narrowing.md は Discriminated Union を「TypeScript でもっとも推奨される状態モデリングパターン」として取り上げている。判別子プロパティ（例: `kind: "circle"`）を持つインターフェースの Union として定義し、`switch (shape.kind)` で分岐することで TypeScript がそれぞれの case 内で型を自動的に絞り込む。さらに `default: const _exhaustiveCheck: never = shape` の never チェックで exhaustiveness を保証するパターンは、公式ドキュメントで「新しい Shape 型を追加した際にコンパイルエラーで変更漏れを検出できる」と明示されており、状態管理の安全性を高める中核的な手法として確認された。
+
+**確信度**: 既存（高）→ 高（公式文書で実証済み）
