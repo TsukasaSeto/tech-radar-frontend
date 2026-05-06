@@ -178,5 +178,14 @@
   "https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/packages/nextjs/README.md",
   "https://developer.mozilla.org/en-US/docs/Web/CSS/@layer",
   "https://developer.chrome.com/docs/web-platform/long-animation-frames",
-  "https://docs.sentry.io/concepts/data-management/event-grouping/fingerprint-rules/"
+  "https://docs.sentry.io/concepts/data-management/event-grouping/fingerprint-rules/",
+  "https://qiita.com/y_harada/items/b8a20797340a8ffcd75f",
+  "https://qiita.com/jptools_jp/items/7f5cdff3bf3fa77dffd3",
+  "https://dev.to/dattasble/how-i-engineered-a-06s-lcp-and-a-perfect-100100-gtmetrix-score-nextjs-optimization-guide-1j24",
+  "https://dev.to/andresclua/visual-regression-testing-the-missing-piece-in-your-testing-stack-1c79",
+  "https://dev.to/benchwright/why-unit-tests-arent-enough-for-llm-features-18m6",
+  "https://blog.sentry.io/introducing-application-metrics/",
+  "https://medium.com/@najmul.myself/why-unknown-is-safer-than-any-in-typescript-how-type-narrowing-makes-it-practical-25c67a6bd0c8",
+  "https://medium.com/@konstantinkeylin/the-most-underrated-css-property-nobody-talks-about-scrollbar-gutter-2ca598352675",
+  "https://qiita.com/nhatcaofedev/items/387cda18f797938acb6b"
 ]
