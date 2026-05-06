@@ -246,3 +246,25 @@ export function WebVitalsReporter() {
 ## 関連プラクティス
 
 - [`observability/rum.md`](../observability/rum.md) - web-vitals ライブラリで LCP/INP/CLS を本番計測しアナリティクスに送信する方法
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「LCP（最大コンテンツ描画）を最適化する」
+
+新たに以下の記事で `fetchpriority="high"` の誤用アンチパターンが実測データで示された:
+- [Lighthouse のスコアを上げようとして、逆に下げてしまった 2 つの失敗](https://zenn.dev/kimsuho/articles/b678c3b084c6d1) (Zenn kimsuho / 2026) ※2026-05-06に実際にfetch成功
+
+LCP対象ウォールペーパー画像に `<link rel="preload" as="image" fetchpriority="high">` を追加したところ、Speed Index が 1.0s → 4.6s（4.6倍増）、スコアが 99 → 83 に急悪化した。原因: JavaScriptヘビーなSPAではボトルネックはスクリプト解析・実行であり画像取得ではない。`fetchpriority="high"` によって帯域が画像に割り当てられると、クリティカルなJavaScriptのダウンロードが遅れ、コンポーネントツリーの構築が遅延し、LCP要素のDOM生成自体が遅れるという逆転現象が起きる（JS依存が少ないログインページは影響なし）。属性を削除してデフォルト（`auto`）に戻す1行の修正でスコアが99に回復した。安全な使用条件: (1) LCPボトルネックが画像ダウンロードと計測で確認済み、かつ (2) JSが最小限の静的ページ・コンテンツサイト等。
+
+**確信度**: 既存（高）→ 高（実測データで適用条件を明確化）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール4「`web-vitals` ライブラリで Core Web Vitals を本番計測してアナリティクスに送信する」
+
+新たに以下のドキュメントで同じプラクティスが公式確認された:
+- [GoogleChrome/web-vitals README](https://raw.githubusercontent.com/GoogleChrome/web-vitals/main/README.md) (GoogleChrome / mainブランチ) ※2026-05-06に実際にfetch成功
+
+公式READMEが3点を明確に説明: (1) **閾値の公式値** — LCP ≤2.5s / CLS ≤0.1 / INP ≤200ms が "good"、それぞれ `LCPThresholds`・`CLSThresholds`・`INPThresholds` としてライブラリからエクスポート済み。(2) **Attribution ビルド** — `web-vitals/attribution` からインポートすると約1.5KB（brotli）追加で `attribution` プロパティが付与される。CLS なら `largestShiftTarget`、INP なら `interactionTarget`・`inputDelay`・`processingDuration`・`presentationDelay`、LCP なら `target` を取得できる。(3) **バッチ送信パターン** — 指標をSetにキューイングし `document.visibilityState === 'hidden'` 時に `navigator.sendBeacon()` で一括送信することで、ページ離脱時の送信漏れを防ぎつつリクエスト数を最小化する。
+
+**確信度**: 既存（高）→ 高（公式READMEで全パターン実証済み）
