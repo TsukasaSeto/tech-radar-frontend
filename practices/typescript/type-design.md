@@ -250,3 +250,92 @@ type Route = typeof ROUTES[keyof typeof ROUTES]; // '/' | '/users'
 **バージョン**: TypeScript 3.4+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 7. Template Literal Types でイベント名・CSSプロパティ名などの文字列型を精密に定義する
+
+テンプレートリテラル型（`` `prefix_${Union}` ``）を使い、文字列のパターンを型として表現する。
+イベント名・メソッド名・CSSプロパティのような「規則性のある文字列」を Union 型として自動生成できる。
+手書きの Union 型と異なり、ベースとなる型が変われば自動追従する。
+
+**根拠**:
+- 文字列の命名規則をコンパイル時に強制できる
+- Union 型のベース（例：イベント名）と派生型（例：`on${EventName}`）を DRY に保てる
+- `Capitalize` / `Uppercase` などの組み込み文字列操作型と組み合わせて表現力が増す
+
+**コード例**:
+```tsx
+// Good: イベントハンドラー名を自動生成
+type EventName = 'click' | 'focus' | 'blur' | 'change';
+type HandlerName = `on${Capitalize<EventName>}`;
+// 'onClick' | 'onFocus' | 'onBlur' | 'onChange'
+
+// Good: APIエンドポイントの命名をパターン化
+type HttpMethod = 'get' | 'post' | 'put' | 'delete';
+type ApiAction = `${HttpMethod}${Capitalize<string>}`; // 例: 'getUser', 'postUser'
+
+// Good: CSS変数名の型安全なアクセス
+type ColorScale = 100 | 200 | 300 | 400 | 500;
+type ColorName = 'blue' | 'red' | 'green';
+type CSSColorVar = `--color-${ColorName}-${ColorScale}`;
+// '--color-blue-100' | '--color-blue-200' | ... など全組み合わせ
+
+// Bad: 手書きで Union 型を列挙（ベース型の変更に追従しない）
+type HandlerName = 'onClick' | 'onFocus' | 'onBlur' | 'onChange';
+```
+
+**出典**:
+- [TypeScript Handbook: Template Literal Types](https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html) (TypeScript公式 / 2021-11)
+
+**バージョン**: TypeScript 4.1+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 8. `satisfies` 演算子で型チェックと型推論を両立する
+
+`satisfies` 演算子は、値が特定の型を満たすことを検証しつつ、
+推論される型を変数の宣言型に「昇格」させずに保持する。
+型注釈（`: Type`）では推論型が広くなりすぎる問題と、型アサーション（`as Type`）で型チェックが無効化される問題を同時に解決する。
+
+**根拠**:
+- 型注釈だと具体的なリテラル型が失われ、メソッドの補完精度が下がる
+- 型アサーション（`as`）はコンパイラのチェックを回避してしまう
+- `satisfies` は「型チェックはするが型推論は維持する」というバランスを実現する
+
+**コード例**:
+```tsx
+type Palette = Record<string, string | [number, number, number]>;
+
+// Bad: 型注釈だと 'red' の値が string | [number, number, number] に広がり、
+// .toUpperCase() などメソッドが補完されない
+const palette: Palette = {
+  red: '#ff0000',
+  green: [0, 128, 0],
+};
+palette.red.toUpperCase(); // エラー: string | [number, number, number] にはない
+
+// Good: satisfies で型チェックしつつリテラル型を保持
+const palette = {
+  red: '#ff0000',
+  green: [0, 128, 0],
+} satisfies Palette;
+palette.red.toUpperCase(); // OK: 推論型は string のまま
+palette.green.map(v => v * 2); // OK: 推論型は [number, number, number] のまま
+
+// 型制約違反はコンパイルエラーになる
+const bad = {
+  red: 123, // エラー: number は string | [number, number, number] に代入不可
+} satisfies Palette;
+```
+
+**出典**:
+- [TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator) (TypeScript公式 / 2022-11)
+
+**バージョン**: TypeScript 4.9+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---

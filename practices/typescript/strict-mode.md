@@ -198,3 +198,115 @@ import { Button } from '@/components/ui/Button';
 **バージョン**: TypeScript 2.0+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 6. `useUnknownInCatchVariables: true` で catch 節の変数を `unknown` にする
+
+`strict: true` に含まれる `useUnknownInCatchVariables`（TS4.0以降で `strict` に内包）を確認し、
+catch 節のエラー変数が `any` ではなく `unknown` として扱われることを活用する。
+エラー処理時に型ガードで安全に絞り込む習慣をチームに定着させる。
+
+**根拠**:
+- catch 節の `e` が `any` の場合、`e.message` などへの無検証アクセスが通ってしまう
+- `unknown` にすることで型ガードが強制され、エラーハンドリングの品質が上がる
+- `instanceof Error` チェックがベストプラクティスとして定着する
+
+**コード例**:
+```json
+{
+  "compilerOptions": {
+    "strict": true
+    // useUnknownInCatchVariables は strict: true に含まれる（TS4.4+）
+  }
+}
+```
+
+```tsx
+// Bad: e が any として扱われ、型チェックなしで .message にアクセス
+try {
+  await fetchData();
+} catch (e) {
+  console.error(e.message); // useUnknownInCatchVariables が false だと通る
+}
+
+// Good: unknown として正しく型ガードして処理
+try {
+  await fetchData();
+} catch (e) {
+  if (e instanceof Error) {
+    console.error(e.message); // 安全
+  } else {
+    console.error('Unknown error:', String(e));
+  }
+}
+
+// さらに良い: ユーティリティ関数で共通化
+function toErrorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
+try {
+  await fetchData();
+} catch (e) {
+  reportError(toErrorMessage(e));
+}
+```
+
+**出典**:
+- [TypeScript tsconfig reference: useUnknownInCatchVariables](https://www.typescriptlang.org/tsconfig#useUnknownInCatchVariables) (TypeScript公式 / 2021-09)
+
+**バージョン**: TypeScript 4.4+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 7. `noPropertyAccessFromIndexSignature: true` でインデックスシグネチャのプロパティアクセスを厳格化する
+
+`noPropertyAccessFromIndexSignature: true` を有効にすると、インデックスシグネチャを持つ型に対して
+ドット記法（`obj.key`）でのアクセスがエラーになる。
+ブラケット記法（`obj['key']`）を強制することで、コードを読む人がそのプロパティが
+確定的に存在するものか、インデックスアクセスかを視覚的に区別できる。
+
+**根拠**:
+- ドット記法は「確実に存在するプロパティ」、ブラケット記法は「存在するかもしれないキー」という意図を分離できる
+- インデックスシグネチャから取得した値が `undefined` になり得ることを明示的に扱わせる
+- コードレビュー時にインデックスアクセスのリスク箇所を一目で識別できる
+
+**コード例**:
+```json
+{
+  "compilerOptions": {
+    "strict": true,
+    "noPropertyAccessFromIndexSignature": true
+  }
+}
+```
+
+```tsx
+type Options = {
+  timeout: number;  // 明示的なプロパティ
+  [key: string]: unknown;  // インデックスシグネチャ
+};
+
+declare const opts: Options;
+
+// OK: 明示的なプロパティはドット記法でアクセス可
+console.log(opts.timeout);
+
+// エラー: noPropertyAccessFromIndexSignature が true の場合
+console.log(opts.someFlag); // ドット記法は不可
+
+// OK: インデックスシグネチャ経由はブラケット記法を使う
+console.log(opts['someFlag']); // 型は unknown
+```
+
+**出典**:
+- [TypeScript tsconfig reference: noPropertyAccessFromIndexSignature](https://www.typescriptlang.org/tsconfig#noPropertyAccessFromIndexSignature) (TypeScript公式 / 2021-08)
+
+**バージョン**: TypeScript 4.2+
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
