@@ -92,6 +92,17 @@ function render(state: AsyncState<User>) {
 **確信度**: 高
 **最終更新**: 2026-05-05
 
+#### 追加根拠 (2026-05-06)
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Aljabr: 0-deps TypeScript lib that fuses tagged unions / exhaustive matching + schema validation + reactive state + reactive UI](https://dev.to/jasuperior/aljabr-ljbr-0-deps-typescript-lib-that-fuses-tagged-unions-exhaustive-matching-schema-3pe7) (dev.to / 2026-05-06) ※2026-05-06に実際にfetch成功
+
+Discriminated Union（識別可能なユニオン型）を「コンパイラが検証する有限状態機械（compiler-checked finite state machine）」として捉える観点がコミュニティで強調されている。
+バリアント（`Circle`, `Rect` など）を明示的に定義し `match()` 関数で網羅的にパターンマッチングすることで、コンパイル時に全ケースの処理が強制される。
+この設計パターンはライブラリとしても実装されており、「不可能な状態（impossible state bugs）を構造レベルで排除する」という考え方がエコシステム全体で支持されていることが確認された。
+
+**確信度**: 既存（高）→ 高（コミュニティ実証付き）
+
 ---
 
 ### 3. `any` を禁止し、型が不明な場合は `unknown` を使う
