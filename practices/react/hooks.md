@@ -176,3 +176,97 @@ function useUserData(userId: string) {
 **バージョン**: React 18+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. ユーザー操作に起因する処理は `useEffect` ではなくイベントハンドラーに置く
+
+「ユーザーがボタンをクリックした」「フォームを送信した」など、特定のインタラクションに
+応じた副作用（APIコール・通知表示など）は `useEffect` ではなくイベントハンドラーに記述する。
+`useEffect` は「コンポーネントが表示されたことに同期する処理」に限定する。
+
+**根拠**:
+- イベントハンドラー内ではなぜ処理が発生したかが明確（ユーザー操作）
+- `useEffect` に置くと誰が副作用を引き起こしたか不明になりデバッグが困難
+- `useEffect` のチェーンは不要な中間レンダリングを生み、パフォーマンスを悪化させる
+
+**コード例**:
+```tsx
+// Bad: ユーザー操作を useEffect で処理
+function Form() {
+  const [submitted, setSubmitted] = useState(false);
+  useEffect(() => {
+    if (submitted) {
+      postForm(data);       // なぜ実行されたか不明
+      showNotification();   // 条件を追うのが困難
+    }
+  }, [submitted]);
+
+  return <button onClick={() => setSubmitted(true)}>送信</button>;
+}
+
+// Good: イベントハンドラーで直接処理
+function Form() {
+  const handleSubmit = async () => {
+    await postForm(data);   // クリックが原因であることが明確
+    showNotification();
+  };
+  return <button onClick={handleSubmit}>送信</button>;
+}
+```
+
+**出典**:
+- [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) (React公式 / 2024)
+
+**バージョン**: React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. `useEffectEvent` でエフェクトの「非反応的なロジック」を分離する（React 19+）
+
+エフェクト内で「再実行のトリガーにしたくない値」を参照する場合、
+`useEffectEvent` でその部分を切り出す。依存配列を意図的に省略する代わりに使うことで、
+Stale Closure を回避しつつ再実行条件を正確に制御できる。
+
+**根拠**:
+- `eslint-plugin-react-hooks` の `exhaustive-deps` に準拠しながら意図を明確化できる
+- テーマ・設定値など「最新値を読むが変更で再実行したくない」ケースに対応
+- `useEffectEvent` はエフェクト内からのみ呼び出し可能で、他のHookへの引き渡しは禁止
+
+**コード例**:
+```tsx
+import { useEffect, useEffectEvent } from 'react';
+
+function ChatRoom({ roomId, theme }: { roomId: string; theme: string }) {
+  // theme が変わっても接続を張り直したくない
+  const onConnected = useEffectEvent(() => {
+    showNotification(`${roomId} に接続しました`, theme); // 最新の theme を参照
+  });
+
+  useEffect(() => {
+    const connection = createConnection(roomId);
+    connection.on('connected', onConnected); // EffectEvent は deps に不要
+    connection.connect();
+    return () => connection.disconnect();
+  }, [roomId]); // roomId のみが再実行トリガー
+}
+
+// Bad: theme も deps に入れると theme 変更で再接続が走る
+useEffect(() => {
+  const connection = createConnection(roomId);
+  connection.on('connected', () => showNotification(roomId, theme));
+  connection.connect();
+  return () => connection.disconnect();
+}, [roomId, theme]); // theme 変更で不要な再接続
+```
+
+**出典**:
+- [Separating Events from Effects](https://react.dev/learn/separating-events-from-effects) (React公式 / 2024)
+
+**バージョン**: React 19+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
