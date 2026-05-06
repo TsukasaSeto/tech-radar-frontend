@@ -310,3 +310,43 @@ console.log(opts['someFlag']); // 型は unknown
 **最終更新**: 2026-05-06
 
 ---
+
+#### 追加根拠 (2026-05-06) — ルール6「`useUnknownInCatchVariables: true` で catch 節の変数を `unknown` にする」
+
+新たに以下の記事で `unknown` の適用範囲を catch 節の外（関数パラメータ・API レスポンス等）に広げるプラクティスが推奨された:
+- [Why `unknown` is Safer Than `any` in TypeScript: How Type Narrowing Makes It Practical](https://medium.com/@najmul.myself/why-unknown-is-safer-than-any-in-typescript-how-type-narrowing-makes-it-practical-25c67a6bd0c8) (Medium najmul.myself / 2026-05) ※2026-05-06に実際にfetch成功
+
+`unknown` はシステム境界での防御的型付けとして catch 節以外にも有効: (1) **API レスポンスの型付け** — `const data: unknown = await res.json()` として受け取り、型ガード関数で絞り込む。`any` で受け取ると型チェックが無効化され、実行時エラーを招く。(2) **汎用関数パラメータ** — 受け入れる値の型が不明な場合は `any` ではなく `unknown` を使い、型ガードによる絞り込みを関数内で強制する。型ガード関数は `is` 型述語（type predicate）を返す独立した純粋関数として定義すると再利用性が高い。
+
+```typescript
+// unknown を catch 節の外でも活用するパターン
+
+// 1. API レスポンスを unknown で受け取り型ガードで絞り込む
+function isUser(value: unknown): value is User {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'id' in value &&
+    'name' in value &&
+    typeof (value as Record<string, unknown>).id === 'string' &&
+    typeof (value as Record<string, unknown>).name === 'string'
+  );
+}
+
+async function fetchUser(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`);
+  const data: unknown = await res.json();  // any ではなく unknown
+  if (!isUser(data)) throw new Error('Invalid user response shape');
+  return data;  // ここで User 型として安全に扱える
+}
+
+// 2. 汎用関数パラメータに unknown を使う
+function processInput(value: unknown): string {
+  if (typeof value === 'string') return value.toUpperCase();
+  if (typeof value === 'number') return value.toFixed(2);
+  if (value instanceof Date) return value.toISOString();
+  return String(value);
+}
+```
+
+**確信度**: 既存（高）→ 高（catch 節外への適用拡大が Medium 実証記事で確認済み）

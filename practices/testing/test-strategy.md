@@ -369,3 +369,96 @@ it('should show error state when API fails', async () => {
 2026年の現場調査記事として、アーキテクチャに応じたモデル選択を詳細に解説: モノリス→ピラミッド、SPA→トロフィー（統合テストを最も厚く）、マイクロサービス→ダイヤモンド、という対応を明示。また「カバレッジ目標の廃止」についても補強情報を提供：カバレッジとバグ検出率の相関は不明瞭であり、代わりに DORA メトリクス（変更失敗率・MTTR）を品質指標として使うことが推奨されている。「フレーキーテストは別パイプラインに分離してデプロイブロッカーにしない」という運用パターンも実務的な知見として確認された。
 
 **確信度**: 既存（中）→ 高（2026年実務調査で実証済み）
+
+---
+
+### 7. LLM機能は継続的評価パイプラインでテストする
+
+LLM（大規模言語モデル）を活用する機能は、ユニットテストでは品質を保証できない。
+本番データサンプルを使った自動評価パイプラインを構築し、
+精度・一貫性をメトリクスで継続監視する。
+
+**根拠**:
+- LLMの出力は非決定的（同じ入力でも異なる出力）であり、`expect(output).toBe(expected)` 形式のユニットテストが成立しない
+- モデルのバージョン更新・プロンプト変更・コンテキスト変化で挙動が変わるため、継続的な評価が必要
+- 50〜200件の本番データサンプルに対して精度・関連性・安全性などのスコアを計算し、閾値を下回ったらアラートを出すパターンが有効
+- 人間によるラベリングコストが高い場合は LLM-as-a-judge（評価用 LLM が採点）で自動評価できる
+
+**コード例**:
+```ts
+// scripts/eval-llm.ts - 継続的評価パイプライン
+import Anthropic from '@anthropic-ai/sdk';
+import { loadProductionSamples } from './data/production-samples';
+
+const client = new Anthropic();
+
+interface EvalResult {
+  sampleId: string;
+  score: number; // 0〜1
+  passed: boolean;
+}
+
+async function evaluateSample(input: string, expected: string): Promise<EvalResult> {
+  // LLM-as-a-judge: 評価用プロンプトで採点
+  const response = await client.messages.create({
+    model: 'claude-opus-4-7',
+    max_tokens: 100,
+    messages: [{
+      role: 'user',
+      content: `以下の回答を 0〜1 のスコアで評価してください（1が最高）。
+期待する回答: ${expected}
+実際の回答: ${input}
+スコアのみ返してください（例: 0.8）`,
+    }],
+  });
+
+  const score = parseFloat((response.content[0] as { text: string }).text.trim());
+  return { sampleId: input.slice(0, 20), score, passed: score >= 0.7 };
+}
+
+async function runEvalPipeline() {
+  const samples = await loadProductionSamples(100); // 本番データから100件サンプル
+  const results: EvalResult[] = [];
+
+  for (const sample of samples) {
+    const result = await evaluateSample(sample.actual, sample.expected);
+    results.push(result);
+  }
+
+  const passRate = results.filter(r => r.passed).length / results.length;
+  console.log(`合格率: ${(passRate * 100).toFixed(1)}%`);
+
+  // 閾値 80% を下回ったらアラート
+  if (passRate < 0.8) {
+    throw new Error(`LLM品質アラート: 合格率 ${(passRate * 100).toFixed(1)}% が閾値 80% を下回りました`);
+  }
+}
+
+runEvalPipeline();
+```
+
+```yaml
+# .github/workflows/llm-eval.yml - 毎日 JST 9:00 に実行
+name: LLM Evaluation Pipeline
+on:
+  schedule:
+    - cron: '0 0 * * *'  # UTC 0:00 = JST 9:00
+  workflow_dispatch:
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run evaluation
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npx ts-node scripts/eval-llm.ts
+```
+
+**出典**:
+- [Why Unit Tests Aren't Enough for LLM Features](https://dev.to/benchwright/why-unit-tests-arent-enough-for-llm-features-18m6) (dev.to benchwright / 2026-05) ※2026-05-06に実際にfetch成功
+
+**バージョン**: Node.js 20+, @anthropic-ai/sdk 0.30+
+**確信度**: 高
+**最終更新**: 2026-05-06

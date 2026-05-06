@@ -268,3 +268,48 @@ LCP対象ウォールペーパー画像に `<link rel="preload" as="image" fetch
 公式READMEが3点を明確に説明: (1) **閾値の公式値** — LCP ≤2.5s / CLS ≤0.1 / INP ≤200ms が "good"、それぞれ `LCPThresholds`・`CLSThresholds`・`INPThresholds` としてライブラリからエクスポート済み。(2) **Attribution ビルド** — `web-vitals/attribution` からインポートすると約1.5KB（brotli）追加で `attribution` プロパティが付与される。CLS なら `largestShiftTarget`、INP なら `interactionTarget`・`inputDelay`・`processingDuration`・`presentationDelay`、LCP なら `target` を取得できる。(3) **バッチ送信パターン** — 指標をSetにキューイングし `document.visibilityState === 'hidden'` 時に `navigator.sendBeacon()` で一括送信することで、ページ離脱時の送信漏れを防ぎつつリクエスト数を最小化する。
 
 **確信度**: 既存（高）→ 高（公式READMEで全パターン実証済み）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「LCP（最大コンテンツ描画）を最適化する」（2回目）
+
+新たに以下の記事でサードパーティスクリプトをユーザーインタラクションまで遅延させる手法が実測データで示された:
+- [How I Engineered a 0.6s LCP and a Perfect 100/100 GTmetrix Score: Next.js Optimization Guide](https://dev.to/dattasble/how-i-engineered-a-06s-lcp-and-a-perfect-100100-gtmetrix-score-nextjs-optimization-guide-1j24) (dev.to dattasble / 2026-05) ※2026-05-06に実際にfetch成功
+
+Google Analytics・チャットウィジェット・A/Bテストスクリプトなどサードパーティスクリプトの一括遅延により、LCP 0.6s・GTmetrix 100/100 を達成した事例。`mousedown`, `scroll`, `touchstart`, `keydown` のいずれかが発火するまでスクリプトを読み込まないことで TBT（Total Blocking Time）が 0ms になる。Next.js での推奨実装:
+
+```tsx
+// app/_components/DeferredScripts.tsx
+'use client';
+import { useEffect } from 'react';
+
+export function DeferredScripts() {
+  useEffect(() => {
+    let loaded = false;
+
+    function loadScripts() {
+      if (loaded) return;
+      loaded = true;
+
+      // Google Analytics
+      const gaScript = document.createElement('script');
+      gaScript.src = `https://www.googletagmanager.com/gtag/js?id=${process.env.NEXT_PUBLIC_GA_ID}`;
+      gaScript.async = true;
+      document.head.appendChild(gaScript);
+    }
+
+    const events = ['mousedown', 'scroll', 'touchstart', 'keydown'] as const;
+    events.forEach(e => window.addEventListener(e, loadScripts, { once: true }));
+
+    return () => {
+      events.forEach(e => window.removeEventListener(e, loadScripts));
+    };
+  }, []);
+
+  return null;
+}
+```
+
+注意点: チャットウィジェットなど「ページロード直後から表示が必要」なスクリプトには適用不可。また、イベント発火前にコンバージョンが発生した場合（直帰ユーザー）はアナリティクスが計測されない。適用可否は計測要件と相談して判断すること。
+
+**確信度**: 既存（高）→ 高（実測 LCP 0.6s・GTmetrix 100点で実証済み）

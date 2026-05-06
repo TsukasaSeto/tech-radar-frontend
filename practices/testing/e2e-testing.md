@@ -330,3 +330,81 @@ Playwright の公式 README は3つの重要な実装詳細を強調: (1) **Auto
 Playwright README は「Page Objects Pattern for maintainable, scalable test suites」として POM を明示推奨。React Testing Library README はフレームワーク横断で「The more your tests resemble the way your software is used, the more confidence they can give you.」という哲学を提示。テスト実装の詳細（内部状態・コンポーネント構造）ではなくユーザーの操作（what）に着目することが、POM と RTL 両方で共通した原則として確認された。
 
 **確信度**: 既存（高）→ 高（複数の公式 README で実証済み）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール5「`toHaveScreenshot()` で視覚的回帰テストを自動化する」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [PlaywrightでVRT環境を構築し偽陽性を撲滅する](https://qiita.com/y_harada/items/b8a20797340a8ffcd75f) (Qiita y_harada / 2026-05) ※2026-05-06に実際にfetch成功
+- [Visual Regression Testing: The Missing Piece in Your Testing Stack](https://dev.to/andresclua/visual-regression-testing-the-missing-piece-in-your-testing-stack-1c79) (dev.to andresclua / 2026-05) ※2026-05-06に実際にfetch成功
+
+Dockerコンテナ内でPlaywrightを実行することで、CIとローカル環境のフォントレンダリング差異・サブピクセルアンチエイリアシングの違いを完全に排除し、スクリーンショット比較の偽陽性をゼロにできると両記事で実証された。共通した実装ポイント3点: (1) **CSSアニメーション無効化** — `page.addStyleTag({ content: '*, *::before, *::after { animation-duration: 0s !important; transition-duration: 0s !important; }' })` をVRTテスト前に実行し、アニメーション起因の差分を排除する。(2) **動的コンテンツのマスキング** — `toHaveScreenshot({ mask: [page.getByTestId('dynamic-date')] })` で日付・タイムスタンプなど毎回変わる要素をグレーボックスで隠す。(3) **Storybookとの連携** — `@storybook/test-runner` でStorybookのストーリーを全件VRTの対象にすることで、コンポーネント単位のリグレッションをCI段階で検出できる。
+
+**確信度**: 既存（高）→ 高（Docker環境統一・Storybook連携で実証済み）
+
+---
+
+### 6. TypeScript インターフェースで定義した JSON テストデータでテストケースを動的生成する
+
+テストデータを TypeScript インターフェースで型定義した JSON ファイルに外出しし、
+`for` ループでテストケースを動的生成する。
+テストコードと入力データを分離し、ケース追加コストをゼロにする。
+
+**根拠**:
+- テストデータをコード内にハードコードすると、ケース追加のたびにテストファイルを修正する必要がある
+- JSON ファイルに分離することで、エンジニア以外（QA・企画）がテストデータを追加できる
+- TypeScript インターフェースで JSON スキーマを定義することで、データの型安全性を保証できる
+- 認証情報は JSON に含めず環境変数から取得し、リポジトリへの機密情報漏洩を防ぐ
+
+**コード例**:
+```ts
+// e2e/data/types.ts - テストデータの型定義
+interface ArticleData {
+  id: string;
+  title: string;
+  body: string;
+  tags: string[];
+}
+
+// e2e/data/test-articles.json
+// [
+//   { "id": "1", "title": "React入門", "body": "Reactの基礎...", "tags": ["react", "frontend"] },
+//   { "id": "2", "title": "TypeScript基礎", "body": "TSの基礎...", "tags": ["typescript"] }
+// ]
+
+// e2e/article.spec.ts
+import { test, expect } from '@playwright/test';
+import testArticlesJson from './data/test-articles.json';
+
+const testArticles = testArticlesJson as ArticleData[];
+
+for (const article of testArticles) {
+  test(`記事「${article.title}」を投稿できる`, async ({ page }) => {
+    // 認証情報は環境変数から取得（JSON ファイルには含めない）
+    await page.goto('/login');
+    await page.getByLabel('メールアドレス').fill(process.env.TEST_USER_EMAIL!);
+    await page.getByLabel('パスワード').fill(process.env.TEST_USER_PASSWORD!);
+    await page.getByRole('button', { name: 'ログイン' }).click();
+
+    await page.goto('/articles/new');
+    await page.getByLabel('タイトル').fill(article.title);
+    await page.getByLabel('本文').fill(article.body);
+
+    for (const tag of article.tags) {
+      await page.getByLabel('タグ').fill(tag);
+      await page.keyboard.press('Enter');
+    }
+
+    await page.getByRole('button', { name: '投稿する' }).click();
+    await expect(page.getByRole('heading', { name: article.title })).toBeVisible();
+  });
+}
+```
+
+**出典**:
+- [PlaywrightのE2EテストでJSONデータを使ってテストケースを動的生成する](https://qiita.com/jptools_jp/items/7f5cdff3bf3fa77dffd3) (Qiita jptools_jp / 2026-05) ※2026-05-06に実際にfetch成功
+
+**バージョン**: Playwright 1.40+, TypeScript 5+
+**確信度**: 高
+**最終更新**: 2026-05-06
