@@ -139,3 +139,114 @@ const height = divRef.current!.offsetHeight;
 **バージョン**: React 18+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. `startTransition` / `useTransition` で緊急度の低い更新を後回しにする
+
+ユーザー入力（タイピング）などの緊急な更新と、検索結果一覧の再描画などの非緊急な更新を
+`startTransition` で分離する。非緊急な更新はより優先度の低いレーンでスケジュールされ、
+ユーザーインタラクションの応答性が向上する。
+
+**根拠**:
+- `startTransition` で包まれた更新は「Transition」扱いとなり、入力など緊急更新に割り込まれる
+- `useTransition` の `isPending` フラグでローディングインジケーターを表示できる
+- `Suspense` と組み合わせると、Transition中は古いUIを維持しつつ新しいUIを準備できる
+
+**コード例**:
+```tsx
+import { useState, useTransition } from 'react';
+
+function SearchPage() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Item[]>([]);
+  const [isPending, startTransition] = useTransition();
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // 入力の更新は緊急 → startTransition の外
+    setQuery(e.target.value);
+
+    // 検索結果の更新は非緊急 → startTransition の中
+    startTransition(() => {
+      setResults(searchItems(e.target.value));
+    });
+  };
+
+  return (
+    <>
+      <input value={query} onChange={handleChange} />
+      {isPending ? <Spinner /> : <ResultList items={results} />}
+    </>
+  );
+}
+
+// Bad: 全て同じ優先度で更新するとタイピングがもたつく
+function SearchPageBad() {
+  const [query, setQuery] = useState('');
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setQuery(e.target.value);
+    setResults(searchItems(e.target.value)); // 重い処理がブロック
+  };
+}
+```
+
+**出典**:
+- [React Docs: startTransition](https://react.dev/reference/react/startTransition) (React公式)
+- [React Docs: useTransition](https://react.dev/reference/react/useTransition) (React公式)
+
+**バージョン**: React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. `useDeferredValue` で重い子コンポーネントの再レンダリングを遅延させる
+
+`useDeferredValue` は特定の値の「遅延コピー」を返す。遅延コピーは緊急な更新が
+完了した後に非同期で更新されるため、入力フィールドなどの応答性を維持しながら
+重い描画処理（大きなリストなど）を後回しにできる。
+
+**根拠**:
+- `useTransition` が使えない外部ライブラリのstateに対しても適用できる
+- `memo` と組み合わせることで、遅延値が変わるまで子コンポーネントの再レンダリングをスキップできる
+- Concurrent Rendering の仕組みを活用し、UI のジャンクを削減する
+
+**コード例**:
+```tsx
+import { useState, useDeferredValue, memo } from 'react';
+
+function SearchPage() {
+  const [query, setQuery] = useState('');
+  // query の遅延コピー。タイピング中は古い値を保持
+  const deferredQuery = useDeferredValue(query);
+  const isStale = query !== deferredQuery;
+
+  return (
+    <>
+      <input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+      />
+      <div style={{ opacity: isStale ? 0.5 : 1 }}>
+        {/* deferredQuery が変わったときだけ再レンダリング */}
+        <HeavyResultList query={deferredQuery} />
+      </div>
+    </>
+  );
+}
+
+// memo と組み合わせて deferredQuery が変わるまでスキップ
+const HeavyResultList = memo(function HeavyResultList({ query }: { query: string }) {
+  const results = expensiveSearch(query);
+  return <ul>{results.map(r => <li key={r.id}>{r.name}</li>)}</ul>;
+});
+```
+
+**出典**:
+- [React Docs: useDeferredValue](https://react.dev/reference/react/useDeferredValue) (React公式)
+
+**バージョン**: React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
