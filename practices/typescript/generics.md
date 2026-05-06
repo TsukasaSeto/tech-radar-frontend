@@ -182,3 +182,89 @@ type NonNullable<T> = T extends null | undefined ? never : T; // 標準に存在
 **バージョン**: TypeScript 2.8+
 **確信度**: 中
 **最終更新**: 2026-05-05
+
+---
+
+### 5. `infer` キーワードで条件型の中から型を抽出する
+
+条件型の `extends` 節の中で `infer` を使うと、型パターンマッチング時に
+部分的な型を変数として束縛して取り出せる。
+配列の要素型・Promise の解決型・関数の引数型など「型の内側にある型」を抽出するのに使う。
+`ReturnType` や `Parameters` などの標準ユーティリティ型は `infer` を使って実装されている。
+
+**根拠**:
+- `infer` なしでは型の「分解」が難しく、型ユーティリティの表現力が著しく制限される
+- 標準ユーティリティ型を自作・拡張する際の基礎知識として必須
+- 再帰的な型定義と組み合わせることで深い型の分解が可能になる
+
+**コード例**:
+```tsx
+// 配列の要素型を抽出
+type ElementOf<T> = T extends (infer U)[] ? U : never;
+type StrEl = ElementOf<string[]>; // string
+type NumEl = ElementOf<number[]>; // number
+
+// Promiseの解決型を抽出（Awaited の自前実装）
+type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
+type Resolved = UnwrapPromise<Promise<{ id: string }>>; // { id: string }
+
+// 関数の第一引数の型を抽出
+type FirstArg<T> = T extends (first: infer A, ...rest: any[]) => any ? A : never;
+type F = FirstArg<(id: string, name: string) => void>; // string
+
+// 実用例: React コンポーネントの Props 型を取り出す
+type PropsOf<T> = T extends React.ComponentType<infer P> ? P : never;
+type ButtonProps = PropsOf<typeof Button>; // Button コンポーネントの props 型
+```
+
+**出典**:
+- [TypeScript Handbook: Inferring Within Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html#inferring-within-conditional-types) (TypeScript公式 / 2021-11)
+
+**バージョン**: TypeScript 2.8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. 分配的条件型（Distributive Conditional Types）の挙動を理解して活用する
+
+条件型の型パラメータに Union 型を渡すと、Union の各メンバーに対して個別に条件型が適用される（分配）。
+この性質を利用すると、Union 型のフィルタリングや変換を簡潔に記述できる。
+意図しない分配を防ぐには型パラメータを `[T]` のようにタプルで包む。
+
+**根拠**:
+- `Extract` / `Exclude` などの標準ユーティリティ型は分配的条件型で実装されている
+- Union に対するマッピングを簡潔に書くための重要なパターン
+- 分配を意図しない場合（`T extends T` のような自己比較）はタプルで防げる
+
+**コード例**:
+```tsx
+// 分配の例: Union の各メンバーに個別適用
+type ToArray<T> = T extends any ? T[] : never;
+type StrOrNumArr = ToArray<string | number>;
+// string[] | number[]（分配される）
+
+// 分配を抑制する例: タプルで包む
+type ToArrayNonDist<T> = [T] extends [any] ? T[] : never;
+type StrOrNumArr2 = ToArrayNonDist<string | number>;
+// (string | number)[]（分配されない）
+
+// 実用例: オブジェクト型のプロパティから null を除去
+type NonNullableProperties<T> = {
+  [K in keyof T]: NonNullable<T[K]>;
+};
+type SafeUser = NonNullableProperties<{
+  name: string | null;
+  age: number | undefined;
+}>;
+// { name: string; age: number }
+```
+
+**出典**:
+- [TypeScript Handbook: Distributive Conditional Types](https://www.typescriptlang.org/docs/handbook/2/conditional-types.html#distributive-conditional-types) (TypeScript公式 / 2021-11)
+
+**バージョン**: TypeScript 2.8+
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
