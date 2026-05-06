@@ -284,6 +284,136 @@ const [{ data, error }] = useQuery({ query: MyQuery });
 
 ---
 
+### 5. HTTPステータスコード別の回復戦略を実装する
+
+HTTP エラーを「種別ごとに異なる回復アクション」にマッピングし、
+ユーザー体験を最大化する。401は認証リダイレクト、429は指数バックオフ、
+5xx系はサーキットブレーカーで過負荷時の障害拡大を防ぐ。
+
+**根拠**:
+- エラーごとに適切な回復戦略が異なり、一律の処理ではUXが低下する
+- 401は即座に認証フローへ誘導することでユーザーが迷わない
+- 429のバックオフはサーバー過負荷を悪化させないために必須
+- サーキットブレーカーは5xxが連続する障害時にリクエストを遮断し、システム全体の回復を助ける
+
+**コード例**:
+```ts
+// lib/recovery-strategy.ts
+
+// サーキットブレーカーの状態
+type CircuitState = 'closed' | 'open' | 'half-open';
+
+class CircuitBreaker {
+  private state: CircuitState = 'closed';
+  private failureCount = 0;
+  private lastFailureTime?: number;
+
+  constructor(
+    private readonly threshold = 5,       // 失敗N回でopen
+    private readonly resetTimeout = 30_000, // 30秒後にhalf-openへ
+  ) {}
+
+  isOpen(): boolean {
+    if (this.state === 'open') {
+      const elapsed = Date.now() - (this.lastFailureTime ?? 0);
+      if (elapsed > this.resetTimeout) {
+        this.state = 'half-open';  // 復旧試行へ
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  recordSuccess() {
+    this.failureCount = 0;
+    this.state = 'closed';
+  }
+
+  recordFailure() {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+    if (this.failureCount >= this.threshold) {
+      this.state = 'open';
+    }
+  }
+}
+
+const breaker = new CircuitBreaker();
+
+// ステータスコード別の回復戦略
+async function fetchWithRecovery<T>(url: string, options?: RequestInit): Promise<T> {
+  // サーキットブレーカーが開いている場合はリクエストを遮断
+  if (breaker.isOpen()) {
+    throw new Error('Service temporarily unavailable (circuit open)');
+  }
+
+  try {
+    const res = await fetch(url, options);
+
+    if (res.ok) {
+      breaker.recordSuccess();
+      return res.json() as Promise<T>;
+    }
+
+    switch (true) {
+      // 401: 認証リダイレクト
+      case res.status === 401: {
+        await refreshTokenOrRedirect();  // トークン更新を試み、失敗時は /login へ
+        throw new ApiError(401, 'UNAUTHORIZED', 'Session expired');
+      }
+
+      // 429: Retry-After を尊重した指数バックオフ
+      case res.status === 429: {
+        const retryAfter = res.headers.get('Retry-After');
+        const waitMs = retryAfter
+          ? Number(retryAfter) * 1000
+          : Math.min(1000 * 2 ** retryCount, 32_000);  // 最大32秒
+        await sleep(waitMs + Math.random() * 1000);      // ジッター加算
+        return fetchWithRecovery(url, options);           // 再試行
+      }
+
+      // 5xx: サーキットブレーカーに記録
+      case res.status >= 500: {
+        breaker.recordFailure();
+        throw new ApiError(res.status, 'SERVER_ERROR', `HTTP ${res.status}`);
+      }
+
+      default:
+        throw new ApiError(res.status, 'CLIENT_ERROR', `HTTP ${res.status}`);
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      // ネットワークエラーもサーキットブレーカーに記録
+      breaker.recordFailure();
+    }
+    throw err;
+  }
+}
+
+// TanStack Query との統合例
+const { data } = useQuery({
+  queryKey: ['users'],
+  queryFn: () => fetchWithRecovery<User[]>('/api/users'),
+  retry: (failureCount, error) => {
+    if (error instanceof ApiError && error.status === 401) return false;  // 401はリトライしない
+    if (error instanceof ApiError && error.status === 429) return failureCount < 3;
+    return failureCount < 2;
+  },
+});
+```
+
+**出典**:
+- [Martin Fowler: Circuit Breaker](https://martinfowler.com/bliki/CircuitBreaker.html) (martinfowler.com)
+- [AWS: Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) (AWS Architecture Blog)
+- [RFC 6585: 429 Too Many Requests](https://www.rfc-editor.org/rfc/rfc6585) (IETF)
+
+**バージョン**: 全バージョン（パターン）
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - アプリ全体のエラー処理

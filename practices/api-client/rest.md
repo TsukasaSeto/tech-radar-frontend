@@ -302,6 +302,155 @@ export async function updateProduct(id: string, data: ProductUpdate) {
 
 ---
 
+### 6. TanStack Query の Query Key をファクトリパターンで管理する
+
+クエリキーを `queryKeys.users.list()` のようなファクトリ関数で定義し、
+コード全体でのキーの一貫性と型安全な無効化を実現する。
+`caching.md` のファクトリパターンをさらに発展させ、REST エンドポイント単位で整理する。
+
+**根拠**:
+- クエリキーのタイポや構造差異によるキャッシュ分断を防ぐ
+- `invalidateQueries` の適用範囲をコード上で明示的に表現できる
+- エンドポイント追加時のキー設計が統一され、レビューコストが下がる
+- TanStack Query 公式ドキュメントが推奨するベストプラクティス
+
+**コード例**:
+```tsx
+// lib/query-keys.ts
+export const queryKeys = {
+  users: {
+    all: () => ['users'] as const,
+    lists: () => [...queryKeys.users.all(), 'list'] as const,
+    list: (filters?: { role?: string; page?: number }) =>
+      [...queryKeys.users.lists(), { filters }] as const,
+    details: () => [...queryKeys.users.all(), 'detail'] as const,
+    detail: (id: string) => [...queryKeys.users.details(), id] as const,
+  },
+  posts: {
+    all: () => ['posts'] as const,
+    list: (params?: { authorId?: string }) =>
+      [...queryKeys.posts.all(), 'list', { params }] as const,
+    detail: (id: string) => [...queryKeys.posts.all(), id] as const,
+  },
+} as const;
+
+// 使用例
+function useUsers(filters?: { role?: string }) {
+  return useQuery({
+    queryKey: queryKeys.users.list(filters),
+    queryFn: () => fetchUsers(filters),
+  });
+}
+
+function useUser(id: string) {
+  return useQuery({
+    queryKey: queryKeys.users.detail(id),
+    queryFn: () => fetchUser(id),
+  });
+}
+
+// Mutation 後の無効化
+const queryClient = useQueryClient();
+// users.list 系（フィルタ違いも含め全て）を無効化
+await queryClient.invalidateQueries({ queryKey: queryKeys.users.lists() });
+// 特定ユーザーのみ無効化
+await queryClient.invalidateQueries({ queryKey: queryKeys.users.detail(userId) });
+
+// Bad: 文字列リテラルをコード全体に散在
+useQuery({ queryKey: ['user', id] });
+// 別の場所で
+useQuery({ queryKey: ['users', id] });  // キャッシュが分断される
+```
+
+**出典**:
+- [TanStack Query: Query Key Factories](https://tanstack.com/query/latest/docs/framework/react/community/lukemorales-query-key-factory) (TanStack公式)
+- [Effective React Query Keys](https://tkdodo.eu/blog/effective-react-query-keys) (TkDodo's Blog)
+
+**バージョン**: TanStack Query 5+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 7. Optimistic Update は useMutation の onMutate / onError / onSettled で実装する
+
+`useMutation` の3つのコールバック（`onMutate` でスナップショット取得と楽観的更新、
+`onError` でロールバック、`onSettled` で再フェッチ）を組み合わせて
+安全な楽観的更新を実現する。
+
+**根拠**:
+- `onMutate` でキャッシュを先行更新しUIの体感速度を向上させる
+- `onError` のコンテキストにスナップショットを渡すことで失敗時に確実にロールバックできる
+- `onSettled` は成功・失敗に関わらず実行されるため最終的なデータ整合を保証できる
+- `cancelQueries` による競合リクエストのキャンセルがロールバックの精度を高める
+
+**コード例**:
+```tsx
+// Good: useMutation の3コールバックで安全な楽観的更新
+function useLikePost() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (postId: string) =>
+      apiClient.POST('/posts/{id}/like', { params: { path: { id: postId } } }),
+
+    onMutate: async (postId) => {
+      // 進行中の再フェッチをキャンセル（楽観的更新を上書きさせない）
+      await queryClient.cancelQueries({ queryKey: queryKeys.posts.detail(postId) });
+
+      // 現在のキャッシュをスナップショット（ロールバック用）
+      const previousPost = queryClient.getQueryData<Post>(queryKeys.posts.detail(postId));
+
+      // 楽観的にキャッシュを更新
+      queryClient.setQueryData<Post>(queryKeys.posts.detail(postId), old =>
+        old ? { ...old, likeCount: old.likeCount + 1, isLiked: true } : old,
+      );
+
+      // onError に渡すコンテキストを返す
+      return { previousPost };
+    },
+
+    onError: (_err, postId, context) => {
+      // エラー時にスナップショットへロールバック
+      if (context?.previousPost) {
+        queryClient.setQueryData(queryKeys.posts.detail(postId), context.previousPost);
+      }
+      toast.error('いいねに失敗しました');
+    },
+
+    onSettled: (_data, _err, postId) => {
+      // 成功・失敗に関わらずサーバーから最新データを取得
+      queryClient.invalidateQueries({ queryKey: queryKeys.posts.detail(postId) });
+    },
+  });
+}
+
+// 使用例
+function PostCard({ post }: { post: Post }) {
+  const { mutate: likePost, isPending } = useLikePost();
+  return (
+    <button onClick={() => likePost(post.id)} disabled={isPending}>
+      {post.isLiked ? '❤️' : '🤍'} {post.likeCount}
+    </button>
+  );
+}
+
+// Bad: onMutate なしで楽観的更新なし（サーバーレスポンス後にUIが更新）
+const { mutate } = useMutation({
+  mutationFn: likePost,
+  onSuccess: () => queryClient.invalidateQueries({ queryKey: ['posts'] }),
+});
+```
+
+**出典**:
+- [TanStack Query: Optimistic Updates](https://tanstack.com/query/latest/docs/framework/react/guides/optimistic-updates) (TanStack公式)
+
+**バージョン**: TanStack Query 5+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`api-client/error-handling.md`](./error-handling.md) - HTTPエラーの処理戦略

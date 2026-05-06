@@ -240,11 +240,161 @@ jobs:
 ```
 
 **出典**:
-- [openapi-typescript: CI Integration](https://openapi-ts.dev/cli) (openapi-ts.dev)
+- [openapi-typescript: CLI Integration](https://openapi-ts.dev/cli) (openapi-ts.dev)
 
 **バージョン**: openapi-typescript 7+, @graphql-codegen/cli 5+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. openapi-typescript で OpenAPI spec から型を自動生成し、手動型定義を排除する
+
+OpenAPI スペックファイル（JSON/YAML）から `openapi-typescript` を使って型を生成し、
+手書きの interface/type 定義をゼロにする。
+CI でスペックとの整合を確認し、型の陳腐化を防ぐ。
+
+**根拠**:
+- 手書き型定義はバックエンドの変更に追随できず、型と実データの乖離がサイレントに発生する
+- `openapi-typescript` はパス・パラメータ・リクエストボディ・レスポンスの型を網羅的に生成する
+- 生成型は `paths` オブジェクトに集約されており、`openapi-fetch` の `createClient<paths>` と組み合わせると全エンドポイントが型付きになる
+- `$defs` や `allOf` / `oneOf` も正確に TypeScript の型へ変換される
+
+**コード例**:
+```bash
+# インストール
+npm install -D openapi-typescript
+
+# ローカルの OpenAPI ファイルから型を生成
+npx openapi-typescript ./openapi.yaml -o src/types/api.d.ts
+
+# リモート URL から直接生成
+npx openapi-typescript https://api.example.com/openapi.json -o src/types/api.d.ts
+
+# package.json スクリプト化
+# "generate:types": "openapi-typescript ./openapi.yaml -o src/types/api.d.ts"
+```
+
+```ts
+// src/types/api.d.ts（生成物 - 手動編集禁止）
+export interface paths {
+  '/users': {
+    get: { responses: { 200: { content: { 'application/json': { users: User[] } } } } };
+    post: { requestBody: { content: { 'application/json': CreateUserRequest } }; responses: { 201: { content: { 'application/json': User } } } };
+  };
+  '/users/{id}': {
+    get: { parameters: { path: { id: string } }; responses: { 200: { content: { 'application/json': User } }; 404: never } };
+  };
+}
+
+// lib/api-client.ts - 生成型を使って型安全なクライアントを構築
+import createClient from 'openapi-fetch';
+import type { paths } from '@/types/api';
+
+export const api = createClient<paths>({ baseUrl: '/api' });
+
+// 全エンドポイントが型付き
+const { data: users } = await api.GET('/users');
+//            ^^^^^ User[] | undefined
+
+const { data: newUser } = await api.POST('/users', {
+  body: { name: 'Alice', email: 'alice@example.com' },
+  //     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  //     CreateUserRequest に一致しないとコンパイルエラー
+});
+
+// Bad: 手書き型定義（バックエンド変更時に陳腐化する）
+interface User {        // APIと乖離しても TypeScript は気づかない
+  id: string;
+  name: string;
+  // email フィールドが追加されたがここに反映されていない
+}
+```
+
+**出典**:
+- [openapi-typescript Docs](https://openapi-ts.dev/introduction) (openapi-ts.dev)
+- [openapi-fetch Docs](https://openapi-ts.dev/openapi-fetch/) (openapi-ts.dev)
+
+**バージョン**: openapi-typescript 7+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. Zod によるランタイムバリデーションと型推論を統合する（z.infer）
+
+Zod スキーマを「型定義の唯一の正」として扱い、
+`z.infer<typeof Schema>` で TypeScript 型を派生させる。
+型定義とバリデーションロジックの二重管理を解消する。
+
+**根拠**:
+- `z.infer` を使うことでスキーマと型定義が常に同期され、手動での型更新が不要になる
+- フォームバリデーション（React Hook Form + Zod）やAPIレスポンス検証に同一スキーマを再利用できる
+- `z.discriminatedUnion` や `z.transform` を活用してレスポンスの正規化も型安全に行える
+- スキーマをファイル分割してフロント・バック（tRPC 等）で共有できる
+
+**コード例**:
+```ts
+// lib/schemas/post.ts
+import { z } from 'zod';
+
+// スキーマがすべての「型の正」
+export const PostSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().min(1).max(200),
+  status: z.enum(['draft', 'published', 'archived']),
+  publishedAt: z.string().datetime().nullable(),
+  tags: z.array(z.string()).default([]),
+  // APIが snake_case を返す場合、transform で camelCase に変換
+  author_id: z.string().uuid(),
+}).transform(data => ({
+  ...data,
+  authorId: data.author_id,  // キー名を正規化
+}));
+
+// z.infer で型を自動導出（手書き interface 不要）
+export type Post = z.infer<typeof PostSchema>;
+// => { id: string; title: string; status: 'draft' | 'published' | 'archived';
+//      publishedAt: string | null; tags: string[]; author_id: string; authorId: string }
+
+// フォームバリデーション用に部分スキーマを派生
+export const CreatePostSchema = PostSchema.innerType().pick({
+  title: true,
+  status: true,
+  tags: true,
+});
+export type CreatePostInput = z.infer<typeof CreatePostSchema>;
+
+// React Hook Form との統合
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+
+function CreatePostForm() {
+  const form = useForm<CreatePostInput>({
+    resolver: zodResolver(CreatePostSchema),
+    defaultValues: { status: 'draft', tags: [] },
+  });
+  // フォームの型とバリデーションが CreatePostSchema から自動導出
+}
+
+// APIレスポンス検証でも同じスキーマを再利用
+async function fetchPost(id: string): Promise<Post> {
+  const json = await api.GET('/posts/{id}', { params: { path: { id } } });
+  return PostSchema.parse(json.data);  // ランタイム検証 + transform 適用
+}
+
+// Bad: 型定義とバリデーションを別々に管理
+interface Post { title: string; status: string }  // Zod スキーマとズレが生じやすい
+const titleSchema = z.string().min(1);              // 型と分離して管理
+```
+
+**出典**:
+- [Zod: Type Inference](https://zod.dev/?id=type-inference) (Zod公式)
+- [React Hook Form: Zod Resolver](https://react-hook-form.com/docs/useform#resolver) (React Hook Form公式)
+
+**バージョン**: Zod 3+
+**確信度**: 高
+**最終更新**: 2026-05-06
 
 ---
 
