@@ -267,4 +267,13 @@ type SafeUser = NonNullableProperties<{
 **確信度**: 中
 **最終更新**: 2026-05-06
 
+#### 追加根拠 (2026-05-06)
+
+新たに以下のドキュメントで同じプラクティスが推奨された:
+- [TypeScript Handbook: Conditional Types](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Type%20Manipulation/Conditional%20Types.md) (TypeScript公式ドキュメント) ※2026-05-06に実際にfetch成功
+
+公式ドキュメントで分配的条件型の制御方法が明示的に記述されており、「`extends` の両側を角括弧で囲む（`[T] extends [any]`）」ことで非分配化できることが示されている。また `Extract`/`Exclude` などの標準ユーティリティ型が分配的条件型で実装されていることも言及されており、Union 型フィルタリングの基盤知識として重要であることが裏付けられた。さらに `infer` キーワードとの組み合わせで「宣言的に新しいジェネリック型変数を導入できる」という原則も強調されている。
+
+**確信度**: 既存（中）→ 高（実証付き）
+
 ---

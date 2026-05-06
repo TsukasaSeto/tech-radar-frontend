@@ -92,6 +92,15 @@ function render(state: AsyncState<User>) {
 **確信度**: 高
 **最終更新**: 2026-05-05
 
+#### 追加根拠 (2026-05-06)
+
+新たに以下のドキュメントで同じプラクティスが推奨された:
+- [TypeScript Handbook: Narrowing](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Narrowing.md) (TypeScript公式ドキュメント) ※2026-05-06に実際にfetch成功
+
+公式ドキュメントでも Discriminated Unions を「最も推奨されるパターン」として明示。特に `never` による網羅性チェック（exhaustiveness checking）が実装漏れ防止として強調されている。また `in` 演算子による型絞り込みでオプショナルプロパティは両ブランチに存在する点の注意も記載されており、判別子（discriminant）を持つ Union 型の優位性を裏付けている。
+
+**確信度**: 既存（高）→ 高（実証付きで継続）
+
 ---
 
 ### 3. `any` を禁止し、型が不明な場合は `unknown` を使う
@@ -291,6 +300,15 @@ type HandlerName = 'onClick' | 'onFocus' | 'onBlur' | 'onChange';
 **バージョン**: TypeScript 4.1+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+#### 追加根拠 (2026-05-06)
+
+新たに以下のドキュメントで同じプラクティスが推奨された:
+- [TypeScript Handbook: Template Literal Types](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Type%20Manipulation/Template%20Literal%20Types.md) (TypeScript公式ドキュメント) ※2026-05-06に実際にfetch成功
+
+公式ドキュメントでは `PropEventSource<T>` パターンが具体例として示されており、オブジェクトプロパティの変更を型安全に監視するイベントリスナーを Template Literal Types で実装できることが示されている。`on<Key extends string & keyof Type>(eventName: \`${Key}Changed\`, callback: (newValue: Type[Key]) => void)` というシグネチャで、コールバックが受け取る値の型まで自動的に正確になる。また「大規模な文字列 Union には事前コード生成を推奨する」という重要な制約も明記されており、組み合わせ爆発には注意が必要。
+
+**確信度**: 既存（高）→ 高（実証付きで継続）
 
 ---
 

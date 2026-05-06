@@ -215,3 +215,87 @@ type Nested = Awaited<Promise<Promise<string>>>;
 **バージョン**: TypeScript 4.5+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 6. Mapped Type の `-readonly` / `-?` モディファイアで修飾子を削除する
+
+Mapped Type のモディファイア前に `-` を付けると、全プロパティから `readonly` やオプショナル（`?`）を除去できる。
+`-readonly` でミュータブル型、`-?` で全プロパティを必須化した型を作れる。
+標準の `Required<T>` は `-?` で実装されており、カスタムユーティリティ型を自作する際の基礎パターン。
+
+**根拠**:
+- `Readonly<T>` の逆操作（`CreateMutable<T>`）が標準ユーティリティには存在しないため、`-readonly` で自作できる
+- `-?` は `Required<T>` の実装原理であり、ユーティリティ型の仕組みを理解するうえで重要
+- プレフィックスなしは `+`（追加）が暗黙適用されるため、`readonly` と `-readonly` の意味的対称性が明確
+
+**コード例**:
+```tsx
+// readonly を全プロパティから除去（CreateMutable）
+type CreateMutable<T> = {
+  -readonly [P in keyof T]: T[P];
+};
+
+type LockedConfig = { readonly host: string; readonly port: number };
+type MutableConfig = CreateMutable<LockedConfig>;
+// { host: string; port: number }（readonly なし）
+
+// オプショナルを全プロパティから除去（Concrete / Required 相当）
+type Concrete<T> = {
+  [P in keyof T]-?: T[P];
+};
+
+type PartialUser = { name?: string; age?: number };
+type RequiredUser = Concrete<PartialUser>;
+// { name: string; age: number }
+```
+
+**出典**:
+- [TypeScript Handbook: Mapped Types - Mapping Modifiers](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Type%20Manipulation/Mapped%20Types.md) (TypeScript公式ドキュメント) ※2026-05-06に実際にfetch成功
+
+**バージョン**: TypeScript 2.8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 7. Mapped Type の `as` 句でキーを再マッピングする（TypeScript 4.1+）
+
+Mapped Type の `[K in keyof T as NewKeyType]` 構文で、マッピング中にキー名を変換できる。
+テンプレートリテラル型と組み合わせてゲッター名を自動生成したり、
+`never` を返す条件型で特定プロパティを除外（フィルタリング）したりできる。
+
+**根拠**:
+- プロパティ名の変換（`name` → `getName`）を型システムで表現でき、ランタイムとの一致を型で保証できる
+- `Exclude<K, 'kind'>` パターンでキーをフィルタリングでき、インライン `Omit` として活用できる
+- Template Literal Types との組み合わせで Mapped Type の表現力が飛躍的に向上する
+
+**コード例**:
+```tsx
+// プロパティ名からゲッターメソッド名を生成
+type Getters<T> = {
+  [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K];
+};
+
+type User = { name: string; age: number };
+type UserGetters = Getters<User>;
+// { getName: () => string; getAge: () => number }
+
+// 条件型でキーをフィルタリング（特定プロパティを除外）
+type RemoveKindField<T> = {
+  [K in keyof T as Exclude<K, 'kind'>]: T[K];
+};
+
+type Shape = { kind: 'circle'; radius: number; color: string };
+type ShapeWithoutKind = RemoveKindField<Shape>;
+// { radius: number; color: string }
+```
+
+**出典**:
+- [TypeScript Handbook: Mapped Types - Key Remapping via as](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Type%20Manipulation/Mapped%20Types.md) (TypeScript公式ドキュメント) ※2026-05-06に実際にfetch成功
+
+**バージョン**: TypeScript 4.1+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
