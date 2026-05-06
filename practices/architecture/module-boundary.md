@@ -53,6 +53,17 @@ export default async function DashboardPage() {
 
 ---
 
+#### 追加根拠 (2026-05-06) — ルール1「依存の方向を一方向に保つ（Dependency Rule）」
+
+新たに以下のドキュメントで同じプラクティスが推奨された:
+- [Bulletproof React: Project Structure](https://raw.githubusercontent.com/alan2207/bulletproof-react/master/docs/project-structure.md) (alan2207 / masterブランチ) ※2026-05-06に実際にfetch成功
+
+Bulletproof React公式ドキュメントが「Unidirectional Architecture（一方向アーキテクチャ）」として同じ原則を明示: shared modules → features → app layer の方向にのみコードが流れ、features は app 層から import せず shared modules は features から独立を保つ。また "Avoid cross-feature imports; instead compose different features at the application level"（feature 間の直接依存を避け、アプリ層で組み合わせる）という具体的な指針を示している。ESLint の `import/no-restricted-paths` によるレイヤー境界違反の自動検出も推奨されており、本ルール4の実装パターンと一致する。
+
+**確信度**: 既存（高）→ 高（Bulletproof React公式ガイドで実証済み）
+
+---
+
 ### 2. 型定義はドメインロジックと一緒に置く
 
 共通の `types/` ディレクトリに型をまとめるのではなく、
