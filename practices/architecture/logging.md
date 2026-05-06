@@ -180,6 +180,139 @@ Sentry.init({
 
 ---
 
+### 4. ログレベルを環境別に制御し、開発時は詳細・本番は必要最小限にする
+
+環境変数 `LOG_LEVEL` でログレベルを動的に制御する。
+開発環境では `debug` 以上の全ログを出力し、本番環境では `warn` または `error` のみを出力する。
+ステージング環境は `info` 以上とし、パフォーマンスへの影響を最小化する。
+
+**根拠**:
+- `debug` ログを本番で出し続けるとログストレージコストが増大し、ノイズで重要なログが埋もれる
+- 環境変数でレベルを制御することでデプロイなしにログ粒度を変更できる
+- 本番での過剰なログはパフォーマンスに影響し（I/O増加）、PII 漏洩リスクも高まる
+
+**コード例**:
+```ts
+// src/lib/logger.ts
+import pino from 'pino';
+
+type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+
+function resolveLogLevel(): LogLevel {
+  // 環境変数で明示指定があればそれを優先
+  if (process.env.LOG_LEVEL) {
+    return process.env.LOG_LEVEL as LogLevel;
+  }
+  // 環境別デフォルト
+  switch (process.env.NODE_ENV) {
+    case 'production':  return 'warn';   // warn 以上のみ（error/fatal含む）
+    case 'test':        return 'error';  // テストでは error のみ（ログノイズ抑制）
+    default:            return 'debug';  // 開発環境は全レベル
+  }
+}
+
+export const logger = pino({
+  level: resolveLogLevel(),
+  // 本番はJSONそのまま（Datadogなどに流す）、開発は見やすく整形
+  transport: process.env.NODE_ENV === 'development'
+    ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss' } }
+    : undefined,
+});
+
+// 使用例（本番では debug は出力されない）
+logger.debug({ userId }, 'Cache hit for user');  // 開発のみ
+logger.info({ userId, action }, 'User action performed');  // 開発・staging
+logger.warn({ userId, reason }, 'Rate limit approaching');  // 全環境
+logger.error({ error, userId }, 'Payment failed');  // 全環境
+
+// Bad: 環境を問わず常に詳細ログを出力
+const logger = pino({ level: 'debug' }); // 本番でも debug が流れる
+```
+
+**出典**:
+- [Pino Docs: Log Level](https://getpino.io/#/docs/api?id=level-string) (Pino公式)
+- [OWASP: Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) (OWASP)
+
+**バージョン**: Pino 8+, Next.js 13+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. 構造化ログにリクエストコンテキスト（traceId・userId）を付与する
+
+サーバーサイドのログには `traceId`（リクエスト追跡ID）・`userId`・`requestPath` を
+必ずフィールドとして含め、JSON 構造化ログとして出力する。
+これにより複数サービスにまたがるリクエストのトレーシングが可能になる。
+
+**根拠**:
+- リクエストIDがないと、複数ユーザーの同時リクエストのログが混在して追跡できない
+- 構造化フィールドにより Datadog・CloudWatch Logs Insights での集計・フィルタリングが容易
+- `AsyncLocalStorage` を使えば明示的な引数渡しなしにコンテキストをスコープできる
+
+**コード例**:
+```ts
+// src/lib/request-context.ts
+import { AsyncLocalStorage } from 'async_hooks';
+import { randomUUID } from 'crypto';
+
+type RequestContext = {
+  traceId: string;
+  userId?: string;
+  requestPath?: string;
+};
+
+export const requestContext = new AsyncLocalStorage<RequestContext>();
+
+// src/lib/logger.ts
+import pino from 'pino';
+import { requestContext } from './request-context';
+
+const baseLogger = pino({ level: resolveLogLevel() });
+
+// コンテキストを自動付与するプロキシロガー
+export const logger = new Proxy(baseLogger, {
+  get(target, prop) {
+    const ctx = requestContext.getStore();
+    if (ctx && typeof target[prop as keyof typeof target] === 'function') {
+      return (obj: object, msg: string) =>
+        (target[prop as 'info'])({
+          traceId: ctx.traceId,
+          userId: ctx.userId,
+          path: ctx.requestPath,
+          ...obj,
+        }, msg);
+    }
+    return target[prop as keyof typeof target];
+  },
+});
+
+// src/middleware.ts (Next.js Middleware でコンテキストを設定)
+import { NextRequest, NextResponse } from 'next/server';
+import { requestContext } from '@/lib/request-context';
+import { randomUUID } from 'crypto';
+
+export function middleware(req: NextRequest) {
+  const traceId = req.headers.get('x-trace-id') ?? randomUUID();
+  const res = NextResponse.next();
+  res.headers.set('x-trace-id', traceId);
+  return res;
+}
+
+// ログ出力例（JSON）:
+// { "level": 30, "traceId": "abc-123", "userId": "user-456", "path": "/api/posts", "msg": "Post created" }
+```
+
+**出典**:
+- [Node.js Docs: AsyncLocalStorage](https://nodejs.org/api/async_context.html#class-asynclocalstorage) (Node.js公式)
+- [Pino Docs: Child Loggers](https://getpino.io/#/docs/child-loggers) (Pino公式)
+
+**バージョン**: Pino 8+, Next.js 13+, Node.js 16+
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`observability/logging.md`](../observability/logging.md) - ロギングの詳細ガイド（Pino 設定・ログレベル設計・PII マスキング）

@@ -170,3 +170,91 @@ const appUrl = clientEnv.NEXT_PUBLIC_APP_URL;
 **バージョン**: Next.js 13+, Zod 3+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `eslint-plugin-import` でモジュール境界違反を自動検出する
+
+`eslint-plugin-import` と `eslint-import-resolver-typescript` を使い、
+レイヤー間の不正な依存方向・循環インポートを CI で自動検出する。
+`no-restricted-imports` ルールと組み合わせることで、feature 間の直接依存も Lint エラーにできる。
+
+**根拠**:
+- コードレビューで依存方向のチェックを人手で行うのはスケールしない
+- `import/no-cycle` ルールが循環依存を早期に検出し、バンドルサイズの肥大化を防ぐ
+- `no-restricted-imports` でプロジェクト固有のレイヤー規則を Lint ルールとして明文化できる
+
+**コード例**:
+```jsonc
+// .eslintrc.json
+{
+  "plugins": ["import"],
+  "settings": {
+    "import/resolver": {
+      "typescript": { "alwaysTryTypes": true }
+    }
+  },
+  "rules": {
+    // 循環インポートを禁止
+    "import/no-cycle": ["error", { "maxDepth": 3 }],
+    // デフォルトエクスポートより名前付きエクスポートを推奨
+    "import/prefer-default-export": "off",
+    "import/no-default-export": "off",
+    // インポート順の統一
+    "import/order": [
+      "error",
+      {
+        "groups": ["builtin", "external", "internal", "parent", "sibling", "index"],
+        "pathGroups": [
+          { "pattern": "@/app/**", "group": "internal", "position": "before" },
+          { "pattern": "@/features/**", "group": "internal" },
+          { "pattern": "@/shared/**", "group": "internal", "position": "after" }
+        ],
+        "newlines-between": "always",
+        "alphabetize": { "order": "asc" }
+      }
+    ]
+  },
+  "overrides": [
+    {
+      // entities 層: shared より上位への依存を禁止
+      "files": ["src/entities/**/*.ts", "src/entities/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "group": ["@/features/*"], "message": "entities から features への依存は禁止です" },
+              { "group": ["@/pages/*"], "message": "entities から pages への依存は禁止です" }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      // features 層: 他 feature への直接依存を禁止
+      "files": ["src/features/**/*.ts", "src/features/**/*.tsx"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              { "group": ["@/pages/*"], "message": "features から pages への依存は禁止です" }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
+```
+
+**出典**:
+- [eslint-plugin-import](https://github.com/import-js/eslint-plugin-import) (import-js / GitHub)
+- [Feature-Sliced Design: Linting](https://feature-sliced.design/docs/guides/linting) (Feature-Sliced Design公式 / 2023)
+
+**バージョン**: eslint-plugin-import 2.29+, ESLint 8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
