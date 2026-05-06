@@ -7,7 +7,7 @@
 要素の取得は `getByRole`、`getByLabelText`、`getByText` の順で優先する。
 `getByTestId` は最後の手段とする。
 
-**根拠**:
+**根拠**::
 - `getByRole` はアクセシビリティツリーを使うため、アクセシブルなUIを自然と促進する
 - ロールで取得するとリファクタリング（クラス名変更・マークアップ変更）に強い
 - `data-testid` は実装詳細への依存であり、本番コードを汚染する
@@ -225,3 +225,67 @@ it('should handle 404', async () => {
 **バージョン**: msw 2+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. Accessibility Query の優先順位を守り、アクセシビリティを担保する
+
+Testing Library のクエリ選択はアクセシビリティツリーを優先し、
+`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` の順序を厳守する。
+このルールに従うことで、テストがアクセシビリティ検証を兼ねる「二重の安全網」になる。
+
+**根拠**:
+- `getByRole` が通過することはスクリーンリーダーが認識できることを意味し、a11y を自動的に保証する
+- ロールと名前（`name` オプション）の組み合わせは ARIA 仕様の正確な反映であり、HTML 構造の変更に対して安定している
+- `getByTestId` に頼るコンポーネントは `aria-label` や `role` が欠落している可能性があり、アクセシビリティ負債を生む
+
+**コード例**:
+```tsx
+import { render, screen } from '@testing-library/react';
+
+// コンポーネント例
+function ProductCard({ product }: { product: Product }) {
+  return (
+    <article aria-label={`商品: ${product.name}`}>
+      <h2>{product.name}</h2>
+      <img src={product.imageUrl} alt={product.name} />
+      <p>{product.description}</p>
+      <button aria-label={`${product.name}をカートに追加`}>
+        カートに追加
+      </button>
+    </article>
+  );
+}
+
+// Good: Accessibility Query を優先
+it('should render product card with accessible elements', () => {
+  render(<ProductCard product={mockProduct} />);
+
+  // article ロールで取得（aria-label で特定）
+  expect(screen.getByRole('article', { name: '商品: テスト商品' })).toBeInTheDocument();
+
+  // 見出しロールで取得
+  expect(screen.getByRole('heading', { level: 2, name: 'テスト商品' })).toBeInTheDocument();
+
+  // img の alt テキストで取得
+  expect(screen.getByRole('img', { name: 'テスト商品' })).toBeInTheDocument();
+
+  // ボタンは aria-label で特定
+  expect(screen.getByRole('button', { name: 'テスト商品をカートに追加' })).toBeEnabled();
+});
+
+// Bad: testid や class に頼る
+it('bad example', () => {
+  render(<ProductCard product={mockProduct} />);
+  expect(screen.getByTestId('product-card')).toBeInTheDocument(); // a11y 担保なし
+  expect(document.querySelector('.add-to-cart-btn')).toBeInTheDocument(); // 実装詳細
+});
+```
+
+**出典**:
+- [Testing Library: About Queries - Priority](https://testing-library.com/docs/queries/about#priority) (Testing Library公式)
+- [WAI-ARIA Roles](https://www.w3.org/TR/wai-aria/#role_definitions) (W3C / WAI-ARIA仕様)
+
+**バージョン**: @testing-library/react 14+
+**確信度**: 高
+**最終更新**: 2026-05-06

@@ -154,3 +154,130 @@ describe('formatCurrency', () => {
 **バージョン**: Vitest 1+, Jest 27+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `vi.mock` と `vi.spyOn` を目的に応じて使い分ける
+
+モジュール全体を差し替える場合は `vi.mock`、既存オブジェクトの一部メソッドだけを監視・置換する場合は `vi.spyOn` を使う。
+用途を混同するとテストの意図が不明確になり、意図しない副作用が生じる。
+
+**根拠**:
+- `vi.mock` はモジュール解決時点でホイストされ、インポート後の全呼び出しを置換するため副作用の完全な排除に向く
+- `vi.spyOn` は元の実装を保持しつつ呼び出しを記録できるため、実装の一部だけを差し替えたい場合に適する
+- `vi.spyOn` は `afterEach(() => vi.restoreAllMocks())` と組み合わせることで元の実装への復元が保証される
+
+**コード例**:
+```ts
+import { vi, describe, it, expect, afterEach } from 'vitest';
+import * as api from '@/lib/api';
+import { fetchUser } from '@/lib/api';
+
+// vi.mock: モジュール全体を差し替え（副作用を完全に除去したい場合）
+vi.mock('@/lib/api', () => ({
+  fetchUser: vi.fn().mockResolvedValue({ id: '1', name: 'Alice' }),
+  updateUser: vi.fn().mockResolvedValue({ success: true }),
+}));
+
+// vi.spyOn: 特定メソッドのみを監視・置換（元実装を保持したい場合）
+describe('UserService', () => {
+  afterEach(() => {
+    vi.restoreAllMocks(); // spyOn で変更したメソッドを元に戻す
+  });
+
+  it('should call fetchUser with correct id', async () => {
+    // Good: spyOn で特定メソッドだけ監視
+    const spy = vi.spyOn(api, 'fetchUser').mockResolvedValue({ id: '42', name: 'Bob' });
+
+    const result = await api.fetchUser('42');
+
+    expect(spy).toHaveBeenCalledWith('42');
+    expect(result.name).toBe('Bob');
+  });
+
+  it('should NOT use vi.mock when only observing a single method', async () => {
+    // Bad: モジュール全体をモックすると他のエクスポートも巻き込む
+    // vi.mock('@/lib/api') <- 不要なモック範囲の拡大
+  });
+});
+```
+
+**出典**:
+- [Vitest Docs: Mocking](https://vitest.dev/guide/mocking) (Vitest公式)
+- [Vitest API: vi.mock / vi.spyOn](https://vitest.dev/api/vi#vi-mock) (Vitest公式)
+
+**バージョン**: Vitest 2+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. `vi.useFakeTimers()` でタイマー依存のロジックをコントロールする
+
+`setTimeout`・`setInterval`・`Date` などの時間依存ロジックは `vi.useFakeTimers()` で制御し、
+実際の時間待機なしにテストを高速・安定化させる。
+
+**根拠**:
+- 実時間を待つテストは不安定（フレーキー）になりやすく CI で失敗しやすい
+- `vi.advanceTimersByTime()` で時間を任意に進められるため、debounce・throttle・ポーリングのテストが容易になる
+- `vi.setSystemTime()` で現在時刻を固定することで、日付依存のロジックを決定論的にテストできる
+
+**コード例**:
+```ts
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { debounce } from '@/lib/utils';
+import { formatRelativeTime } from '@/lib/date';
+
+describe('debounce', () => {
+  beforeEach(() => {
+    vi.useFakeTimers(); // タイマーを偽物に切り替え
+  });
+
+  afterEach(() => {
+    vi.useRealTimers(); // テスト後に必ず元に戻す
+  });
+
+  it('should not call function before delay', () => {
+    const fn = vi.fn();
+    const debounced = debounce(fn, 500);
+
+    debounced();
+    vi.advanceTimersByTime(400); // 400ms 進める（まだ呼ばれない）
+    expect(fn).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100); // さらに 100ms（合計 500ms）
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('should reset timer on repeated calls', () => {
+    const fn = vi.fn();
+    const debounced = debounce(fn, 500);
+
+    debounced();
+    vi.advanceTimersByTime(300);
+    debounced(); // タイマーリセット
+    vi.advanceTimersByTime(300); // 合計 600ms だが最後の呼び出しから 300ms しか経っていない
+    expect(fn).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(200); // 最後の呼び出しから 500ms 経過
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('formatRelativeTime', () => {
+  it('should return "1時間前" for 1 hour ago', () => {
+    // 現在時刻を固定
+    vi.setSystemTime(new Date('2026-05-06T12:00:00Z'));
+    const oneHourAgo = new Date('2026-05-06T11:00:00Z');
+    expect(formatRelativeTime(oneHourAgo)).toBe('1時間前');
+  });
+});
+```
+
+**出典**:
+- [Vitest API: vi.useFakeTimers](https://vitest.dev/api/vi#vi-usefaketimers) (Vitest公式)
+- [Vitest API: vi.advanceTimersByTime](https://vitest.dev/api/vi#vi-advancetimersbyTime) (Vitest公式)
+
+**バージョン**: Vitest 2+
+**確信度**: 高
+**最終更新**: 2026-05-06
