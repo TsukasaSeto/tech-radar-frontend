@@ -8,7 +8,7 @@
 カスタム CSS は Tailwind のシステムで表現できない場合のみ書く。
 
 **根拠**:
-- ユーティリティファーストでCSSファイルの肖大化を防ぐ
+- ユーティリティファースでCSSファイルの肖大化を防ぐ
 - クラス名を読むだけでスタイルが把握できる
 - 使われていないスタイルは PurgeCSS で自動削除される
 
@@ -402,7 +402,7 @@ form:has(input:invalid) .submit-button {
 - CSS 詳細度の衝突は大規模プロジェクトで管理困難になり `!important` の連鎖を招く
 - `@layer` はレイヤーの宣言順序で優先順位が決まるため、詳細度ハックが不要になる
 - Tailwind CSS v4 は内部的にカスケードレイヤーを使用しており、サードパーティCSSとの競合を防ぐ構造が標準化された
-- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、緊急の上書きもシンプルに書ける
+- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、編急の上書きもシンプルに書ける
 
 **コード例**:
 ```css
@@ -448,9 +448,69 @@ form:has(input:invalid) .submit-button {
 ```
 
 **出典**:
-- [最近のCSS、全然追えてなかった。ここ1〜2年で使えるようになった機能10選](https://zenn.dev/seekseep/articles/css-new-features-catch-up-2026) (Zenn seekseep / 2026) ※2026-05-06に実際にfetch成功
+- [最近のCSS、全然追えてなかった。ここㅲ1。2年で使えるようになった機能10選](https://zenn.dev/seekseek/articles/css-new-features-catch-up-2026) (Zenn seekseek / 2026) ※2026-05-06に実際にfetch成功
 - [MDN: @layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer) (MDN Web Docs)
 
 **バージョン**: Chrome 99+, Firefox 97+, Safari 15.4+（Widely Available）
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 8. `scrollbar-gutter: stable` でスクロールバー出現によるレイアウトシフトを防ぐ
+
+`scrollbar-gutter: stable` を `:root` に設定し、スクロールバーが出現・消失する際にページレイアウトがガタつく CLS を防ぐ。
+
+**根拠**:
+- モーダル表示時の `overflow: hidden` 切り替えなど、スクロールバーの表示・非表示でページ幅が変化し CLS が発生する
+- `scrollbar-gutter: stable` はコンテンツが overflow しない場合でもスクロールバー分のスペースを確保し、幅の変動を防ぐ
+- CSS 1行で解決でき、JavaScript での `padding-right` 補正など回避策のハックが不要になる
+- Chrome 94+、Firefox 97+、Safari 15.8+ でサポート済み（Widely Available）
+
+**コード例**:
+```css
+/* globals.css */
+:root {
+  scrollbar-gutter: stable;
+}
+```
+
+```css
+/* モーダル表示時もレイアウトシフトが発生しない */
+
+/* Bad: overflow: hidden でスクロールバーが消えてページ幅が変化する */
+body.modal-open {
+  overflow: hidden;
+  /* スクロールバー分（絀17px）ページ幅が広がり、コンテンツが右にシフト */
+}
+
+/* Good: scrollbar-gutter: stable でスクロールバー分のスペースを常に確保 */
+:root {
+  scrollbar-gutter: stable;
+}
+
+body.modal-open {
+  overflow: hidden;
+  /* スクロールバーが消えても gutter（余白）が維持されるためレイアウト不変 */
+}
+```
+
+```tsx
+// Next.js での推奨設定: app/globals.css に追加するだけ
+// layout.tsx で globals.css をインポートすれば全ページに適用される
+
+// useEffect での padding 補正（アンチパターン）が不要になる
+// Bad:
+// useEffect(() => {
+//   document.body.style.paddingRight =
+//     `${window.innerWidth - document.documentElement.clientWidth}px`;
+// }, [isModalOpen]);
+```
+
+**出典**:
+- [The Most Underrated CSS Property Nobody Talks About: scrollbar-gutter](https://medium.com/@konstantinkeylin/the-most-underrated-css-property-nobody-talks-about-scrollbar-gutter-2ca598352675) (Medium konstantinkeylin / 2026-05) ※2026-05-06に実際にfetch成功
+- [MDN: scrollbar-gutter](https://developer.mozilla.org/en-US/docs/Web/CSS/scrollbar-gutter) (MDN Web Docs)
+
+**バージョン**: Chrome 94+, Firefox 97+, Safari 15.8+
 **確信度**: 高
 **最終更新**: 2026-05-06
