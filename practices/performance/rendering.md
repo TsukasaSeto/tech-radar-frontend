@@ -166,3 +166,145 @@ function AppProviders({ children }: { children: React.ReactNode }) {
 **バージョン**: React 18+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `memo`・`useMemo`・`useCallback` の過剰適用を避ける
+
+最適化フックは「計測で問題が確認されたコンポーネント」にのみ適用する。
+全コンポーネントへの予防的な適用はコードの複雑さを増すだけで逆効果になる。
+
+**根拠**:
+- `React.memo` は毎回 props のシャロー比較を行うため、それ自体がコストを持つ
+- `useMemo`・`useCallback` もクロージャとキャッシュのメモリコストがある
+- Reactの再レンダリング自体は軽量であり、DOM差分計算がボトルネックになることは少ない
+- 誤った依存配列（空配列・過剰な依存）はバグの原因になる
+
+**コード例**:
+```tsx
+// Bad: 全コンポーネントを予防的に memo でラップする
+const SimpleLabel = React.memo(function SimpleLabel({ text }: { text: string }) {
+  // 軽量なコンポーネントのメモ化は props 比較のオーバーヘッドが再レンダリングコストを上回る
+  return <span>{text}</span>;
+});
+
+// Bad: 単純な値の計算に useMemo を使う
+function Component({ items }: { items: string[] }) {
+  // 単純な配列操作に useMemo は不要（メモ化コスト > 計算コスト）
+  const count = useMemo(() => items.length, [items]);
+  return <div>{count}</div>;
+}
+
+// Good: 高コストな計算（重いフィルタリング・ソート）にのみ useMemo を適用
+function ExpensiveFilterList({ items, filter }: { items: Item[]; filter: string }) {
+  // Profiler で計測後、実際にボトルネックと確認された場合のみ適用
+  const filtered = useMemo(
+    () => items.filter(item => heavyMatchFunction(item, filter)),
+    [items, filter]
+  );
+  return <ItemList items={filtered} />;
+}
+
+// Good: memo と useCallback の組み合わせは、子が重い場合のみ意味がある
+const HeavyChild = React.memo(HeavyChildComponent); // Profilerで重いと確認済み
+
+function Parent() {
+  // HeavyChild が memo されていて初めて useCallback が意味を持つ
+  const handleChange = useCallback((value: string) => {
+    // ...
+  }, []);
+  return <HeavyChild onChange={handleChange} />;
+}
+```
+
+**出典**:
+- [React Docs: You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) (React公式)
+- [React Docs: memo](https://react.dev/reference/react/memo) (React公式)
+
+**バージョン**: React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. `startTransition` でレンダリング優先度を制御し UI の応答性を保つ
+
+ユーザーの即時フィードバックを必要とする更新と、時間のかかる二次的な更新を
+`startTransition` で分離し、入力遅延をなくす。
+
+**根拠**:
+- React 18 の Concurrent Features により、更新に優先度をつけられるようになった
+- `startTransition` で囲まれた更新は「非緊急」として扱われ、緊急な更新（入力反映など）が優先される
+- タブ切り替え・検索フィルタリング・ページ遷移などの重い UI 更新に有効
+- INP（Interaction to Next Paint）の改善に直接寄与する
+
+**コード例**:
+```tsx
+'use client';
+import { startTransition, useTransition, useState } from 'react';
+
+// パターン1: useTransition でペンディング状態を表示
+function TabSwitcher({ tabs }: { tabs: Tab[] }) {
+  const [activeTab, setActiveTab] = useState(tabs[0].id);
+  const [isPending, startTransition] = useTransition();
+
+  function handleTabChange(tabId: string) {
+    // タブの見た目の変更は即座に（緊急）
+    // 重いコンテンツレンダリングは非緊急として後回し
+    startTransition(() => {
+      setActiveTab(tabId);
+    });
+  }
+
+  return (
+    <div>
+      <div role="tablist">
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeTab}
+            onClick={() => handleTabChange(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {/* isPending 中はタブコンテンツを薄く表示（UIがブロックされない） */}
+      <div style={{ opacity: isPending ? 0.6 : 1 }}>
+        <TabContent tabId={activeTab} />
+      </div>
+    </div>
+  );
+}
+
+// パターン2: startTransition（インポート版）でルーター遷移を最適化
+import { startTransition } from 'react';
+import { useRouter } from 'next/navigation';
+
+function NavigationButton({ href, children }: { href: string; children: React.ReactNode }) {
+  const router = useRouter();
+
+  return (
+    <button
+      onClick={() => {
+        startTransition(() => {
+          router.push(href);  // ページ遷移を非緊急として処理
+        });
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+```
+
+**出典**:
+- [React Docs: startTransition](https://react.dev/reference/react/startTransition) (React公式)
+- [React Docs: useTransition](https://react.dev/reference/react/useTransition) (React公式)
+
+**バージョン**: React 18+, Next.js 13+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---

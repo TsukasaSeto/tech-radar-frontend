@@ -59,7 +59,7 @@ const DataChart = dynamic(
 ### 2. バンドルアナライザーで依存関係のサイズを可視化する
 
 `@next/bundle-analyzer` でバンドルの中身を可視化し、
-肖大化した依存ライブラリを特定・置き換えする。
+肥大化した依存ライブラリを特定・置き換えする。
 
 **根拠**:
 - バンドルサイズの問題は可視化しなければ発見が困難
@@ -164,3 +164,152 @@ async function PriceDisplay({ productId }: { productId: string }) {
 **バージョン**: Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `import()` による動的インポートとRoute-based Code Splitting を実装する
+
+ページ単位（Route-based）でコードを分割し、現在のルートに必要なJavaScriptのみを
+読み込む。Vite・Webpack どちらでも `import()` で実現できる。
+
+**根拠**:
+- ユーザーが訪問しないページのJSは初期ロード時に不要
+- Route-based splitting は最もコスト対効果が高いコード分割戦略
+- Next.js App Router はページコンポーネントを自動的にルートごとに分割するが、
+  ページ内の重い機能モジュールは追加で動的インポートが必要
+
+**コード例**:
+```tsx
+// Vite + React Router でのRoute-based Code Splitting
+import { lazy, Suspense } from 'react';
+import { Routes, Route } from 'react-router-dom';
+
+// lazy() で各ページコンポーネントを動的インポート
+const HomePage = lazy(() => import('@/pages/HomePage'));
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+// → それぞれ別のチャンクに分割される
+
+export function AppRouter() {
+  return (
+    <Suspense fallback={<PageSkeleton />}>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
+      </Routes>
+    </Suspense>
+  );
+}
+
+// ページ内の機能モジュールも動的インポートで遅延読み込み
+// （PDFエクスポートなど、特定アクション時のみ必要な機能）
+async function handleExportPDF() {
+  // クリック時に初めて読み込む（初期バンドルに含めない）
+  const { generatePDF } = await import('@/lib/pdf-generator');
+  await generatePDF(currentData);
+}
+
+// Next.js App Router: ページは自動分割されるが、ページ内コンポーネントは手動
+import dynamic from 'next/dynamic';
+
+// 重い機能は明示的に動的インポート
+const MapComponent = dynamic(() => import('@/components/MapComponent'), {
+  loading: () => <MapSkeleton />,
+  ssr: false,
+});
+```
+
+**出典**:
+- [MDN: import() (Dynamic import)](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/import) (MDN Web Docs)
+- [Vite Docs: Code Splitting](https://vite.dev/guide/features#dynamic-import) (Vite公式)
+
+**バージョン**: React 18+, Vite 5+, Next.js 13+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. Bundle Analyzer によるサイズ検証を CI に組み込む
+
+バンドルサイズの増大をプルリクエスト段階で検知するため、CI に自動チェックを組み込む。
+人手によるローカル確認では見落としが発生しやすい。
+
+**根拠**:
+- 依存ライブラリの追加・アップデートでバンドルサイズが無自覚に増大するリスクがある
+- CI で size budget を設定することで、レグレッションを自動検出できる
+- PRごとにサイズ差分をコメントで可視化することでレビュー品質が向上する
+
+**コード例**:
+```yaml
+# .github/workflows/bundle-size.yml
+name: Bundle Size Check
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  bundle-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build with bundle analysis
+        run: ANALYZE=true npm run build
+        env:
+          ANALYZE: true
+
+      # bundlesize パッケージでサイズ上限を検証
+      - name: Check bundle size limits
+        run: npx bundlesize
+```
+
+```json
+// package.json: bundlesize の設定
+{
+  "bundlesize": [
+    {
+      "path": ".next/static/chunks/pages/*.js",
+      "maxSize": "100 kB"  // 各ページチャンクの上限
+    },
+    {
+      "path": ".next/static/chunks/framework-*.js",
+      "maxSize": "250 kB"  // React フレームワーク
+    },
+    {
+      "path": ".next/static/css/*.css",
+      "maxSize": "50 kB"   // CSS の上限
+    }
+  ]
+}
+```
+
+```ts
+// next.config.ts: ビルド時にサイズレポートを出力
+const nextConfig = {
+  experimental: {
+    // ビルドアウトプットにバンドルサイズの詳細を含める
+    bundlePagesRouterDependencies: true,
+  },
+};
+```
+
+**出典**:
+- [bundlesize GitHub](https://github.com/siddharthkp/bundlesize) (siddharthkp / OSS)
+- [Next.js Docs: Building Your Application - Optimizing](https://nextjs.org/docs/app/building-your-application/optimizing/package-bundling) (Next.js公式)
+
+**バージョン**: Next.js 13+, GitHub Actions
+**確信度**: 中
+**最終更新**: 2026-05-06
+
+---
