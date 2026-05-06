@@ -145,3 +145,15 @@ function UserProfile({ userId }: { userId: string }) {
 **バージョン**: React 18+, TanStack Query v5+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「状態は最も近い共通の親コンポーネントに置く（State Colocation）」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [You Might Not Need an Effect](https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/learn/you-might-not-need-an-effect.md) (reactjs/react.dev / mainブランチ) ※2026-05-06に実際にfetch成功
+- [Zustandで始める「一番シンプルな」React状態管理](https://zenn.dev/yasuhikasa/articles/48d93374b240db) (Zenn / 2026-05) ※2026-05-06に実際にfetch成功
+
+You Might Not Need an Effect では「URL を状態として持つ」「store identifiers not derived values（IDを保持し、データは導出する）」など、状態の最小化と局所化の具体例を多数示している。Zustand 記事は「必要な状態や関数だけをセレクトして取り出す（Selective State Retrieval）」を推奨しており、グローバルストアを使う場合でも「使うスライスだけを購読する」ことで不必要な再レンダリングを防ぐパターンを解説。コロケーションの原則はグローバル状態ツールを使う際にも適用できる（ストアの購読範囲を最小化する形で）。
+
+**確信度**: 既存（高）→ 高（公式文書 + コミュニティ記事で実証済み）

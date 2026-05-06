@@ -233,3 +233,13 @@ import { LoginForm } from '@/features/auth'; // 境界のみ経由
 **最終更新**: 2026-05-06
 
 ---
+
+#### 追加根拠 (2026-05-06) — ルール5「バレルエクスポート（index.ts）の過剰使用を避ける」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [なぜ大規模ではバレルエクスポートが使えないのか](https://zenn.dev/fujishu/articles/c7c7799140b488) (Zenn fujishu / 2026) ※2026-05-06に実際にfetch成功
+- [Bulletproof React: Project Structure](https://raw.githubusercontent.com/alan2207/bulletproof-react/master/docs/project-structure.md) (alan2207 / masterブランチ) ※2026-05-06に実際にfetch成功
+
+Zenn記事が数学的根拠と実測データを提示: 1ファイルが barrel から import するとき取り込まれる不要モジュールの割合は (N - k) / N（Nはモジュール総数、kは実際に必要なモジュール数）。プロジェクト規模が大きくなるほどNが増大し、オーバーヘッド率が1に収束する。実測でバレルexport 使用時のコンパイル 7.44s vs 直接インポート 5.98s（1.55秒 = 約21%改善）。Bulletproof React公式ドキュメントも「barrel filesを使わずにファイルを直接インポートすること」を明示推奨し、Viteのtree-shakingを有効に維持する目的で feature 内部は直接パス参照を原則にしている。
+
+**確信度**: 既存（高）→ 高（数学的根拠 + 実測コンパイル時間 + 公式ガイド実証済み）

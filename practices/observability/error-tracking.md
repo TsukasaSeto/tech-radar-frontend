@@ -389,8 +389,103 @@ Sentry.init({
 
 ---
 
+### 7. `ignoreErrors` / `thirdPartyErrorFilterIntegration` / `beforeSend` の3層でノイズを削減する
+
+Sentry に送信するイベントを3つの層で段階的にフィルタリングし、
+アクション可能なエラーのみをアラートに繋げる。
+
+**根拠**:
+- ブラウザ拡張機能・サードパーティスクリプト・ResizeObserver 等のノイズが大量に入るとアラートが機能しない
+- `ignoreErrors` は既知のノイズパターンを送信前に弾く（処理コストが最小）
+- `thirdPartyErrorFilterIntegration` は自社コードのスタックフレームが一切含まれないエラーを自動排除する
+- `beforeSend` でルールに収まらない残余ノイズや、`unhandledRejection` の不正シリアライズを修正・フィルタする
+
+**コード例**:
+```ts
+// instrumentation-client.ts
+import * as Sentry from '@sentry/nextjs';
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+
+  // 層1: 既知のノイズパターンをパターンマッチで排除
+  ignoreErrors: [
+    /ResizeObserver loop/,               // ブラウザ内部ノイズ
+    /Network request failed/,            // ネットワーク一時エラー
+    /Loading chunk \d+ failed/,          // 再ロードで解消する ChunkLoadError
+    /Non-Error promise rejection/,       // Object 等の非 Error リジェクション
+  ],
+
+  integrations: [
+    // 層2: 自社コードフレームを持たないサードパーティエラーを排除
+    Sentry.thirdPartyErrorFilterIntegration({
+      filterKeys: ['your-domain.com'],   // 自社スクリプトのドメインを指定
+      behaviour: 'drop-error-if-contains-third-party-frames-only',
+    }),
+  ],
+
+  // 層3: 残余ノイズと不正シリアライズの正規化
+  beforeSend(event, hint) {
+    const error = hint.originalException;
+
+    // unhandledRejection で value が '[object Object]' になる不正シリアライズを修正
+    const firstValue = event.exception?.values?.[0];
+    if (firstValue?.value === '[object Object]' || firstValue?.value === 'undefined') {
+      firstValue.value = error
+        ? JSON.stringify(error, Object.getOwnPropertyNames(error))
+        : 'Unknown error';
+    }
+
+    return event;
+  },
+});
+```
+
+**出典**:
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
+
+**バージョン**: @sentry/nextjs 8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計
 - [`observability/logging.md`](./logging.md) - 構造化ロギング
 - [`api-client/error-handling.md`](../api-client/error-handling.md) - API エラーの分類と処理
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「Sentry を Next.js に統合し、全環境でエラーを自動キャプチャする」
+
+新たに以下のソースでエラーカバレッジの拡張パターンが確認された:
+- [getsentry/sentry-javascript packages/nextjs README](https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/packages/nextjs/README.md) (Sentry公式 / developブランチ) ※2026-05-06に実際にfetch成功
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
+
+`Sentry.setUser()` / `Sentry.setTag()` でユーザーコンテキストを付与し、イベントを個人レベルでフィルタ・検索できるようになる。React 19 では `createRoot` に3種のエラーハンドラコールバックが追加され、`global-error.tsx` だけでは捕捉できなかったカテゴリをカバーできる: `onUncaughtError`（イベントハンドラ・非同期・setTimeout 内のエラー）、`onCaughtError`（ErrorBoundary でキャッチされたエラー — `Sentry.ErrorBoundary` 未使用時でも捕捉可）、`onRecoverableError`（ハイドレーションミスマッチ等 React が自動回復するエラー、`level: 'warning'` で記録推奨）。
+
+**確信度**: 既存（高）→ 高（React 19 の追加エラーカテゴリを実践記事で確認）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール2「本番では tracesSampleRate を 0.1 以下に設定し、コストを管理する」
+
+新たに以下の記事でエラーレベルの動的サンプリングパターンが示された:
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
+
+トレースサンプリング（`tracesSampleRate`）とは独立して、エラーイベント自体もサンプリングできる: `beforeSend` 内で通常エラーを 25% のみ通過させ、クリティカルパス（checkout・auth・payment 等）のエラーは 100% 送信する。この2段階サンプリングにより Sentry の月間イベント消費量を大幅に削減しながら、重要エラーを取りこぼさない。
+
+**確信度**: 既存（高）→ 高（エラーレベルサンプリングの2段階パターンを実践記事で確認）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール4「Source Map をビルド時に自動アップロードし、本番のスタックトレースを可読にする」
+
+新たに以下の記事で Source Map のリリース管理パターンが示された:
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
+
+`getsentry/action-release@v1` GitHub Action を使うと、デプロイ後に自動でリリースを作成し Source Map をアップロードできる。リリース名に "Application@1.0.0+202511100932"（名前+バージョン+タイムスタンプ）フォーマットを採用すると、Sentry 上でのリリース間比較・時系列フィルタリングが可能になる。`dist` を "yyyyMMddHHmm" 形式のタイムスタンプにすることで、同一バージョン内での複数デプロイも区別できる。
+
+**確信度**: 既存（高）→ 高（GitHub Actions リリース連携と命名規則を実践記事で確認）

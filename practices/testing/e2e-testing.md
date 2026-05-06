@@ -307,3 +307,26 @@ test.describe('視覚的回帰テスト', () => {
 **バージョン**: Playwright 1.40+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「E2E テストはユーザーの重要なジャーニーに絞る」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Playwright README](https://raw.githubusercontent.com/microsoft/playwright/main/README.md) (microsoft/playwright / mainブランチ) ※2026-05-06に実際にfetch成功
+
+Playwright の公式 README は3つの重要な実装詳細を強調: (1) **Auto-waiting** — "No artificial timeouts. Playwright waits for elements to be actionable, and assertions automatically retry until conditions are met." 人工的な `setTimeout` や `waitForTimeout` は不要で、`await expect(locator).toBeVisible()` のようなアサーションが自動リトライを行う。(2) **User-centric locators** — `page.getByRole()`, `page.getByLabel()`, `page.getByPlaceholder()`, `page.getByTestId()` を優先し、脆弱な CSS セレクタを避ける。(3) **トレース/デバッグ** — 失敗時に実行トレース・スクリーンショット・動画を自動保存し、Trace Viewer で「すべてのアクション・DOMスナップショット・ネットワークリクエスト・コンソールメッセージ」を詳細確認できる。`trace: 'on-first-retry'` 設定（rule 1 のコード例に記載）はこの機能を活用する推奨設定。
+
+**確信度**: 既存（高）→ 高（公式 README で実証済み）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール2「Page Object Model でテストコードを保守しやすくする」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Playwright README](https://raw.githubusercontent.com/microsoft/playwright/main/README.md) (microsoft/playwright / mainブランチ) ※2026-05-06に実際にfetch成功
+- [React Testing Library README](https://raw.githubusercontent.com/testing-library/react-testing-library/main/README.md) (testing-library / mainブランチ) ※2026-05-06に実際にfetch成功
+
+Playwright README は「Page Objects Pattern for maintainable, scalable test suites」として POM を明示推奨。React Testing Library README はフレームワーク横断で「The more your tests resemble the way your software is used, the more confidence they can give you.」という哲学を提示。テスト実装の詳細（内部状態・コンポーネント構造）ではなくユーザーの操作（what）に着目することが、POM と RTL 両方で共通した原則として確認された。
+
+**確信度**: 既存（高）→ 高（複数の公式 README で実証済み）

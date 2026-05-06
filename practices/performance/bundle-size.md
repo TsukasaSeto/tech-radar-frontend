@@ -313,3 +313,67 @@ const nextConfig = {
 **最終更新**: 2026-05-06
 
 ---
+
+### 6. 内部バレルexportを削除してtree-shakingを有効にする
+
+`atoms/molecules/organisms` などの内部UIコンポーネントディレクトリに置いた `index.ts` バレルファイルを削除し、インポートパスを直接指定する。内部バレルexportはtree-shakingを妨げてバンドルサイズを肥大化させる技術的負債になる。
+
+**根拠**:
+- バレルexportはモジュールグラフを複雑にし、ビルドツールが未使用コードを除去できなくなる
+- 内部バレル削除は全ページ共有チャンクを半分まで削減した実測事例がある
+- バレルexportはHMR（Hot Module Replacement）速度も低下させ、開発体験を悪化させる
+- 外部ライブラリには `optimizePackageImports` で対応し、内部コードは直接パスインポートに統一する
+
+**コード例**:
+```ts
+// Bad: 内部バレルexport（src/components/atoms/index.ts）
+export { Button } from './Button';
+export { Input } from './Input';
+export { Avatar } from './Avatar';
+// → バンドラーが使われていないコンポーネントを除去できないリスクがある
+
+// Good: 直接パスインポート
+import { Button } from '@/components/atoms/Button';
+import { Input } from '@/components/atoms/Input';
+
+// ESLint で内部バレルインポートを禁止し、CI で回帰を防ぐ
+// .eslintrc
+{
+  "rules": {
+    "no-restricted-imports": ["error", {
+      "patterns": [{
+        "group": ["@/components/atoms", "@/components/molecules", "@/components/organisms"],
+        "message": "Use direct path imports: e.g. '@/components/atoms/Button'"
+      }]
+    }]
+  }
+}
+
+// next.config.ts: 外部ライブラリのバレルインポートは optimizePackageImports で対応
+const nextConfig = {
+  experimental: {
+    optimizePackageImports: ['@mui/material', 'lucide-react', 'date-fns'],
+  },
+};
+
+// バンドルサイズ削減の計測: next experimental-analyze で Before/After を比較
+// npx next experimental-analyze --output analyze.json
+```
+
+**出典**:
+- [Next.js (Turbopack) のバンドルサイズを元の半分まで削減した話](https://zenn.dev/aldagram_tech/articles/nextjs-bundle-size-reduction) (Zenn aldagram_tech / 2026-05) ※2026-05-06に実際にfetch成功
+
+**バージョン**: Next.js 13+, ESLint 8+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「`next/dynamic` で非クリティカルなコンポーネントを遅延読み込みする」
+
+新たに以下の記事で逆用例（アンチパターン）が実測データで示された:
+- [Lighthouse のスコアを上げようとして、逆に下げてしまった 2 つの失敗](https://zenn.dev/kimsuho/articles/b678c3b084c6d1) (Zenn kimsuho / 2026) ※2026-05-06に実際にfetch成功
+
+初期表示される Widgets コンポーネント（62KB gzip）を `React.lazy()` で分割したところ、TBT が 20ms → 170ms（8倍増）、Lighthouse スコアが 95 → 92 に悪化。FCP は 1.1s → 0.9s に改善したが、TBT はスコアへの加重が高い（30%）ため逆効果になった。原因: コード分割はJavaScript総量を削減せず「実行タイミング」を変えるだけ。初期レンダリングで必要なコンポーネントを分割すると、FCP以降のメインスレッドブロック（= TBT）が増大する。修正: バレルのモーダル（WidgetPicker）のみに lazy-loading を限定した。適用範囲の原則: 「ユーザーのクリック・ナビゲーションがなければ表示されないUI（モーダル・アコーディオン・遷移先ページ）」にのみ使用する。
+
+**確信度**: 既存（高）→ 高（実測データで適用条件を明確化）

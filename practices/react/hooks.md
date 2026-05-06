@@ -270,3 +270,70 @@ useEffect(() => {
 **最終更新**: 2026-05-06
 
 ---
+
+### 7. `key` プロパティでコンポーネントの state を完全リセットする
+
+props の変化に応じてコンポーネントの state 全体をリセットしたい場合、
+`useEffect` + `setState` の組み合わせではなく `key` プロパティを使う。
+`key` が変わると React はコンポーネントをアンマウント→マウントし直し、state が完全にクリアされる。
+
+**根拠**:
+- `useEffect` でのリセットは「古い state でレンダリングされた後にリセットされる」という二重レンダリングを引き起こす
+- `key` を使えばレンダリング1回で正しい初期 state から開始できる
+- React公式が "resetting all state with a key" として明示推奨している（You Might Not Need an Effect より）
+
+**コード例**:
+```tsx
+// Bad: useEffect で state をリセット（二重レンダリングが起きる）
+function ProfileEditor({ userId }: { userId: string }) {
+  const [name, setName] = useState('');
+  useEffect(() => {
+    setName(''); // userId が変わるたびにリセット（古い値で1回レンダリングされる）
+  }, [userId]);
+  return <input value={name} onChange={e => setName(e.target.value)} />;
+}
+
+// Good: key で完全リセット（マウント時に初期 state から始まる）
+function ProfileEditorPage({ userId }: { userId: string }) {
+  return <ProfileEditor key={userId} />;
+}
+
+function ProfileEditor() {
+  const [name, setName] = useState(''); // userId が変わると完全に初期化される
+  return <input value={name} onChange={e => setName(e.target.value)} />;
+}
+
+// 実用例: タブ切り替えでフォームをリセット
+function TabPanel({ activeTab }: { activeTab: string }) {
+  return <TabContent key={activeTab} tab={activeTab} />;
+}
+```
+
+**出典**:
+- [You Might Not Need an Effect: Resetting all state when a prop changes](https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/learn/you-might-not-need-an-effect.md) (reactjs/react.dev / mainブランチ) ※2026-05-06に実際にfetch成功
+
+**バージョン**: React 18+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「useEffect でデータ取得しない」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Synchronizing with Effects](https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/learn/synchronizing-with-effects.md) (reactjs/react.dev / mainブランチ) ※2026-05-06に実際にfetch成功
+
+同ドキュメントは「Effects are an escape hatch from the React paradigm」と明記し、Effects は React の外部システム（ブラウザ API、サードパーティウィジェット、ネットワーク接続）との同期にのみ使うべきと定義している。特にデータフェッチは「Effects alone create architectural problems: waterfalls, missing caches, and complex cleanup requirements」として問題視されており、フレームワーク（Next.js Server Components）・SWR・TanStack Query などの専用ツールへの委譲を強く推奨している。
+
+**確信度**: 既存（高）→ 高（公式文書で実証済み）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール5「ユーザー操作はイベントハンドラーに置く」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [You Might Not Need an Effect](https://raw.githubusercontent.com/reactjs/react.dev/main/src/content/learn/you-might-not-need-an-effect.md) (reactjs/react.dev / mainブランチ) ※2026-05-06に実際にfetch成功
+
+公式ドキュメントは「Effects are caused by rendering itself, not by a particular event」と明確に定義し、ユーザーのボタンクリック・フォーム送信などのインタラクションに伴う副作用（通知表示・APIコール）は必ずイベントハンドラーに置くべきと述べている。Effects チェーン（state 変化 → Effect → state 変化 → Effect...）は中間レンダリングが増え、デバッグが困難になるため避けるべきパターンとして明示されている。
+
+**確信度**: 既存（高）→ 高（公式文書で実証済み）

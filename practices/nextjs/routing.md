@@ -217,3 +217,80 @@ export default function Default() {
 **最終更新**: 2026-05-06
 
 ---
+
+### 7. `generateMetadata` + `sitemap.ts` + `robots.ts` の SEO 三点セットを配置する
+
+App Router の SEO 対策は3つのファイルで構成する。
+`generateMetadata` でページごとのメタデータ（title / description / OG / canonical）を動的に生成し、
+`app/sitemap.ts` で全 URL を登録し、`app/robots.ts` でクローラーアクセスを制御する。
+`'use client'` が必要なページは metadata を export できないため、親の layout.tsx（Server Component）に `generateMetadata` を置く。
+
+**根拠**:
+- App Router は静的 `<head>` タグよりも `generateMetadata` が推奨（ページごとに動的に設定できる）
+- `sitemap.ts` / `robots.ts` はルートに置くだけで Next.js が自動的に `/sitemap.xml` / `/robots.txt` として配信
+- `'use client'` のページでは metadata export が不可のため、layout.tsx への委譲パターンが必要（Zenn SSG記事で実証）
+
+**コード例**:
+```tsx
+// app/blog/[slug]/page.tsx — 動的メタデータ
+export async function generateMetadata({ params }: { params: { slug: string } }) {
+  const post = await fetchPost(params.slug);
+  return {
+    title: post.title,
+    description: post.excerpt,
+    openGraph: {
+      title: post.title,
+      description: post.excerpt,
+      url: `https://example.com/blog/${params.slug}`,
+    },
+    alternates: { canonical: `https://example.com/blog/${params.slug}` },
+  };
+}
+
+// app/sitemap.ts — 全URL登録
+import type { MetadataRoute } from 'next';
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
+  const posts = await fetchAllPosts();
+  return [
+    { url: 'https://example.com', priority: 1.0 },
+    ...posts.map(p => ({
+      url: `https://example.com/blog/${p.slug}`,
+      lastModified: p.updatedAt,
+      priority: 0.8,
+    })),
+  ];
+}
+
+// app/robots.ts — クローラー制御
+import type { MetadataRoute } from 'next';
+export default function robots(): MetadataRoute.Robots {
+  return {
+    rules: { userAgent: '*', allow: '/', disallow: '/api/' },
+    sitemap: 'https://example.com/sitemap.xml',
+  };
+}
+
+// 'use client' ページは layout.tsx に metadata を委譲
+// app/dashboard/layout.tsx（Server Component）
+export const metadata = { title: 'Dashboard', description: '...' };
+// app/dashboard/page.tsx
+'use client'; // ここに metadata export は書けない
+```
+
+**出典**:
+- [Next.js App RouterでSSG+SEOページを100枚量産する設計パターン](https://zenn.dev/keisuke58/articles/nextjs-ssg-seo-100pages) (Zenn / 2026-05) ※2026-05-06に実際にfetch成功
+
+**バージョン**: Next.js 13+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール2「動的ルートと generateStaticParams でSSGを活用する」
+
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [Next.js App RouterでSSG+SEOページを100枚量産する設計パターン](https://zenn.dev/keisuke58/articles/nextjs-ssg-seo-100pages) (Zenn / 2026-05) ※2026-05-06に実際にfetch成功
+
+実際に300ページ以上のサイトを `generateStaticParams` でビルドした事例報告。「generateStaticParams が返す配列の要素ごとにビルド時にページが生成され、DBアクセスが不要になる」という効果を実証。更新頻度が低くSEO重要なコンテンツはデータをTypeScript定数で管理しSSGと組み合わせるパターン（Gitでバージョン管理可能）が効果的と報告。`dynamicParams = false` でパラメーター外のパスを404にする方法も確認。
+
+**確信度**: 既存（高）→ 高（実プロダクション事例で実証済み）

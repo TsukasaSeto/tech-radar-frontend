@@ -396,3 +396,25 @@ function Drawer({ isOpen, onClose, children }: DrawerProps) {
 **バージョン**: Chrome 86+, Firefox 85+, Safari 15.4+（:focus-visible）
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「インタラクティブ要素には適切な ARIA 属性を付与する」
+
+新たに以下のドキュメントで「No ARIA is better than bad ARIA」の根拠が定量データで示された:
+- [MDN Web Docs: ARIA index](https://raw.githubusercontent.com/mdn/content/main/files/en-us/web/accessibility/aria/index.md) (mdn/content / mainブランチ) ※2026-05-06に実際にfetch成功
+
+WebAIM の調査データが MDN ARIA ページで引用: 「ARIA を使用しているページは ARIA を使用していないページと比較して、41% 多くのアクセシビリティエラーが検出された」。この統計は ARIA 誤用がアクセシビリティを損なうというルールの根拠を定量的に裏付けている。MDN も「まず可能な限りネイティブ HTML 要素を使用し、ARIA はネイティブで表現できないインタラクションのみに適用する」という同じ優先原則を明示している。
+
+**確信度**: 既存（高）→ 高（WebAIM定量データで根拠強化）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール3「色のみで情報を伝えない。十分なコントラスト比を確保する」
+
+新たに以下の記事でOSレベルのハイコントラスト設定への CSS 対応パターンが示された:
+- [モダンCSSでWebの課題をスマートに解決！一歩進んだアクセシビリティ対応テクニック3選](https://zenn.dev/gemcook/articles/css-accessibility-tips3) (Zenn gemcook / 2026) ※2026-05-06に実際にfetch成功
+
+`@media (prefers-contrast: more)` で OS のハイコントラストモードを検知し、テキストカラー・リンクカラー・プレースホルダーを強制的に高コントラスト値に上書きするパターン。`prefers-contrast: more` 対応は WCAG 最低基準（4.5:1）の達成後に行う補助的対応として位置づけられ、低視力ユーザーの OS 設定を尊重する実装になる。WCAG 最低基準を満たしたうえで、さらに高コントラストが必要なユーザー（弱視・老眼等）のために上乗せ対応できる。
+
+**確信度**: 既存（高）→ 高（CSS実装パターン追加）

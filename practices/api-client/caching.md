@@ -250,7 +250,93 @@ function TodoItem({ todo }: { todo: Todo }) {
 
 ---
 
+### 5. Next.js App Router では HydrationBoundary でサーバーサイドプリフェッチを実装する
+
+Server Component でデータをプリフェッチし、`HydrationBoundary` と `dehydrate()` でクライアントに
+キャッシュを引き渡す。初期ローディング状態を排除し、サーバーサイドのデータをクライアントに継承できる。
+
+**根拠**:
+- Server Component でプリフェッチすることで、クライアントに届いた段階でデータがキャッシュ済みになり初期ローディングを排除できる
+- `React.cache()` で `QueryClient` の再生成を防ぎ、同一リクエスト内で1インスタンスを保証する
+- `useSuspenseQuery` と組み合わせるとローディング/エラー管理を `<Suspense>` / `<ErrorBoundary>` に委譲できる（v5 では `useQuery` の `suspense: true` は廃止済み）
+
+**コード例**:
+```tsx
+// app/posts/page.tsx（Server Component）
+import { dehydrate, HydrationBoundary, QueryClient } from '@tanstack/react-query';
+import { cache } from 'react';
+import { PostList } from '@/features/posts';
+
+// React.cache() で同一リクエスト内で QueryClient を再利用（新規生成を防ぐ）
+const getQueryClient = cache(
+  () => new QueryClient({ defaultOptions: { queries: { staleTime: 60 * 1000 } } })
+);
+
+export default async function PostsPage() {
+  const queryClient = getQueryClient();
+
+  // サーバーサイドでプリフェッチ
+  await queryClient.prefetchQuery({
+    queryKey: ['posts'],
+    queryFn: fetchPosts,
+  });
+
+  // dehydrate() でシリアライズ → HydrationBoundary でクライアントに注入
+  return (
+    <HydrationBoundary state={dehydrate(queryClient)}>
+      <PostList />
+    </HydrationBoundary>
+  );
+}
+
+// features/posts/components/PostList.tsx（Client Component）
+'use client';
+import { useSuspenseQuery } from '@tanstack/react-query';  // v5: suspense: true は廃止
+
+function PostList() {
+  // HydrationBoundary のキャッシュが存在するので初期ローディングが発生しない
+  const { data: posts } = useSuspenseQuery({
+    queryKey: ['posts'],
+    queryFn: fetchPosts,
+  });
+
+  return <ul>{posts.map(post => <li key={post.id}>{post.title}</li>)}</ul>;
+}
+// → ローディング管理は親の <Suspense fallback={<Skeleton />}> に委譲
+```
+
+**出典**:
+- [TanStack Query実践パターン ： キャッシュ・楽観的更新・無限スクロール](https://zenn.dev/correlate_dev/articles/react-query-patterns) (Zenn correlate_dev / 2026) ※2026-05-06に実際にfetch成功
+
+**バージョン**: TanStack Query 5+, Next.js 13+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
 ## 関連プラクティス
 
 - [`api-client/error-handling.md`](./error-handling.md) - キャッシュ更新失敗時のエラー処理
 - [`nextjs/caching.md`](../nextjs/caching.md) - Next.js のサーバーサイドキャッシュ
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール1「TanStack Query と SWR の使い分けを理解する」
+
+新たに以下の記事でTanStack Query v5の重要な変更点が示された:
+- [TanStack Query実践パターン ： キャッシュ・楽観的更新・無限スクロール](https://zenn.dev/correlate_dev/articles/react-query-patterns) (Zenn correlate_dev / 2026) ※2026-05-06に実際にfetch成功
+
+TanStack Query v5 の破壊的変更: `useQuery` の `suspense: true` オプションが廃止され、`useSuspenseQuery` フックが正式な Suspense 統合手段になった。`useSuspenseQuery` を使うとローディング/エラー状態の管理が `<Suspense>` と `<ErrorBoundary>` に委譲され、コンポーネント内でのステータスチェックが不要になる。また `useInfiniteQuery` v5 では `initialPageParam` が必須になった（v4 からの破壊的変更）。gcTime は staleTime の約2倍を目安に設定すると、stale中のキャッシュが消える問題を防ぐ。
+
+**確信度**: 既存（高）→ 高（v5破壊的変更を実例で確認）
+
+---
+
+#### 追加根拠 (2026-05-06) — ルール3「クエリキーはファクトリ関数で構造化する」
+
+新たに以下のドキュメントでクエリキーの挙動の細則が公式確認された:
+- [TanStack Query: Query Keys](https://raw.githubusercontent.com/TanStack/query/main/docs/framework/react/guides/query-keys.md) (TanStack / mainブランチ) ※2026-05-06に実際にfetch成功
+
+公式ドキュメントが2点を明示: (1) **オブジェクト内のプロパティ順序は関係ない** — `{ status, page }` と `{ page, status }` は同一キーとして扱われる（決定論的ハッシュ）。(2) **配列内の要素順序は関係ある** — `['todos', status, page]` と `['todos', page, status]` は別のキーになる。クエリキーファクトリパターンはこれらの挙動を意識したうえで一貫した構造を定義することで、予期しないキャッシュ分離を防ぐ。
+
+**確信度**: 既存（高）→ 高（公式ドキュメントで細則確認済み）

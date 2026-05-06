@@ -390,3 +390,67 @@ form:has(input:invalid) .submit-button {
 **バージョン**: Chrome 105+, Firefox 121+, Safari 15.4+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 7. `@layer` でCSSカスケードの優先順位を明示的に管理する
+
+`@layer` でスタイルをレイヤーに分割し、CSSの詳細度（specificity）や `!important` に頼らずに
+スタイルの適用優先順位をコードで明示する。
+
+**根拠**:
+- CSS 詳細度の衝突は大規模プロジェクトで管理困難になり `!important` の連鎖を招く
+- `@layer` はレイヤーの宣言順序で優先順位が決まるため、詳細度ハックが不要になる
+- Tailwind CSS v4 は内部的にカスケードレイヤーを使用しており、サードパーティCSSとの競合を防ぐ構造が標準化された
+- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、緊急の上書きもシンプルに書ける
+
+**コード例**:
+```css
+/* レイヤーの優先順位を最初に宣言（後に宣言したレイヤーほど優先） */
+@layer base, components, utilities;
+
+/* base レイヤー: リセット・デフォルトスタイル */
+@layer base {
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-text);
+  }
+}
+
+/* components レイヤー: UIコンポーネント */
+@layer components {
+  .btn {
+    padding: 0.5rem 1rem;
+    border-radius: 0.375rem;
+    background-color: var(--color-primary);
+    color: white;
+  }
+}
+
+/* utilities レイヤー: ユーティリティクラス（最も優先度が高いレイヤー） */
+@layer utilities {
+  .hidden { display: none; }
+  .sr-only { /* スクリーンリーダーのみ表示 */ }
+}
+
+/* レイヤー外は全レイヤーより優先（例外的な上書きに使用） */
+.critical-override {
+  color: red;
+}
+
+/* サードパーティCSS をレイヤーに封じ込め、自前スタイルに負けさせる */
+@layer vendor {
+  @import url('vendor-library.css');
+}
+```
+
+**出典**:
+- [最近のCSS、全然追えてなかった。ここ1〜2年で使えるようになった機能10選](https://zenn.dev/seekseep/articles/css-new-features-catch-up-2026) (Zenn seekseep / 2026) ※2026-05-06に実際にfetch成功
+- [MDN: @layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer) (MDN Web Docs)
+
+**バージョン**: Chrome 99+, Firefox 97+, Safari 15.4+（Widely Available）
+**確信度**: 高
+**最終更新**: 2026-05-06
