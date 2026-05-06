@@ -181,7 +181,7 @@ function reportMetric(name: string, value: number, tags: Record<string, string>)
 問題を自動検知できる体制を作る。
 
 **根拠**:
-- ダッシュボードを眺めるだけでは問題の検知が遅れる
+- ダッシュボードをながめるだけでは問題の検知が遅れる
 - SLO（サービスレベル目標）に基づくアラートで誤アラートを減らせる
 - エラー率・レイテンシ・ビジネス指標それぞれにアラートを設定する
 
@@ -226,7 +226,7 @@ monitors:
 「遅いユーザー」を平均値で見えなくしないダッシュボード設計を行う。
 
 **根拠**:
-- 平均値（mean）は外れ値の影響を受け、ユーザー体験の実態を過小評価する（例：99% のユーザーが 100ms でも 1% が 30s ならば平均は 400ms 程度で「問題なし」に見える）
+- 平均値（mean）は外れ値の影響を受け、ユーザー体験の実態を過小評価する
 - P99 は「最も遅い 1% のユーザー」を示し、SLO 違反検知や高優先度ユーザーの保護に不可欠
 - Google の Core Web Vitals も p75 を基準としており、分布ベース評価が業界標準になっている
 - OpenTelemetry の `Histogram` 計装と Datadog の `distribution` メトリクスタイプを組み合わせることでパーセンタイルを自動計算できる
@@ -307,7 +307,7 @@ const avgLatency = meter.createObservableGauge('api.avg_latency');
 ### 5. Alerting Fatigue を避けるしきい値設計をSLOベースで行う
 
 アラートのしきい値は「感覚」ではなくSLO（サービスレベル目標）から逆算して設計し、
-アラート疲れによる重大インシデントの見落としを防ぐ。
+アラート疆れによる重大インシデントの見落としを防ぐ。
 
 **根拠**:
 - しきい値が低すぎると誤アラートが多発し、開発チームがアラートを無視するようになる（Alerting Fatigue）
@@ -352,6 +352,84 @@ monitors:
 - [Datadog Docs: SLO-based Alerts](https://docs.datadoghq.com/service_management/service_level_objectives/burn_rate/) (Datadog公式)
 
 **バージョン**: Datadog 最新版
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. Sentry のアプリケーションメトリクスでエラー化する前のシグナルを追跡する
+
+`Sentry.metrics` API（Counter / Distribution / Gauge）を使い、エラー発生前の
+ビジネス・UXシグナルを計測する。「決済失敗数が急増しているがまだエラーは出ていない」
+といった状況を事前に検知できる。
+
+**根拠**:
+- Sentry のエラートラッキングは「すでに壊れたもの」を捕えるが、問題の予兆（決済拒否・API 遅延・キュー滞積）は数値シグナルで現れる
+- 同一ツール（Sentry）でエラーとメトリクスを一元管理でき、メトリクス異常とエラースパイクを同一ダッシュボードで相関分析できる
+- Counter・Distribution・Gauge の3種類で主要なメトリクスパターンを網羅できる
+- タグを付与することで `reason` / `userId` / `queue` 別のドリルダウン分析が可能
+
+**コード例**:
+```ts
+import * as Sentry from '@sentry/nextjs';
+
+// Counter: イベントの発生回数を増加のみで追跡
+// 用途: 決済失敗数、ログイン失敗数、API エラー数
+function handlePaymentDeclined(reason: string, userId: string) {
+  Sentry.metrics.increment('payment.declined', 1, {
+    tags: { reason, userId },
+  });
+}
+
+// Distribution: 値の分布を記録（パーセンタイル計算可能）
+// 用途: API レスポンスタイム、ファイルサイズ、処理件数
+async function fetchWithMetrics(url: string) {
+  const start = Date.now();
+  const res = await fetch(url);
+  const latencyMs = Date.now() - start;
+
+  Sentry.metrics.distribution('api.response_time', latencyMs, {
+    unit: 'millisecond',
+    tags: { endpoint: new URL(url).pathname },
+  });
+
+  return res;
+}
+
+// Gauge: 現在の状態値を記録（最新値が保持される）
+// 用途: キュー滞積数、アクティブセッション数、在庫数
+function reportQueueDepth(queue: string, depth: number) {
+  Sentry.metrics.gauge('queue.depth', depth, {
+    tags: { queue },
+  });
+}
+
+// 使用例: 注文処理フロー全体を監視
+async function processOrder(order: Order) {
+  Sentry.metrics.increment('order.processing.started', 1, {
+    tags: { paymentMethod: order.paymentMethod },
+  });
+
+  try {
+    const result = await submitOrder(order);
+    Sentry.metrics.increment('order.processing.completed', 1);
+    return result;
+  } catch (error) {
+    Sentry.metrics.increment('order.processing.failed', 1, {
+      tags: {
+        reason: error instanceof Error ? error.message : 'unknown',
+      },
+    });
+    throw error;
+  }
+}
+```
+
+**出典**:
+- [Introducing Application Metrics](https://blog.sentry.io/introducing-application-metrics/) (Sentry Engineering / 2026-05) ※2026-05-06に実際にfetch成功
+- [Sentry Docs: Metrics](https://docs.sentry.io/product/metrics/) (Sentry公式)
+
+**バージョン**: @sentry/nextjs 8+
 **確信度**: 高
 **最終更新**: 2026-05-06
 
