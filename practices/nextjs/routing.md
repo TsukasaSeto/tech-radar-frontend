@@ -118,3 +118,102 @@ function NavMenu() {
 **バージョン**: Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. Route Groups でURLに影響しないディレクトリ整理を行う
+
+`(folderName)` 構文のRoute GroupsはURLパスに含まれないため、コードの論理的なグルーピングとレイアウト分割に活用する。
+
+**根拠**:
+- 認証済み/未認証、公開/管理画面など、URLを変えずにレイアウトを分けられる
+- チームやドメインごとにルートをグルーピングでき、大規模アプリの可読性が上がる
+- 複数のルートレイアウト（root layout）を定義してセクションごとに `<html>` / `<body>` を使い分けられる
+
+**コード例**:
+```
+app/
+├── (marketing)/          # URL: /about, /blog（マーケティングページ群）
+│   ├── layout.tsx        # マーケティング専用レイアウト
+│   ├── about/page.tsx    # /about
+│   └── blog/page.tsx     # /blog
+├── (auth)/               # URL: /login, /register（未認証ページ群）
+│   ├── layout.tsx        # 認証フロー専用レイアウト
+│   ├── login/page.tsx    # /login
+│   └── register/page.tsx # /register
+└── (dashboard)/          # URL: /dashboard（認証済みページ群）
+    ├── layout.tsx        # サイドバー付きダッシュボードレイアウト
+    └── dashboard/page.tsx
+
+// Bad: グループを使わず全レイアウトをルートlayout.tsxに押し込む
+// app/layout.tsx で条件分岐によりレイアウトを切り替えようとする（複雑で保守困難）
+```
+
+**出典**:
+- [Next.js Docs: Route Groups](https://nextjs.org/docs/app/building-your-application/routing/route-groups) (Next.js公式 / 2024)
+
+**バージョン**: Next.js 15+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 6. Intercepting Routes のマッチング規則（`(.)` / `(..)` / `(...)`）を正しく使う
+
+Intercepting Routes はフォルダの相対的な深さに基づいたマッチング記法を持つ。モーダルや先読みプレビューなどの高度なUIパターンを正確に実装するために記法を理解する。
+
+**根拠**:
+- 記法を誤るとルートがインターセプトされず、単純なページ遷移になってしまう
+- クライアントナビゲーションとURLの直接アクセスで異なる表示を提供できる（URLシェア可能なモーダル等）
+
+**コード例**:
+```
+# マッチング規法
+# (.)  — 同じ階層のセグメントと一致
+# (..) — 一つ上の階層と一致
+# (...) — app ルートからと一致
+
+app/
+├── feed/
+│   └── page.tsx                      # /feed
+├── @modal/
+│   └── (.)photos/[id]/page.tsx       # /feed からナビゲート時にインターセプト
+├── photos/
+│   └── [id]/page.tsx                 # URL直接アクセス時はフルページ表示
+└── layout.tsx                        # @modal スロットを受け取る
+```
+
+```tsx
+// app/layout.tsx — @modal スロットを受け取る
+export default function RootLayout({
+  children,
+  modal,
+}: {
+  children: React.ReactNode;
+  modal: React.ReactNode;
+}) {
+  return (
+    <html>
+      <body>
+        {children}
+        {modal}  {/* モーダルはここに描画 */}
+      </body>
+    </html>
+  );
+}
+
+// app/@modal/default.tsx — モーダルなし時のデフォルト
+export default function Default() {
+  return null;
+}
+```
+
+**出典**:
+- [Next.js Docs: Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes) (Next.js公式 / 2024)
+- [Next.js Docs: Parallel Routes](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes) (Next.js公式 / 2024)
+
+**バージョン**: Next.js 15+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---

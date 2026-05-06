@@ -120,3 +120,111 @@ export default async function Page() {
 **バージョン**: Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 4. `"use server"` と `"use client"` の境界を意識したコンポーネント設計をする
+
+Server/Client 境界は「どこでデータを取得し、どこでインタラクションを処理するか」を明確に分割する設計上の境界線として扱う。境界をまたぐ際のパターンを統一することで、予期しないクライアントバンドル肥大化や、サーバー専用コードの漏洩を防ぐ。
+
+**根拠**:
+- `'use client'` はモジュールグラフの「切断点」であり、その配下のすべてがクライアントバンドルに含まれる
+- Server Component は `'use client'` のコンポーネントを直接インポートできるが、逆は不可
+- Server Component を `children` や `props` 経由で Client Component に渡す「サーバーコンポーネントの合成」パターンを活用する
+
+**コード例**:
+```tsx
+// Good: Server Component を children として Client Component に渡す
+// Server Component はクライアントバンドルに含まれない
+
+// components/ClientShell.tsx
+'use client';
+export function ClientShell({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button onClick={() => setOpen(o => !o)}>Toggle</button>
+      {open && children}
+    </div>
+  );
+}
+
+// app/page.tsx (Server Component)
+import { ClientShell } from '@/components/ClientShell';
+import { HeavyServerContent } from '@/components/HeavyServerContent'; // Server Component
+
+export default async function Page() {
+  return (
+    <ClientShell>
+      <HeavyServerContent />  {/* Server Component を children で渡す */}
+    </ClientShell>
+  );
+}
+
+// Bad: Client Component 内で Server-only モジュールをインポート
+// 'use client'
+// import { db } from '@/lib/db'; // エラー: サーバー専用コードがクライアントに漏洩
+```
+
+**出典**:
+- [Next.js Docs: Composition Patterns](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns) (Next.js公式 / 2024)
+- [Next.js Docs: Server and Client Components](https://nextjs.org/docs/app/building-your-application/rendering/server-components) (Next.js公式 / 2024)
+
+**バージョン**: Next.js 15+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
+
+### 5. Streaming with Suspense でページの初期表示を高速化する
+
+重いデータを取得するコンポーネントを `<Suspense>` でラップし、フォールバックUIを表示しながらコンテンツをストリームする。ページ全体を待たせるのではなく、準備できたコンテンツから順次表示する。
+
+**根拠**:
+- サーバーはHTMLを段階的にストリーミングし、ブラウザは受け取り次第レンダリングできる
+- Time To First Byte（TTFB）を下げ、ユーザーの体感速度を向上させる
+- `loading.tsx` はルート全体にSuspenseを張るショートカットだが、コンポーネント粒度でラップすればより細かい制御が可能
+
+**コード例**:
+```tsx
+// Good: 重いコンポーネントだけを Suspense でラップし、残りは即時表示
+// app/dashboard/page.tsx
+import { Suspense } from 'react';
+
+export default function DashboardPage() {
+  return (
+    <main>
+      <PageHeader />  {/* 即時表示（データフェッチなし）*/}
+      <Suspense fallback={<StatsSkeleton />}>
+        <StatsPanel />  {/* 重いデータ取得 → ストリーミング */}
+      </Suspense>
+      <Suspense fallback={<FeedSkeleton />}>
+        <ActivityFeed />  {/* 別の重いデータ取得 → 並列ストリーミング */}
+      </Suspense>
+    </main>
+  );
+}
+
+// components/StatsPanel.tsx (Server Component)
+export async function StatsPanel() {
+  const stats = await fetchHeavyStats(); // 時間のかかる処理
+  return <div>{/* stats を表示 */}</div>;
+}
+
+// Bad: ページ全体を一つの async Server Component にまとめて全データを待つ
+export default async function DashboardPage() {
+  const [stats, feed] = await Promise.all([fetchHeavyStats(), fetchActivityFeed()]);
+  // 両方の取得が完了するまでユーザーは何も見えない
+  return <div>...</div>;
+}
+```
+
+**出典**:
+- [Next.js Docs: Streaming with Suspense](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming) (Next.js公式 / 2024)
+- [Next.js Docs: Data Fetching Patterns](https://nextjs.org/docs/app/building-your-application/data-fetching/patterns) (Next.js公式 / 2024)
+
+**バージョン**: Next.js 15+
+**確信度**: 高
+**最終更新**: 2026-05-06
+
+---
