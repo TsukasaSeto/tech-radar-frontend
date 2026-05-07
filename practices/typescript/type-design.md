@@ -348,3 +348,111 @@ const bad = {
 Narrowing.md は Discriminated Union を「TypeScript でもっとも推奨される状態モデリングパターン」として取り上げている。判別子プロパティ（例: `kind: "circle"`）を持つインターフェースの Union として定義し、`switch (shape.kind)` で分岐することで TypeScript がそれぞれの case 内で型を自動的に絞り込む。さらに `default: const _exhaustiveCheck: never = shape` の never チェックで exhaustiveness を保証するパターンは、公式ドキュメントで「新しい Shape 型を追加した際にコンパイルエラーで変更漏れを検出できる」と明示されており、状態管理の安全性を高める中核的な手法として確認された。
 
 **確信度**: 既存（高）→ 高（公式文書で実証済み）
+
+---
+
+### 9. Branded Types でプリミティブ型の混同を防ぐ（phantom string literal パターン）
+
+同じプリミティブ型（`string`、`number` など）を用途別に区別するため、
+`Brand<T, K>` ヘルパーで Branded（Opaque）型を定義する。
+`unique symbol` を使わない phantom string literal パターンは、
+ランタイムコストゼロで型安全を強化する軽量な選択肢。
+
+**根拠**:
+- `UserId` と `OrgId` はどちらも `string` だが、引数を逆に渡してもコンパイラが検出できない
+- `unique symbol` ベースの実装と異なり、交差型 (`T & { readonly __brand: K }`) は型定義が1行で済み、ランタイムには何も残らない
+- `BrandOf<T>` ユーティリティでブランド文字列を抽出でき、条件型と組み合わせて活用できる
+
+**コード例**:
+```typescript
+// ブランド型ヘルパー
+type Brand<T, K extends string> = T & { readonly __brand: K };
+
+// ドメイン固有の string 型
+type UserId = Brand<string, "UserId">;
+type OrgId  = Brand<string, "OrgId">;
+
+// ファクトリ関数（バリデーション付き）
+const asUserId = (s: string): UserId => s as UserId;
+const asOrgId  = (s: string): OrgId  => s as OrgId;
+
+function createOrder(userId: UserId, orgId: OrgId) { /* ... */ }
+
+// ✅ 正しい呼び出し
+createOrder(asUserId("u-123"), asOrgId("o-456"));
+
+// ❌ 引数の順番を逆にするとコンパイルエラー
+createOrder(asOrgId("o-456"), asUserId("u-123"));
+// Argument of type 'OrgId' is not assignable to parameter of type 'UserId'.
+
+// ブランド文字列を取り出すユーティリティ型
+type BrandOf<T> = T extends Brand<infer _, infer K> ? K : never;
+type UserIdBrand = BrandOf<UserId>; // "UserId"
+```
+
+**出典**:
+- [Opaque Types Without unique symbol: A Lighter Branded Types Pattern](https://dev.to/gabrielanhaia/opaque-types-without-unique-symbol-a-lighter-branded-types-pattern-2ohf) (dev.to gabrielanhaia / 2026-05) ※2026-05-07に実際にfetch成功
+
+**バージョン**: TypeScript 4.0+
+**確信度**: 高
+**最終更新**: 2026-05-07
+
+---
+
+### 10. 関数オーバーロードの代わりに Discriminated Param パターンを使う
+
+複数の呼び出しパターンを持つ関数を定義する際、
+TypeScript の関数オーバーロード（複数の `function` シグネチャ）の代わりに、
+`kind` 判別子を持つ Union 型の引数（Discriminated Param）を使う。
+`Parameters<>` で型が正しく反映され、ランタイムの `switch` と型の絞り込みが一致する。
+
+**根拠**:
+- 関数オーバーロードは実装シグネチャが Union になるため、実装内での型絞り込みが手動になる
+- Discriminated Param は `switch (args.kind)` で TypeScript が自動的に型を絞り込む
+- `Parameters<typeof query>` が実際の引数型 Union を正確に反映するため、高階関数で扱いやすい
+- オーバーロード数が増えるほど保守コストが上がるが、判別子 Union は case 追加が型安全に行える
+
+**コード例**:
+```typescript
+// Discriminated Param パターン
+type QueryArgs =
+  | { kind: "byId";     id: string }
+  | { kind: "byIds";    ids: string[] }
+  | { kind: "byFilter"; filter: { role: string } };
+
+type QueryResult<A extends QueryArgs> =
+  A extends { kind: "byId" }     ? User :
+  A extends { kind: "byIds" }    ? User[] :
+  A extends { kind: "byFilter" } ? User[] :
+  never;
+
+function query<A extends QueryArgs>(args: A): QueryResult<A> {
+  switch (args.kind) {
+    case "byId":     return fetchById(args.id) as QueryResult<A>;
+    case "byIds":    return fetchByIds(args.ids) as QueryResult<A>;
+    case "byFilter": return fetchByFilter(args.filter) as QueryResult<A>;
+  }
+}
+
+// ✅ 呼び出し側
+const user  = query({ kind: "byId", id: "u-123" });                       // User
+const users = query({ kind: "byFilter", filter: { role: "admin" } });     // User[]
+
+// ❌ 存在しない kind はコンパイルエラー
+query({ kind: "byName", name: "Alice" });
+
+// Bad: 関数オーバーロード（実装シグネチャが Union になり型絞り込みが手動）
+function query(id: string): User;
+function query(ids: string[]): User[];
+function query(filter: { role: string }): User[];
+function query(arg: string | string[] | { role: string }): User | User[] {
+  // arg の型が Union のままで、TypeScript が自動絞り込みしてくれない
+}
+```
+
+**出典**:
+- [Function Overloads in 2026: Use a Discriminated Param Instead](https://dev.to/gabrielanhaia/function-overloads-in-2026-use-a-discriminated-param-instead-56gb) (dev.to gabrielanhaia / 2026-05) ※2026-05-07に実際にfetch成功
+
+**バージョン**: TypeScript 4.7+
+**確信度**: 高
+**最終更新**: 2026-05-07
