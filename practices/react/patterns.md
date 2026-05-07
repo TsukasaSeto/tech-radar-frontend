@@ -260,3 +260,60 @@ export function ClientWrapper() {
 **最終更新**: 2026-05-06
 
 ---
+
+### 7. ドーナツパターン（Donut Pattern）でプロップ爆発を防ぎ、外側シェルと内側コンテンツを分離する
+
+コンポーネントへの設定プロップが肥大化してきたら、固定の「外側シェル」と柔軟な `children`（穴）に分離するドーナツパターンを適用する。
+
+**根拠**:
+- `title`, `subtitle`, `footerAction`, `badgeVariant` など設定系のプロップが増えると、コンポーネントが「設定言語」化し再利用が困難になる
+- `children` に柔軟なコンテンツを受け取る設計にすることで、外側の一貫したシェルを保ちながら内側は任意の要素を配置できる
+- 既存のコンポジションパターン（Rule #1）の具体的な適用形として、特にカード・モーダル・パネルなどラッパーUIに有効
+
+**コード例**:
+```tsx
+// ✅ Good: ドーナツパターン（外側シェル固定、内側はchildren）
+type InfoCardProps = {
+  title: string;
+  children: React.ReactNode;  // 穴（hole）
+};
+
+export function InfoCard({ title, children }: InfoCardProps) {
+  return (
+    <div className="rounded-lg border-2 border-gray-200 p-4">
+      <h2 className="text-lg font-bold mb-2">{title}</h2>
+      <div>{children}</div>
+    </div>
+  );
+}
+
+// 使い方: childrenに任意のコンテンツを渡す
+<InfoCard title="ユーザー情報">
+  <UserAvatar user={user} />
+  <p>{user.bio}</p>
+  <Button onClick={onEdit}>編集</Button>
+</InfoCard>
+
+// ❌ Bad: プロップ爆発（コンポーネントが「設定言語」になっている）
+<InfoCard
+  title="ユーザー情報"
+  showAvatar={true}
+  avatarUser={user}
+  bodyText={user.bio}
+  showEditButton={true}
+  onEdit={onEdit}
+  editButtonLabel="編集"
+  footerContent={<RelatedUsers />}
+  badgeVariant="primary"
+/>
+// props が増えるたびにコンポーネント定義を変更する必要がある
+```
+
+**出典**:
+- [The Donut Pattern: A Simple Layout Trick for Modern React and Next.js](https://medium.com/dare-to-be-better/the-donut-pattern-a-simple-layout-trick-for-modern-react-and-next-js-9d9db314e892) (Medium dare-to-be-better / 2026-05-07) ※2026-05-07に実際にfetch成功
+
+**バージョン**: React 18+
+**確信度**: 中
+**最終更新**: 2026-05-07
+
+---
