@@ -212,3 +212,36 @@ type Messages = typeof ja;
 **バージョン**: next-intl 4+, Next.js 15+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 5. Next.js のセキュリティアドバイザリを追跡し、patch バージョンを即座に適用する
+
+Next.js のセキュリティリリースには Middleware 認可バイパス・DoS・XSS 等、WAF では防御できない脆弱性が含まれるため、公式発表後すぐにバージョンを更新する。patch 更新のみが唯一の完全な対策であり、設定変更や WAF ルールでは代替不可能な点に注意する。
+
+**根拠**:
+- 2026年5月リリースで13件のCVEが修正: Middleware・プロキシバイパス（5件）、DoS（3件）、SSRF（1件）、キャッシュポイズニング（2件）、XSS（2件）
+- 公式発表: "patching represents the only complete mitigation, with no WAF-level workarounds available"
+- Next.js 13.x / 14.x を使用中の場合は 15.5.18 または 16.2.6 への移行が必要
+- `vercel.com/changelog` と GitHub Security Advisories を購読してアドバイザリを追跡する
+
+**コード例**:
+```sh
+# 現在のバージョン確認
+npm list next
+
+# 最新 patch へ更新
+npm install next@latest
+
+# または特定バージョンを指定
+npm install next@15.5.18   # 15.x 系
+npm install next@16.2.6    # 16.x 系
+```
+
+**出典引用**:
+> "upgrade immediately" / "patching represents 'the only complete mitigation,' with no WAF-level workarounds available"
+> ([Next.js May 2026 security release](https://vercel.com/changelog/next-js-may-2026-security-release), セクション "Recommended Actions") ※2026-05-08に実際にfetch成功
+
+**バージョン**: Next.js 13.x〜16.x（影響）→ 15.5.18 / 16.2.6 以上（修正済み）
+**確信度**: 高
+**最終更新**: 2026-05-08
