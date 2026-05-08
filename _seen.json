@@ -2,7 +2,6 @@
   "https://www.typescriptlang.org/docs/handbook/2/types-from-types.html",
   "https://www.typescriptlang.org/docs/handbook/2/narrowing.html",
   "https://www.typescriptlang.org/docs/handbook/2/generics.html",
-  "https://www.typescriptlang.org/docs/handbook/utility-types.html",
   "https://www.typescriptlang.org/tsconfig",
   "https://www.typescriptlang.org/docs/handbook/2/objects.html",
   "https://www.typescriptlang.org/docs/handbook/2/conditional-types.html",
@@ -210,5 +209,10 @@
   "https://zenn.dev/aishift/articles/a4bdf225a348e5",
   "https://vercel.com/changelog/vercel-flags-now-supports-json-values",
   "https://zenn.dev/mintototo1/articles/tutorial-claude-tool-use-nextjs",
-  "https://zenn.dev/yamitake/articles/shadcn-ui-skills-claude-code"
+  "https://zenn.dev/yamitake/articles/shadcn-ui-skills-claude-code",
+  "https://zenn.dev/motowo/articles/anthropic-multi-agent-coordination-patterns-guide",
+  "https://zenn.dev/correlate_dev/articles/claude-code-skills-15",
+  "https://zenn.dev/dearone/articles/672ef7b7e9f407",
+  "https://dev.to/admilsoncossa/owned-async-work-in-typescript-ogp",
+  "https://zenn.dev/ashunar0/articles/df9de64f57fb7d"
 ]
