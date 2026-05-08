@@ -294,3 +294,68 @@ export const metadata = { title: 'Dashboard', description: '...' };
 実際に300ページ以上のサイトを `generateStaticParams` でビルドした事例報告。「generateStaticParams が返す配列の要素ごとにビルド時にページが生成され、DBアクセスが不要になる」という効果を実証。更新頻度が低くSEO重要なコンテンツはデータをTypeScript定数で管理しSSGと組み合わせるパターン（Gitでバージョン管理可能）が効果的と報告。`dynamicParams = false` でパラメーター外のパスを404にする方法も確認。
 
 **確信度**: 既存（高）→ 高（実プロダクション事例で実証済み）
+
+---
+
+### 8. `layout.tsx` の3つの責務（ナビゲーション宣言・Provider配置・共通ロジック）を明確に分離する
+
+`layout.tsx` が担う責務を「ナビゲーション種別の宣言」「Provider 配置」「共通ロジック（認証ガード・リダイレクト等）」の3つとして意識し、1ファイルに責務が混在しすぎないよう整理する。
+
+**根拠**:
+- `layout.tsx` はファイル数を増やすためではなく、「ナビゲーション形式が変わる」または「新しい共通ロジックが必要」な場合にのみ追加する
+- 3つの責務を意識することで、認証ガードの位置・Provider のスコープ・ネストされたヘッダー表示などの設計判断が明確になる
+- Expo Router でも同様の設計が適用でき、クロスプラットフォームでのレイアウト設計知識が共通化できる
+
+**3つの責務**:
+1. **ナビゲーション種別の宣言**: Stack / Tabs / Drawer / Slot のどれを使うかを明示
+2. **Provider 配置**: 配下の画面で使う Context や状態を提供
+3. **共通ロジック**: 認証ガード、リダイレクト、ログ送信などの横断的関心事
+
+**コード例**:
+```
+app/
+├── layout.tsx              # 責務①: ルートレイアウト + 責務②: 全体Provider
+├── (auth)/
+│   ├── layout.tsx          # 責務③: 認証チェック + リダイレクト / 責務①: headerShown=false Stack
+│   └── login/page.tsx
+└── (app)/
+    ├── layout.tsx          # 責務③: 認証必須ガード / 責務①: Tabs ナビゲーション
+    └── dashboard/page.tsx
+```
+
+```tsx
+// app/(app)/layout.tsx — 責務が明確
+import { redirect } from 'next/navigation';
+import { getSession } from '@/lib/auth';
+
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  // 責務③: 認証ガード（共通ロジック）
+  const session = await getSession();
+  if (!session) {
+    redirect('/login');
+  }
+
+  // 責務②: 認証済みユーザー向けのProvider
+  return (
+    <UserProvider user={session.user}>
+      {/* 責務①: 認証済みページのナビゲーション構造 */}
+      <div className="flex">
+        <Sidebar />
+        <main>{children}</main>
+      </div>
+    </UserProvider>
+  );
+}
+
+// アンチパターン: layout.tsx を「ファイル整理のため」だけに追加しない
+// ナビゲーション変更・Provider追加・共通ロジックの追加がなければ不要
+```
+
+**出典**:
+- [Expo Router / Next.js App Router のレイアウト設計を責務で整理する](https://zenn.dev/kaji_kaji/articles/file-based-routing-layout-design) (Zenn kaji_kaji / 2026-05-07) ※2026-05-07に実際にfetch成功
+
+**バージョン**: Next.js 14+, App Router
+**確信度**: 高
+**最終更新**: 2026-05-07
+
+---

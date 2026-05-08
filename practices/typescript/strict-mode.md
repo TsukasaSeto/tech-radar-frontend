@@ -350,3 +350,66 @@ function processInput(value: unknown): string {
 ```
 
 **確信度**: 既存（高）→ 高（catch 節外への適用拡大が Medium 実証記事で確認済み）
+
+---
+
+### 8. `strict: true` を段階的に導入する際は8フラグを難易度順に有効化する
+
+既存のコードベースに `strict: true` を一括で適用するのではなく、
+内包される8つのフラグを難易度（発生エラー数）が低い順に個別に有効化する。
+`strictNullChecks` は最後に適用する。
+
+**根拠**:
+- `strict: true` は実際には8つの独立したフラグの束であり、一括適用すると数千件のエラーが一度に発生する
+- フラグを難易度順に有効化することで、段階的なPRで進められ、レビューが可能になる
+- `strictNullChecks` だけで全エラーの60〜80%を占めるため（30kライン換算で1000〜4000件）、最後に予算を確保して臨む
+
+**有効化推奨順序**（エラー影響が少ない順）:
+1. `alwaysStrict` — ほぼコストゼロ（`"use strict"` 付与のみ）
+2. `noImplicitThis` — 少数（`this` パラメータ宣言で修正）
+3. `useUnknownInCatchVariables` — 少数（catch節のe型ガード追加）
+4. `strictBindCallApply` — 少数〜中（bind/call/apply の引数型修正）
+5. `strictFunctionTypes` — 中（関数パラメータの反変性）
+6. `noImplicitAny` — 中〜多（型アノテーション追加）
+7. `strictPropertyInitialization` — 多（クラスプロパティ初期化）
+8. `strictNullChecks` — **最多**（全体の60〜80%、複数週分の作業）
+
+**コード例**:
+```json
+// 段階1: まず低コストのフラグだけ有効化
+{
+  "compilerOptions": {
+    "alwaysStrict": true,
+    "noImplicitThis": true,
+    "useUnknownInCatchVariables": true
+  }
+}
+
+// 最終段階: strictNullChecks を含む全フラグを有効化
+{
+  "compilerOptions": {
+    "strict": true
+  }
+}
+```
+
+```typescript
+// ディレクトリ単位のマイグレーション（tsconfig でスコープ分割）
+// tsconfig.auth.json
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "strictNullChecks": true  // このディレクトリのみ先行有効化
+  },
+  "include": ["./src/features/auth/**/*"]
+}
+```
+
+**出典**:
+- [TypeScript strict Mode Is 8 Flags. Turn strictNullChecks On Last.](https://dev.to/gabrielanhaia/typescript-strict-mode-is-8-flags-turn-strictnullchecks-on-last-52mj) (dev.to gabrielanhaia / 2026-05-07) ※2026-05-07に実際にfetch成功
+
+**バージョン**: TypeScript 4.0+
+**確信度**: 高
+**最終更新**: 2026-05-07
+
+---

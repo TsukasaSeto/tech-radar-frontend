@@ -8,7 +8,7 @@
 カスタム CSS は Tailwind のシステムで表現できない場合のみ書く。
 
 **根拠**:
-- ユーティリティファースでCSSファイルの肖大化を防ぐ
+- ユーティリティファーストでCSSファイルの肥大化を防ぐ
 - クラス名を読むだけでスタイルが把握できる
 - 使われていないスタイルは PurgeCSS で自動削除される
 
@@ -402,7 +402,7 @@ form:has(input:invalid) .submit-button {
 - CSS 詳細度の衝突は大規模プロジェクトで管理困難になり `!important` の連鎖を招く
 - `@layer` はレイヤーの宣言順序で優先順位が決まるため、詳細度ハックが不要になる
 - Tailwind CSS v4 は内部的にカスケードレイヤーを使用しており、サードパーティCSSとの競合を防ぐ構造が標準化された
-- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、編急の上書きもシンプルに書ける
+- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、緊急の上書きもシンプルに書ける
 
 **コード例**:
 ```css
@@ -448,7 +448,7 @@ form:has(input:invalid) .submit-button {
 ```
 
 **出典**:
-- [最近のCSS、全然追えてなかった。ここㅲ1。2年で使えるようになった機能10選](https://zenn.dev/seekseek/articles/css-new-features-catch-up-2026) (Zenn seekseek / 2026) ※2026-05-06に実際にfetch成功
+- [最近のCSS、全然追えてなかった。ここ1、2年で使えるようになった機能10選](https://zenn.dev/seekseek/articles/css-new-features-catch-up-2026) (Zenn seekseek / 2026) ※2026-05-06に実際にfetch成功
 - [MDN: @layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer) (MDN Web Docs)
 
 **バージョン**: Chrome 99+, Firefox 97+, Safari 15.4+（Widely Available）
@@ -481,7 +481,7 @@ form:has(input:invalid) .submit-button {
 /* Bad: overflow: hidden でスクロールバーが消えてページ幅が変化する */
 body.modal-open {
   overflow: hidden;
-  /* スクロールバー分（絀17px）ページ幅が広がり、コンテンツが右にシフト */
+  /* スクロールバー分（約17px）ページ幅が広がり、コンテンツが右にシフト */
 }
 
 /* Good: scrollbar-gutter: stable でスクロールバー分のスペースを常に確保 */
@@ -514,3 +514,53 @@ body.modal-open {
 **バージョン**: Chrome 94+, Firefox 97+, Safari 15.8+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 9. UIライブラリ配布時は CSSをJavaScriptにバンドルせず、明示的インポートで提供する
+
+npm パッケージとして配布する UIライブラリでは、CSS を JavaScript ファイルに自動インポートする形式を避け、利用者がアプリ側で明示的に CSS ファイルをインポートする設計にする。
+
+**根拠**:
+- `import './button.css'` のような静的 CSS インポートが JavaScript に含まれると、SSR 環境（Node.js）で `Unknown file extension ".css"` エラーが発生する
+- Next.js の App Router は Server Components でのスタイルシートのインポートを制限している
+- 利用者がアプリの `globals.css` で `@import` するか `<link>` タグで読み込む設計にすることで、CSS の適用タイミングとバンドル方式を利用者が制御できる
+- `package.json` の `exports` フィールドで CSS ファイルの存在を明示する
+
+**コード例**:
+```tsx
+// Bad: ライブラリコンポーネント内で CSS を静的インポート（SSR でクラッシュ）
+// packages/my-ui-lib/src/Button.tsx
+import './button.css'; // Node.js: Unknown file extension ".css"
+export function Button({ children }: { children: React.ReactNode }) {
+  return <button className="btn">{children}</button>;
+}
+
+// Good: CSS をビルド成果物として別ファイルで提供
+// packages/my-ui-lib/dist/styles.css （ビルド出力）
+
+// package.json の exports フィールドで明示
+// {
+//   "exports": {
+//     ".": "./dist/index.js",
+//     "./styles.css": "./dist/styles.css"
+//   }
+// }
+
+// 利用側アプリで明示的にインポート
+// app/globals.css
+// @import '@my-ui-lib/dist/styles.css';
+
+// または layout.tsx でインポート
+import '@my-ui-lib/dist/styles.css';
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body>{children}</body></html>;
+}
+```
+
+**出典**:
+- [Why UI Libraries Still Need Explicit CSS Imports](https://dev.to/ddtamn/why-ui-libraries-still-need-explicit-css-imports-5b6o) (dev.to ddtamn / 2026-05)
+
+**バージョン**: Next.js 14+, Node.js 20+
+**確信度**: 高
+**最終更新**: 2026-05-07

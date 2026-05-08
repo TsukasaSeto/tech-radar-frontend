@@ -398,6 +398,68 @@ const titleSchema = z.string().min(1);              // 型と分離して管理
 
 ---
 
+### 7. RPC スタイルの直接型共有（oRPC）でコード生成の間接コストを排除する
+
+OpenAPI スペックや GraphQL スキーマを経由したコード生成ではなく、
+バックエンドのルーター定義を TypeScript 型として直接フロントエンドに共有する
+**oRPC** を採用することで、型の「ソース・オブ・トゥルース」を1ファイルに集約できる。
+
+**根拠**:
+- OpenAPI コード生成は「スキーマ更新 → 生成 → コミット → レビュー」のサイクルが必要で間接コストが高い
+- tRPC は Next.js/バックエンド共存（モノレポ）を前提とするが、oRPC は分離構成でも使える
+- バックエンドの `contract` オブジェクトをそのまま型として参照するため、型の二重管理がなくなる
+- React Query (`useQuery`, `useMutation`) に対応したアダプターが提供されており、既存プロジェクトへの導入がしやすい
+
+**コード例**:
+```typescript
+// === バックエンド ===
+// src/api/contract.ts
+import { oc } from '@orpc/contract';
+import { z } from 'zod';
+
+const UserSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  email: z.string().email(),
+});
+
+export const contract = oc.router({
+  user: {
+    find: oc
+      .input(UserSchema.pick({ id: true }))
+      .output(UserSchema),
+    list: oc
+      .output(z.array(UserSchema)),
+  },
+});
+
+// === フロントエンド ===
+// lib/orpc-client.ts
+import { createORPCReact } from '@orpc/react-query';
+import type { contract } from 'shared/contract';
+
+export const orpc = createORPCReact<typeof contract>({
+  baseUrl: '/api',
+});
+
+function UserProfile({ id }: { id: string }) {
+  const { data: user } = orpc.user.find.useQuery({
+    input: { id },
+  });
+
+  return <div>{user?.name}</div>;
+}
+```
+
+**出典**:
+- [oRPC でコード生成なしの型安全API通信を実現する](https://zenn.dev/dress_code/articles/9040b2e3532693) (Zenn dress_code / 2026-05)
+
+**バージョン**: @orpc/contract 0.x, @orpc/react-query 0.x
+**確信度**: 中
+**最終更新**: 2026-05-07
+
+---
+
 ## 関連プラクティス
 
 - [`api-client/rest.md`](./rest.md) - openapi-fetch による型安全な REST クライアント
