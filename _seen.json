@@ -187,5 +187,14 @@
   "https://blog.sentry.io/introducing-application-metrics/",
   "https://medium.com/@najmul.myself/why-unknown-is-safer-than-any-in-typescript-how-type-narrowing-makes-it-practical-25c67a6bd0c8",
   "https://medium.com/@konstantinkeylin/the-most-underrated-css-property-nobody-talks-about-scrollbar-gutter-2ca598352675",
-  "https://qiita.com/nhatcaofedev/items/387cda18f797938acb6b"
+  "https://qiita.com/nhatcaofedev/items/387cda18f797938acb6b",
+  "https://dev.to/gabrielanhaia/typescript-strict-mode-is-8-flags-turn-strictnullchecks-on-last-52mj",
+  "https://dev.to/gabrielanhaia/opaque-types-without-unique-symbol-a-lighter-branded-types-pattern-2ohf",
+  "https://dev.to/gabrielanhaia/function-overloads-in-2026-use-a-discriminated-param-instead-56gb",
+  "https://zenn.dev/dress_code/articles/9040b2e3532693",
+  "https://zenn.dev/kaji_kaji/articles/file-based-routing-layout-design",
+  "https://zenn.dev/kanaria007/articles/e20e1b92ee5258",
+  "https://dev.to/ddtamn/why-ui-libraries-still-need-explicit-css-imports-5b6o",
+  "https://medium.com/dare-to-be-better/the-donut-pattern-a-simple-layout-trick-for-modern-react-and-next-js-9d9db314e892",
+  "https://medium.com/@kajanen02000/optimizing-next-js-performance-from-3s-to-700ms-0f136c5b7bbd"
 ]
