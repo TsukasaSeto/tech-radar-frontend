@@ -393,7 +393,7 @@ type UserIdBrand = BrandOf<UserId>; // "UserId"
 **出典**:
 - [Opaque Types Without unique symbol: A Lighter Branded Types Pattern](https://dev.to/gabrielanhaia/opaque-types-without-unique-symbol-a-lighter-branded-types-pattern-2ohf) (dev.to gabrielanhaia / 2026-05) ※2026-05-07に実際にfetch成功
 
-**バージョン**: TypeScript 4.0+
+**バージョン**: TypeScript 4.0+（`Brand` 型ヘルパー） / TypeScript 5.0+（`BrandOf` の `infer _` 構文）
 **確信度**: 高
 **最終更新**: 2026-05-07
 
