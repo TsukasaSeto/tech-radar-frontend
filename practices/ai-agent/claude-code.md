@@ -361,3 +361,88 @@ disable-model-invocation: true
 **最終更新**: 2026-05-11
 
 ---
+
+### 7. Claude Code の実行環境を devcontainer + firewall で多層防御する
+
+Claude Code（および他のAIエージェント）をDev Container内で実行し、
+iptables ホワイトリストによるネットワーク分離とパッケージ脆弱性チェックを組み合わせて
+サプライチェーン攻撃・外部通信の無制限アクセスを防ぐ。
+
+**根拠**:
+- Dev Containers のデフォルトは外向き通信が NAT 経由で素通しになり、AIエージェントが
+  意図しない外部通信を行うリスクがある
+- 多層防御（ネットワーク分離 + パッケージ検証 + ファイル権限制限）により、
+  コンテナエスケープやゼロデイ攻撃の被害をホストOSへ波及させないことが目標
+
+**コード例**:
+```json
+// .devcontainer/devcontainer.json
+{
+  "image": "mcr.microsoft.com/devcontainers/base:bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "lts" }
+  },
+  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW"],
+  "postCreateCommand": "bash .devcontainer/setup.sh",
+  "postStartCommand": "sudo /usr/local/bin/init-firewall.sh"
+}
+```
+
+**多層防御の4要素**:
+| 対策 | 実装手段 |
+|------|----------|
+| ネットワーク分離 | iptables ホワイトリスト（npm registry・GitHub のみ許可） |
+| npm リスク軽減 | osv-scanner + safe-chain による脆弱性チェック |
+| ゼロデイ対策 | `min-release-age=3`（3日未満の新規パッケージを弾く） |
+| ファイル権限 | マウント対象の限定・sudo 権限制限 |
+
+**出典引用**:
+> "Dev Containersはデフォルトのbridge ネットワークでは、外向き通信は NAT 経由で素通しになります"
+> ([Claude Codeとサプライチェーン攻撃（npm＆バイナリ）を隔離するdevcontainer.json](https://zenn.dev/isosa/articles/971ab0b2281f53), セクション "ネットワーク分離の背景") ※2026-05-13に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）, Dev Containers（全バージョン）
+**確信度**: 中
+**最終更新**: 2026-05-13
+
+---
+
+### 8. 複数AIツール（Claude Code・Codex等）を AGENTS.md で一元管理し、ツール固有機構を薄くアダプトする
+
+同一プロジェクトで複数のAIコーディングエージェントを併用する場合、
+「ツール非依存の共通ルール」を `AGENTS.md` に集約し、各ツール固有の設定ファイルから
+`@AGENTS.md` でインポートする「共通正本 + 薄いアダプタ」構成を採用する。
+
+**根拠**:
+- Claude Code（`CLAUDE.md`）と Codex（`AGENTS.md`）など各ツールの設定形式は互いに非互換
+- 設定ファイルを直接共有できないため、各ツールが参照する**スクリプトや指示ファイルの実体を一元化**する
+- Skill（`~/.agents/skills/`）と hook スクリプト（`shared/hooks/`）を共通正本に置き、
+  各ツールの設定からシンボリックリンクで参照することで1箇所の変更が全ツールに反映される
+
+**コード例**:
+```markdown
+<!-- CLAUDE.md（最小構成）-->
+@AGENTS.md
+
+## Claude Code固有の補足
+プロジェクト基本ルールはAGENTS.md側に集約。
+ここはClaude Code固有機構だけ記述。
+```
+
+```bash
+# Skill の一元管理（実体を ~/.agents/skills/ に置き symlink で参照）
+mv ~/.claude/skills/my-skill ~/.agents/skills/my-skill
+ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
+
+# hook スクリプトは shared/hooks/ に実体を置き、各ツール設定からそれを参照する
+# 例: .claude/settings.json の hooks.PostToolUse から shared/hooks/ruff-format.sh を呼ぶ
+```
+
+**出典引用**:
+> "共通正本 + 薄いアダプタ。両ツールに守ってほしい情報を1箇所に集約し、各ツール固有の機構をその上に薄く乗せる"
+> ([Claude Code × Codex 共存セットアップ — ルール・Skills・hooks を一元管理する](https://qiita.com/kirozero/items/aec53be56a5427475969), セクション "設計原則") ※2026-05-13に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
+**確信度**: 中
+**最終更新**: 2026-05-13
+
+---

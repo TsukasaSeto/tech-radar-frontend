@@ -355,3 +355,51 @@ function NotificationToast({ message }: { message: string }) {
 **バージョン**: Chrome 114+, Firefox 125+, Safari 17+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 6. `<details name>` で排他的アコーディオンをネイティブ実装する
+
+複数の `<details>` 要素に同じ `name` 属性を設定すると、グループ内で1つだけが開く
+排他的アコーディオンを JavaScript なしで実現できる。
+
+**根拠**:
+- `name` 属性を共有した `<details>` は「ラジオグループ」と同様に排他動作する
+- フォーカス管理・キーボード操作・スクリーンリーダー読み上げはブラウザが担保
+- Chrome 120+、Firefox 130+、Safari 17.2+ でサポート済み
+- ブラウザネイティブの3API（`<dialog>`・`popover`・`<details name>`）を目的別に使い分けることで
+  ライブラリ依存を減らしバンドルサイズを削減できる
+
+**コード例**:
+```html
+<!-- JS 不要: 同一 name で排他的アコーディオン -->
+<details name="faq">
+  <summary>Q: 返品できますか？</summary>
+  <p>購入から30日以内であれば返品可能です。</p>
+</details>
+<details name="faq">
+  <summary>Q: 配送にかかる日数は？</summary>
+  <p>通常2〜3営業日でお届けします。</p>
+</details>
+<details name="faq">
+  <summary>Q: 支払い方法は？</summary>
+  <p>クレジットカードおよびコンビニ払いに対応しています。</p>
+</details>
+```
+
+**使い分け早見表**（`<dialog>` / `popover` / `<details name>` の選択）:
+| 用途 | 推奨API | 判断軸 |
+|------|---------|--------|
+| 確認ダイアログ・入力フォームを含むモーダル | `<dialog>` | ユーザーに必ず応答が必要 |
+| ツールチップ・ドロップダウン・トースト | `popover` | ページ操作をブロックしない |
+| 排他的アコーディオン・FAQ | `<details name>` | グループ内で1つだけ開く |
+
+**出典引用**:
+> "ブラウザネイティブのHTML機能だけで実装できるようになっています。`<dialog>`・`popover`・`<details name>` の3つを使いこなせば、JavaScriptをほとんど書かずにインタラクティブなUIが作れます。"
+> ([JSなしで実装できる！`<dialog>`・`popover`・`<details name>` 使い分けガイド【2025年版】](https://zenn.dev/ui_memo/articles/efec949e5cd9d1), セクション "まとめ") ※2026-05-13に実際にfetch成功
+
+**バージョン**: Chrome 120+, Firefox 130+, Safari 17.2+
+**確信度**: 中
+**最終更新**: 2026-05-13
+
+---
