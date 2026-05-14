@@ -446,3 +446,113 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 **最終更新**: 2026-05-13
 
 ---
+
+### 9. Claude Code の hooks で危険なコマンドをブロックし、操作規律をコードに落とす
+
+JSON stdin → 処理 → exit コードというパイプラインを理解し、誤って破壊的操作を実行しないよう安全装置をスクリプトで実装する。
+
+**根拠**:
+- hooks はツール実行前後に介入できる仕組みで、`exit 2` で実行をブロック、`exit 0` で許可する
+- `rm -rf`・本番 DB の直接書き換え・機密ファイルへのアクセスなど「やってはいけない操作」を機械的に防げる
+- スクリプトは再利用可能で、チーム全体の操作規律を `.claude/settings.json` で共有できる
+
+**コード例**:
+```bash
+# ~/.claude/hooks/pre-bash.sh — rm -rf ブロックフック
+#!/bin/bash
+INPUT=$(cat)                                              # stdin から JSON を受け取る
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+# rm -rf を含むコマンドをブロック
+if echo "$CMD" | grep -qE 'rm[[:space:]]+-rf|rm[[:space:]]+-fr'; then
+  echo "rm -rf は hooks でブロックされています。削除対象を明示してください。" >&2
+  exit 2  # Claude にブロックを通知
+fi
+
+exit 0    # 許可
+```
+
+```bash
+# デバッグ: 実際に受け取る JSON 構造を確認するダンプフック
+#!/bin/bash
+cat > "/tmp/hook-debug-$(date +%s).json"  # stdout に何も書かない
+exit 0
+```
+
+```json
+// .claude/settings.json への登録例
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "~/.claude/hooks/pre-bash.sh" }]
+      }
+    ]
+  }
+}
+```
+
+**exit コードの意味**:
+
+| コード | 動作 |
+|---|---|
+| 0 | ツールを通常実行 |
+| 2 | 実行をブロック（stderr のメッセージを Claude に通知） |
+| その他 | 警告のみ（ツールは実行される） |
+
+**出典引用**:
+> "JSONがどう流れて、exitコードで何が決まるかという仕組みを理解することで、自分の作業の規律をコードに落とす場所になる"
+> ([Claude Codeのhookの仕組み:JSONとexitコードで作る最小の安全装置](https://zenn.dev/yurukusa/articles/be79dbe97e34bb), セクション "exit コードの意味") ※2026-05-14に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン共通）
+**確信度**: 中
+**最終更新**: 2026-05-14
+
+---
+
+### 10. Git Worktree で Claude Code タスクを並列実行し、開発速度を向上させる
+
+`git worktree add` で複数のワーキングツリーを作成し、独立した Claude Code セッションを並走させることで、互いに干渉せず複数タスクを同時進行する。
+
+**根拠**:
+- 各 worktree は独立したブランチ・ファイルシステムを持つため、Claude Code セッション間でファイルの競合が発生しない
+- 1つのリポジトリを複数クローンするより効率的（`.git` を共有するためディスク使用量が少ない）
+- レビュー中 PR へのコメント対応・バグ修正・機能開発を同時並行できる
+
+**コード例**:
+```bash
+# worktree を追加（issue#123 の作業用ブランチ）
+git worktree add ../project-issue123 -b feat/issue-123
+
+# worktree 一覧確認
+git worktree list
+
+# 各 worktree で独立した Claude Code セッションを起動
+cd ../project-issue123 && claude
+```
+
+```bash
+# vibe CLI を使った統合管理（OSS: https://github.com/kexi/vibe）
+vibe new feat/my-feature   # worktree + Claude Code セッション作成
+vibe list                   # アクティブなセッション一覧
+vibe clean                  # 完了した worktree を削除
+```
+
+**実践的な知見**:
+- 4〜6 並列がレビューの観点でスイートスポット（これを超えると追跡が困難になる）
+- 各 worker が実装前に計画を提示し、人間がレビュー後に実行承認するフローが安全
+- 依存関係のあるタスクは順次キューイング、独立タスクのみ並列化する
+
+**出典引用**:
+> "4-6 parallel issues are the sweet spot to maintain readability"
+> ([Break It Small, Ship It Right – Skills for Coding Agents](https://developers.cyberagent.co.jp/blog/archives/63674/), セクション "Enable Parallel Development on Independent Issues") ※2026-05-14に実際にfetch成功
+
+> "git worktreeで並走する開発フローを作ることで、PRレビュー待ち中も別タスクをClaude Codeに任せられる"
+> ([Git Worktree CLI「vibe」で Claude Code と並走する開発フローを作る](https://zenn.dev/kexi/articles/git-worktree-vibe-claude-code), セクション "なぜ worktree か") ※2026-05-14に実際にfetch成功
+
+**バージョン**: Claude Code + Git（全バージョン共通）
+**確信度**: 中
+**最終更新**: 2026-05-14
+
+---
