@@ -189,6 +189,48 @@ src/
 
 ---
 
+#### 追加根拠 (2026-05-16) — ルール4「コロケーション原則：関連ファイルはコンポーネントと同じディレクトリに置く」
+
+新たに以下の記事でコロケーション + バレルインポートのより具体的な実装パターンが示された:
+- [Next.js App Router × コロケーション × バレルインポートで実現する、AI時代の人間との協働開発](https://qiita.com/masakinihirota/items/ffce9f02e066f52d4d97) (Qiita masakinihirota / 2026-05-16) ※2026-05-16に実際にfetch成功
+
+**出典引用**:
+> 「巨大なモノリシックアプリを構築するのではなく、小さくて自己完結したミニアプリを組み合わせて全体を作ります。」
+> (セクション "主要な設計思想")
+
+App Router 環境でのコロケーションを強化する具体的な追加パターン:
+
+**ファイル命名規則（サフィックスによる役割分離）**:
+```
+features/home/
+├── home.view.tsx        # 純粋なUI表示（propsのみ受け取る）
+├── home.container.tsx   # データ取得・状態管理
+├── home.logic.ts        # ビジネスロジック
+├── home.hook.ts         # カスタムReact Hook
+├── home.types.ts        # 型定義
+├── home.logic.test.ts   # ユニットテスト
+└── index.ts             # 公開API（バレル）
+```
+
+**`@barrel-type` アノテーションで Server/Client 境界を明示**:
+```typescript
+// src/components/home/index.ts
+// @barrel-type: server    ← Server Component のみ
+// @barrel-type: client    ← Client Component のみ（"use client"付き）
+// @barrel-type: mixed     ← 両方が混在（AIへの警告を含む）
+export { HomeHeader } from './home-header';
+export { HomeTabs } from './home-tabs';
+```
+
+深いインポートパス（`@/components/home/home-tabs/home-tabs-skeleton`）を禁止し、
+`index.ts` 経由のみに限定することで内部リファクタリング時の影響を最小化する。
+AI協働開発時は「`src/components/home/` を修正して。公開APIは `home/index.ts`」という指示で
+Claude の参照対象を絞り込め、関係ないファイルへの変更提案が減少する。
+
+**確信度**: 既存（高）→ 高（App Router 固有のServer/Client境界管理パターンを追加）
+
+---
+
 ### 5. バレルエクスポート（index.ts）の過剰使用を避ける
 
 `index.ts` を機能の境界（features/・shared/）にのみ配置し、
