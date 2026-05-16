@@ -230,6 +230,30 @@ const MapComponent = dynamic(() => import('@/components/MapComponent'), {
 
 ---
 
+#### 追加根拠 (2026-05-16) — ルール4「`import()` による動的インポートとRoute-based Code Splitting を実装する」
+
+新たに以下の記事でコード分割の**過剰適用アンチパターン**が実例付きで示された:
+- [[Frontend Performance - Part 16] 配信最適化の総仕上げ：Code Splitting・Cache・CDN戦略まとめ](https://qiita.com/tuanphan/items/e332db235525cfb9d10b) (Qiita tuanphan / 2026-05-15) ※2026-05-16に実際にfetch成功
+
+**出典引用**:
+> 「チャンクを細かくしすぎるとリクエスト数が増え、モバイルネットワークではオーバーヘッドが顕著になります」
+> (セクション "Code Splitting の警告")
+
+**追加の知見（反例・例外条件）**:
+
+コード分割の粒度が細かすぎる場合（例: 5KB チャンクが 100 個）、並列リクエスト数の増加がモバイルネットワークではむしろ遅延を招く。分割の粒度は「ルート単位 > 機能モジュール単位 > コンポーネント単位」の優先順位で粗くすることが望ましい。
+
+また同記事では HTTP キャッシュ戦略についても言及しており、リソース種別ごとの推奨設定は以下の通り:
+```text
+静的アセット（JS/CSS + ハッシュ付き）: Cache-Control: max-age=31536000, immutable
+HTML:                                  Cache-Control: no-cache（+ ETag / Last-Modified）
+古いデータを許容できる API:             Cache-Control: stale-while-revalidate=60
+```
+
+**確信度**: 既存（高）→ 高（過剰分割のアンチパターンと粒度設計の原則を追加）
+
+---
+
 ### 5. Bundle Analyzer によるサイズ検証を CI に組み込む
 
 バンドルサイズの増大をプルリクエスト段階で検知するため、CI に自動チェックを組み込む。
