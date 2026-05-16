@@ -309,11 +309,62 @@ export function InfoCard({ title, children }: InfoCardProps) {
 // props が増えるたびにコンポーネント定義を変更する必要がある
 ```
 
-**出典**:
-- [The Donut Pattern: A Simple Layout Trick for Modern React and Next.js](https://medium.com/dare-to-be-better/the-donut-pattern-a-simple-layout-trick-for-modern-react-and-next-js-9d9db314e892) (Medium dare-to-be-better / 2026-05-07) ※2026-05-07に実際にfetch成功
+**出典引用**:
+> "The Donut Pattern separates the outer shell (consistent styling) from the inner content (flexible children)"
+> ([The Donut Pattern: A Simple Layout Trick for Modern React and Next.js](https://medium.com/dare-to-be-better/the-donut-pattern-a-simple-layout-trick-for-modern-react-and-next-js-9d9db314e892), Medium dare-to-be-better / 2026-05-07) ※2026-05-07に実際にfetch成功
 
 **バージョン**: React 18+
 **確信度**: 中
 **最終更新**: 2026-05-07
+
+---
+
+### 8. Props を Discriminated Union で設計し、不正な状態の組み合わせを型レベルで排除する
+
+コンポーネントが複数の排他的な状態を取りうる場合、`status` などの識別子フィールドを持つ
+Discriminated Union 型で Props を定義する。`boolean` の組み合わせや `optional` フィールドの
+積み重ねで暗黙的に状態を表現することを避ける。
+
+**根拠**:
+- `isLoading?: boolean` と `error?: Error` と `data?: T` の組み合わせは、存在すべきでない状態
+  （例: `isLoading=true` かつ `data` が存在）を型上許容してしまう
+- Discriminated Union にすることで TypeScript が `status` の値に応じて他フィールドの型を絞り込み、
+  不正な参照がコンパイルエラーとなる
+- `never` 型を活用すると controlled/uncontrolled など排他的な props セットを強制できる
+
+**コード例**:
+```tsx
+// Bad: 不正な状態の組み合わせが型上許容される
+type BadProps = {
+  data?: User[];
+  isLoading?: boolean;
+  error?: Error;
+}
+
+// Good: 3つの排他的な状態のみ許容
+type UserListProps =
+  | { status: "loading" }
+  | { status: "error"; error: Error }
+  | { status: "success"; data: User[] }
+
+function UserList(props: UserListProps) {
+  if (props.status === "loading") return <Spinner />;
+  if (props.status === "error") return <ErrorMessage error={props.error} />;
+  return <ul>{props.data.map(u => <li key={u.id}>{u.name}</li>)}</ul>;
+}
+
+// controlled / uncontrolled の排他制約
+type InputProps =
+  | { value: string; onChange: (value: string) => void; defaultValue?: never }
+  | { defaultValue?: string; value?: never; onChange?: never }
+```
+
+**出典引用**:
+> "propsは単なる値の集合ではなく、UI の状態を宣言するためのものとして捉え直すことができます"
+> ([props は値の集合ではない — UI の状態を宣言する React コンポーネント設計](https://zenn.dev/nabeliwo/articles/react-component-design-from-props), セクション "Props は状態を宣言するもの") ※2026-05-13に実際にfetch成功
+
+**バージョン**: React 18+, TypeScript 5+
+**確信度**: 中
+**最終更新**: 2026-05-13
 
 ---

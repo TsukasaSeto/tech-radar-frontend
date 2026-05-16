@@ -402,9 +402,51 @@ for (const article of testArticles) {
 }
 ```
 
-**出典**:
-- [PlaywrightのE2EテストでJSONデータを使ってテストケースを動的生成する](https://qiita.com/jptools_jp/items/7f5cdff3bf3fa77dffd3) (Qiita jptools_jp / 2026-05) ※2026-05-06に実際にfetch成功
+**出典引用**:
+> "TypeScript インターフェースで JSON スキーマを定義することで、データの型安全性を保証できる"
+> ([PlaywrightのE2EテストでJSONデータを使ってテストケースを動的生成する](https://qiita.com/jptools_jp/items/7f5cdff3bf3fa77dffd3), Qiita jptools_jp / 2026-05) ※2026-05-06に実際にfetch成功
 
 **バージョン**: Playwright 1.40+, TypeScript 5+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 7. Claude Code + Playwright CLI でコード不要の自然言語 E2E テストを実現する
+
+Playwright CLI のスナップショット機能と Claude Code Agent Skills を組み合わせることで、
+テストコードを書かずに自然言語でE2Eテストシナリオを記述・実行できる。
+膨大な操作組み合わせのテストや、非エンジニアによるテスト定義に有効。
+
+**根拠**:
+- `playwright-cli snapshot` がYAML形式のページ構造と要素の `ref` 番号を生成し、
+  AIが要素を自動特定・操作できるため、セレクタ管理が不要になる
+- Agent Skills でテスト操作手順を Markdown で定義すると再利用可能なリファレンスになり、
+  誰が書いても同じ操作が再現できる属人化を解消できる
+- 期待値計算ロジックを TypeScript で独立実装することで、
+  システム実装と分離した仕様適合性の検証が可能（単なる一貫性チェックを超える）
+
+**コード例**:
+```yaml
+# Playwright CLI スナップショットによるページ操作例
+# AIが ref 番号で要素を自動特定し、人間は操作内容を自然言語で記述するだけ
+playwright-cli click e42 --session=pc        # カートに追加ボタン
+playwright-cli fill e15 "test@example.com" --session=pc
+playwright-cli screenshot --output screenshots/cart-top.png --session=pc
+```
+
+**適用時のポイント**:
+1. **テストケースプラン承認フロー**: AI実行前に生成した計画をレビューし、解釈ズレを事前検出
+2. **期待値計算の独立実装**: TypeScript で別途実装しシステム実装と分離（仕様適合性の検証）
+3. **従来テストとの使い分け**: 組み合わせ爆発するテスト（100ケース以上）に有効。
+   シンプルなフローは従来の Playwright コードが適切
+
+**出典引用**:
+> "テスト手順を自然言語で書くだけで、AIが要素を自動で見つけて操作し、計算検証まで完結する仕組み"
+> ([テストケースをコードで書かないE2Eテスト ── Claude CodeとPlaywright CLIで実現する自然言語テスト自動化](https://techblog.zozo.com/entry/claude-code-with-playwright-cli), ZOZOテクノロジーズ / 2026-05-13) ※2026-05-13に実際にfetch成功
+
+**バージョン**: Playwright 1.40+, Claude Code（全バージョン）
+**確信度**: 中
+**最終更新**: 2026-05-13
+
+---
