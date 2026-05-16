@@ -199,6 +199,32 @@ process.exit(leaked ? 1 : 0);
 **確信度**: 高
 **最終更新**: 2026-05-16
 
+#### 追加根拠 (2026-05-16)
+
+Vercel が「Protected Source Maps」機能をリリースし、ソースマップへのアクセス制御の具体的な実装手段が確立された:
+- [Protected Source Maps: Ship browser source maps securely](https://vercel.com/changelog/protected-source-maps-ship-browser-source-maps-securely) (Vercel / 2026-05-14) ※2026-05-16に実際にfetch成功
+
+**出典引用**:
+> "Source maps are how you debug minified production code. They give you readable stack traces and your original source code, with the real filenames and line numbers intact."
+> ([Protected Source Maps](https://vercel.com/changelog/protected-source-maps-ship-browser-source-maps-securely), セクション "Why source map protection matters")
+
+**Protected Source Maps の設定（Vercel）**:
+- **新規プロジェクト**: デフォルトで有効（自動保護、追加設定不要）
+- **既存プロジェクト**: Settings → Deployment Protection → Protected Source Maps を有効化（再デプロイ不要）
+- 有効化後: チームメンバー（Vercel 認証済み）のみ `.map` ファイルにアクセス可能
+- 攻撃者は source map から元コードのファイル名・行番号・ロジックを逆解析できなくなる
+
+**Vercel 以外の対応（参考）**:
+```nginx
+# Nginx: 本番で .map ファイルへのパブリックアクセスを無効化
+location ~* \.js\.map$ {
+  return 404;
+  # または IP allowlist: allow 10.0.0.0/8; deny all;
+}
+```
+
+**確信度**: 既存（高）→ 高（Vercel 公式機能として確立）
+
 ---
 
 ### 3. `.env.local` は git 管理外、`.env.example` をテンプレートとして提供する

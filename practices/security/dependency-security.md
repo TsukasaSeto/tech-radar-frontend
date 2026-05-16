@@ -360,6 +360,44 @@ ignore-scripts=true
 **確信度**: 高
 **最終更新**: 2026-05-16
 
+#### 追加根拠 (2026-05-16)
+
+新たに以下の記事でサプライチェーン攻撃発生後の即時対応手順が明確化された:
+- [Malicious node-ipc versions published to npm in suspected maintainer account compromise](https://snyk.io/blog/malicious-node-ipc-versions-published-npm/) (Snyk Blog / 2026-05-15) ※2026-05-16に実際にfetch成功
+- [Shai Hulud攻撃から身を守る：npm脆弱性と対策ガイド](https://zenn.dev/7788/articles/93ff5ceaba0576) (Zenn / 2026-05-15) ※2026-05-16に実際にfetch成功
+
+**出典引用**:
+> "By preserving expected functionality while quietly harvesting credentials, the attacker increased the chance that compromised builds would continue operating normally."
+> ([Malicious node-ipc versions published to npm](https://snyk.io/blog/malicious-node-ipc-versions-published-npm/), セクション "Attack analysis")
+
+> 「単なるマルウェア配布ではなく開発インフラへの深刻な侵害」「パッケージ削除後もIDEに残存」
+> ([Shai Hulud攻撃から身を守る：npm脆弱性と対策ガイド](https://zenn.dev/7788/articles/93ff5ceaba0576), セクション "永続的な感染")
+
+**侵害検知時の即時対応チェックリスト**（node-ipc / TanStack compromise 事例より）:
+
+```bash
+# 1. 影響確認
+npm ls <対象パッケージ>
+snyk test
+```
+
+- [ ] **npm トークン**（`~/.npmrc` の authToken）を即座に失効・再生成
+- [ ] **GitHub トークン**（PAT, Deploy Keys, GitHub Actions secrets）を全て rotate
+- [ ] **クラウドクレデンシャル**（AWS IAM, GCP SA key, Azure SP）を rotate
+- [ ] **SSH 秘密鍵**を rotation（特に deploy keys）
+- [ ] **Vault / Kubernetes トークン**を rotation
+- [ ] **IDE 設定フォルダの不審ファイルを確認**（`~/.vscode/`, `~/.config/claude/` 等）
+  - パッケージ削除後もマルウェアが IDE に残存するケースが確認されている
+- [ ] CI の npm/pnpm キャッシュをクリア（汚染タールボールを除去）
+- [ ] C2 ドメインを DNS/proxy レベルでブロック（判明次第）
+- [ ] Cloud / GitHub のアクセスログを遡及確認
+
+**追加の知見（メンテナアカウント乗っ取りの経路）**:
+- MFA 強制化だけでなく、メンテナの **期限切れメールドメイン**の再取得でも乗っ取り可能
+- 定期的に npm パッケージのメンテナメールアドレスが有効かを確認する運用が重要
+
+**確信度**: 既存（高）→ 高（実証付き・即時対応手順追加）
+
 ---
 
 ### 5. SBOM（Software Bill of Materials）を生成して依存関係を可視化する
