@@ -225,3 +225,64 @@ async function generatorVerifierLoop(
 **最終更新**: 2026-05-08
 
 ---
+
+### 5. Claude Code の Skills 機能でチーム作業ワークフローを自動化する
+
+`.claude/skills/` ディレクトリに Markdown ファイルを置くとファイル名がスラッシュコマンドとして登録され、反復する作業手順を「実行可能なワークフロー」として切り出せる。
+スキルは「ブランチ作成→実装→コミット→PR 作成」のように一連の操作をまとめる単位として設計する。
+Claude がスキルを自動起動しない under-trigger 問題を防ぐため、`description` フィールドは「このスキルを使うべき条件」を明示的かつ強めの表現で記述する。
+
+**根拠**:
+- `.claude/skills/` に置いた Markdown ファイルのファイル名がそのままスラッシュコマンドになる
+- under-trigger（使うべき場面で Claude がスキルを起動しない）は `description` の書き方で防げる
+- `devcontainer.json` の `mounts` で Claude Config ディレクトリをボリュームに永続化すると rebuild 後も再認証が不要
+
+**コード例**:
+```json
+// .devcontainer/devcontainer.json — Claude Config の永続化
+{
+  "mounts": [
+    "source=project-claude-config,target=/home/node/.claude,type=volume"
+  ]
+}
+```
+
+```markdown
+<!-- .claude/skills/dev-flow.md — ワークフロースキル -->
+---
+description: "新しい変更を実装する際は必ずこのスキルを使って、ブランチ作成→実装→コミット→PR作成を一気通貫で行う"
+---
+
+# dev-flow
+
+1. `git checkout -b feature/<task-slug>` でブランチを作成する
+2. 変更を実装し、テストを通す
+3. 変更内容を説明したコミットメッセージでコミットする
+4. `gh pr create` で PR を作成する
+```
+
+```markdown
+<!-- .claude/skills/briefing.md — 定期確認スキルの例 -->
+---
+description: "朝の SNS 確認や定期レポートを生成するときはこのスキルを使う"
+---
+
+# briefing
+
+1. 昨日のパフォーマンス数値（フォロワー数、エンゲージメント率）を確認する
+2. 優先タスク Top3 を抽出する
+3. 1〜2 文の運用インサイトを生成する
+```
+
+**出典引用**:
+> "under-trigger（trigger すべき場面で使わない）の傾向があるため、明示しなくてもスキルが発動するよう description を強めに書く"
+> ([Claude Code の skill 機能を本格的に試す — PR まで完結させた話](https://qiita.com/atsushi11o7/items/5cbef4b10f3ec55c75a1), セクション "重要な設計指針") ※2026-05-09に実際にfetch成功
+
+> "`.claude/skills/` フォルダに Markdown ファイルを置くと、そのファイル名がスラッシュコマンドとして使えるようになります。"
+> ([Claude Code Skills で /briefing コマンドを5分で実装する](https://qiita.com/hinaworks/items/93ae032d392bdad25655), セクション "実装ステップ") ※2026-05-09に実際にfetch成功
+
+**バージョン**: Claude Code（Skills 機能、2026年4月以降 gh CLI v2.90+）
+**確信度**: 高
+**最終更新**: 2026-05-09
+
+---

@@ -245,3 +245,40 @@ npm install next@16.2.6    # 16.x 系
 **バージョン**: Next.js 13.x〜16.x（影響）→ 15.5.18 / 16.2.6 以上（修正済み）
 **確信度**: 高
 **最終更新**: 2026-05-08
+
+#### 追加根拠 (2026-05-09)
+
+新たに以下の記事で、2026年5月の脆弱性の根本原因と長期的な防止設計が解説された:
+- [RSC Is Not the Input Boundary](https://dev.to/lazarv/rsc-is-not-the-input-boundary-2aao) (dev.to / lazarv, 2026-05-09) ※2026-05-09に実際にfetch成功
+
+**出典引用**:
+> "Server Function input payloads need protocol-level validation"
+> (セクション "Core Argument")
+
+この記事では、脆弱性の根本原因は「Server Function のハンドラ内でバリデーションを行っていた（デシリアライズ完了後）」にあると分析されている。
+Server Functions は任意のペイロードを受け取れるパブリックエンドポイントであるため、次のアーキテクチャ原則が重要になる:
+
+- **Server Action はハンドラ冒頭で即座に Zod 検証を行う**: ペイロードを処理する前に型・サイズ・値域を検証する
+- **大きなペイロードを想定する場合はサイズ上限を設ける**: `Content-Length` ヘッダーや Middleware でのボディサイズ制限を組み合わせる
+- **ビジネスロジックより先に認証・認可・バリデーションを行う**: アーリーリターンで後続処理を保護する
+
+```typescript
+// ✅ Good: ハンドラ先頭でスキーマ検証（入口保護）
+'use server'
+import { z } from 'zod'
+
+const UploadSchema = z.object({
+  displayName: z.string().min(1).max(80),
+})
+
+export async function uploadAvatar(formData: FormData) {
+  const result = UploadSchema.safeParse({
+    displayName: formData.get('displayName'),
+  })
+  if (!result.success) return { error: '入力値が不正です' }
+  // 以降は検証済みデータのみ処理
+  await processUpload(result.data)
+}
+```
+
+**確信度**: 既存（高）→ 高（根本原因の理解が深まった）
