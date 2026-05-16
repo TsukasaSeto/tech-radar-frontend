@@ -221,3 +221,83 @@ export async function deleteUser(raw: unknown) {
 **バージョン**: Next.js 14+
 **確信度**: 高
 **最終更新**: 2026-05-14
+
+---
+
+### 6. `"use server"` ファイルから export する関数を絞り、内部ヘルパーは別モジュールに置く
+
+`"use server"` ディレクティブは「クライアント → サーバ」のバンドル境界の宣言であり、**そのファイルから export した関数はすべて HTTP エンドポイントとして公開**される。export を「公開してよい関数だけ」に絞り、内部ヘルパーは別ファイル（DAL や純粋関数モジュール）に置いて Server Action から呼び出す形にする。v15+ ではアプリ内で参照されていない Server Action は build 時に自動削除されエンドポイントが作られない最適化が入ったが、「使われている Server Action は直接 POST で呼ばれる前提」は変わらない。
+
+**根拠**:
+- `"use server"` ファイルから export した関数は、関数名がハッシュ化された POST エンドポイントとして公開される。攻撃者は任意のタイミングで任意の引数で呼び出せる
+- 「フォームから呼ばれる」「内部ヘルパーだから安全」という前提は成り立たない。内部用の計算関数を同じファイルから export すると、それも公開エンドポイント化される
+- v15+ で「未使用 Server Action（Server Component / Client Component / 別の Server Action のいずれからも import されていないもの）」は build 時に削除されるが、これは未使用関数の救済であって、フォームの `action` 属性に渡されているなど何らかの使用があれば当然エンドポイントが作られる
+- 公開を絞ったうえで、関数内で必ず `verifySession()` による認可・`zod` 等によるランタイムバリデーション・DAL 経由のデータアクセスを行うことで多層防御になる
+
+**コード例**:
+```typescript
+// Good: app/_actions/post.ts
+// 公開してよい Server Action だけを export
+"use server";
+
+import { z } from "zod";
+import { revalidateTag } from "next/cache";
+import { unauthorized } from "next/navigation";
+import { verifySession } from "@/app/_lib/dal/auth";
+import { createPost } from "@/app/_lib/dal/post.mutations"; // 内部処理は DAL に置く
+
+const Schema = z.object({
+  title: z.string().min(1).max(120),
+  body: z.string().min(1),
+});
+
+export async function createPostAction(formData: FormData) {
+  // 1. 認可
+  const session = await verifySession();
+  if (!session) unauthorized();
+
+  // 2. バリデーション
+  const parsed = Schema.safeParse({
+    title: formData.get("title"),
+    body: formData.get("body"),
+  });
+  if (!parsed.success) {
+    return { ok: false as const, error: parsed.error.flatten() };
+  }
+
+  // 3. DAL 経由で書き込み
+  const post = await createPost(session.userId, parsed.data);
+
+  // 4. キャッシュ無効化（v16: 第 2 引数必須）
+  revalidateTag("posts", "max");
+  return { ok: true as const, post };
+}
+
+// Bad: 内部ヘルパーまで同じ "use server" ファイルから export
+"use server";
+
+// この関数も公開エンドポイント化される（攻撃者が直接叩ける）
+export function calculateInternalScore(input: unknown) {
+  // ...
+}
+
+export async function createPostAction(formData: FormData) {
+  // ...
+}
+```
+
+**アンチパターン**:
+- `"use server"` ファイルから `getInternalCalculator` のような内部用ヘルパーを export し、攻撃者が直接叩けてしまう
+- 「フォームから呼ばれる前提だから認可は不要」と判断する
+- 「未使用 Server Action は build 時に削除される」を根拠に、使用中の Server Action の認可を省く
+- 認可チェックを `<form>` 側（Client）でだけ行い、Server Action 内では行わない
+- 引数の型を TypeScript の型だけで信用し、`zod` 等のランタイムバリデーションをしない
+
+**出典**:
+- [Next.jsの考え方 / 7.1 セキュリティの大前提・7.2 公開を絞るためのファイル分割](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+（未使用 Server Action の自動削除は v15+）
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16

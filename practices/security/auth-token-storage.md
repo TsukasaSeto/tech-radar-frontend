@@ -327,6 +327,42 @@ export async function deletePost(id: string) {
 **確信度**: 高
 **最終更新**: 2026-05-16
 
+#### 追加根拠 (2026-05-16) — 手動取り込み
+
+新たに sstf-5461-admin-app チームドキュメント（原典: akfm_sato 氏 Zenn book）から以下の知見を追加:
+
+**CVE-2025-29927 の実例**:
+Next.js middleware 単体での認可チェックには重大な脆弱性事例があり、特定の HTTP ヘッダ操作で middleware をバイパスできた。
+この事案から「middleware/proxy 単体の認可は十分ではない」ことが教訓化されている。
+
+**多層認可（defense-in-depth）の必要性**:
+- 第1層: proxy.ts (旧 middleware) — 早期リダイレクト・粗いガード
+- 第2層: page/layout — Server Component 内での認可
+- 第3層: DAL (Data Access Layer) — データアクセス直前の最終チェック
+
+3 層で重複してチェックすることで、いずれか 1 層に脆弱性があってもデータ漏洩を防ぐ。
+
+**コード例**:
+```typescript
+// Good: DAL レベルでの認可
+// app/lib/dal/posts.ts
+import { auth } from '@/lib/auth';
+import { forbidden } from 'next/navigation';
+
+export async function getPost(id: string) {
+  const session = await auth();
+  if (!session) forbidden();
+  const post = await db.post.findUnique({ where: { id } });
+  if (post.userId !== session.userId) forbidden();
+  return toPostDto(post);
+}
+```
+
+**出典**:
+- [Next.jsの考え方 / 多層認可](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**確信度**: 既存（中） → 高（CVE 事例 + v16 ベストプラクティス）
+
 ---
 
 ### 5. クライアント JS は「ログイン状態」のみ持ち、トークンを直接持たない

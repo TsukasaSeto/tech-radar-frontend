@@ -1,5 +1,9 @@
 # Next.js キャッシュのベストプラクティス
 
+> **層の役割**: このファイルは **Server 層**（Request Memoization / Data Cache / Full Route Cache / Router Cache / `"use cache"`）を扱う。
+> **Client 層**のキャッシュ（TanStack Query / SWR / Hydration Boundary）は [`api-client/caching.md`](../api-client/caching.md) を参照。
+> Server → Client の境界（RSC で取得 → Client にハイドレート）は両ファイルにまたがるが、**取得側ロジックは Server 層、再フェッチ / 楽観更新は Client 層** という分担を基本にする。
+
 ## ルール
 
 ### 1. Next.js の4層キャッシュを理解して使い分ける
@@ -211,3 +215,142 @@ const getCachedProductList = unstable_cache(
 3. **`use cache` 境界の内部で `cookies()` を呼ばない**: キャッシュコンポーネント内から `cookies()` を直接呼び出すと Next.js がビルドエラーを発生させる。Cookie の値は外部コンポーネントで取得し、props として渡す。
 
 **確信度**: 既存（中）→ 高（4.2M MAU 本番事例で実証済み）
+
+---
+
+### 7. `"use cache"` ディレクティブは末端のデータフェッチ単位で `cacheLife` / `cacheTag` と組み合わせて貼る
+
+v16 の Cache Components 環境では、関数・コンポーネント単位で `"use cache"` を貼って「キャッシュ可能」を明示する。キーは Build ID + Function ID + シリアライズ可能な引数 から自動算出され、`children` などはキーに入らない（Composition で除外できる）。配置はページ全体や layout には貼らず、**できるだけデータフェッチに近い末端**に貼る。寿命は `cacheLife`、無効化のためのタグは `cacheTag`、無効化は `updateTag`（即時反映）または `revalidateTag(tag, "max")`（stale-while-revalidate）で行う。
+
+**根拠**:
+- v16 ではデフォルトで暗黙キャッシュしない方針に変わったため、再利用可能なデータは明示的に `"use cache"` でオプトインする必要がある
+- `cacheTag` は複数引数で複数タグを一度に登録できる（例: `cacheTag("posts", `post:${slug}`)` で 2 つのタグを付与）
+- v16 では `revalidateTag(tag)` の 1 引数版は非推奨。profile（`"max"` 推奨）を渡すか `updateTag` に置き換える必要がある。`updateTag` は更新を即時反映、`revalidateTag(..., "max")` は stale-while-revalidate セマンティクス
+- `cacheLife('seconds')` や `expire` が 5 分未満の短命キャッシュは **自動的に prerender から除外され「dynamic hole」として扱われる**ため、`<Suspense>` で囲んでフォールバックを提供する設計が必要
+- layout 全体に `"use cache"` を貼ると配下が全部キャッシュされ、後から細かい dynamic 部分を入れにくくなる
+
+**コード例**:
+```typescript
+// Good: app/_lib/dal/post.ts
+// 末端のデータフェッチ関数に貼り、cacheLife / cacheTag を併用
+import "server-only";
+import { cacheLife, cacheTag } from "next/cache";
+import { notFound } from "next/navigation";
+
+export async function getPublicPost(slug: string) {
+  "use cache";
+  cacheLife("hours");
+  cacheTag("posts", `post:${slug}`); // 複数タグを 1 回で登録
+
+  const res = await fetch(`${API}/posts/${slug}`);
+  if (res.status === 404) notFound();
+  if (!res.ok) throw new Error("failed");
+  return toPostDTO(await res.json());
+}
+
+// Server Action からの無効化（v16: 第 2 引数必須）
+"use server";
+import { revalidateTag, updateTag } from "next/cache";
+
+export async function publishPostAction(slug: string) {
+  // 即時反映したい場合
+  updateTag(`post:${slug}`);
+  // 多少遅延しても良い場合
+  revalidateTag("posts", "max");
+}
+
+// Bad: layout.tsx 全体に "use cache" を貼って配下を全部キャッシュ
+export default async function Layout({ children }) {
+  "use cache"; // 配下に dynamic を混ぜにくくなる
+  return <div>{children}</div>;
+}
+
+// Bad: revalidateTag の 1 引数版（v16 で非推奨）
+revalidateTag("posts"); // 将来削除予定
+```
+
+**アンチパターン**:
+- `layout.tsx` 全体を `"use cache"` にして配下を全部キャッシュする
+- ユーザー固有データに `"use cache"` を貼って他ユーザーに漏れる（→ Rule #8 / `"use cache: private"` か Suspense + 引数渡しを使う）
+- `revalidateTag(tag)` の 1 引数版を使い続ける（v16 で非推奨）
+- 短命キャッシュ（5 分未満の `expire`）を `<Suspense>` で囲まずに配置し、ポップコーン UI / CLS を引き起こす
+
+**出典**:
+- [Next.jsの考え方 / 3.4 "use cache" ディレクティブ](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+（Cache Components 前提・`cacheComponents: true`）
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16
+
+---
+
+### 8. ユーザー固有データは「Suspense 境界 + 引数渡し」を優先し、`"use cache: private"` は最終手段
+
+ユーザー固有データ（セッション、自分のダッシュボードなど）は原則「キャッシュしない」のが基本。まず `<Suspense>` で包んで動的にレンダリングする。`"use cache"` 配下に動的値を持ち込みたい場合は、**Suspense 境界の外側で `cookies()`/`headers()` を呼んで値を取り出し、引数として `"use cache"` 関数に渡す**ことでキャッシュキーに含める。`"use cache: private"`（クライアント保存）はコンプライアンス要件や引数渡しへのリファクタが現実的でない場合のみ採用する最終手段。
+
+**根拠**:
+- `"use cache"` 配下で `cookies()` / `headers()` を直接呼ぶとビルドエラー（Cache Components 環境）
+- 動的値を引数として渡せばその値がキャッシュキーになるため、ユーザー横断で共有可能なものは横断で再利用され、ユーザーごとに分かれるものはユーザーごとに分かれる
+- 保存先は 4 種類（`"use cache"`（インメモリ・デフォルト ◎）、`"use cache: remote"`（Redis 等・複数プロセス間共有 ○）、`"use cache: <name>"`（cacheHandler で定義 ○）、`"use cache: private"`（クライアント・ユーザー固有 △））
+- `"use cache: private"` を選ぶ前に、引数渡しパターンが本当に成立しないかを必ず検討する。多くのケースは引数渡しで足りる
+
+**コード例**:
+```tsx
+// Good: Suspense 境界の外側で cookie を取り出し、引数で "use cache" に渡す
+import { cookies } from "next/headers";
+import { Suspense } from "react";
+
+export default function Page() {
+  return (
+    <Suspense fallback={<Skeleton />}>
+      <ProfileContent />
+    </Suspense>
+  );
+}
+
+// 動的（キャッシュなし）: cookie を読む
+async function ProfileContent() {
+  const sessionId = (await cookies()).get("session")?.value;
+  return <CachedContent sessionId={sessionId} />;
+}
+
+// キャッシュ可: sessionId が引数なのでキャッシュキーになる
+async function CachedContent({ sessionId }: { sessionId?: string }) {
+  "use cache";
+  const data = await fetchUserData(sessionId);
+  return <div>{data}</div>;
+}
+
+// Bad: "use cache" 配下で cookies() を直接呼ぶ → ビルドエラー
+async function BadContent() {
+  "use cache";
+  const sessionId = (await cookies()).get("session")?.value; // NG
+  // ...
+}
+
+// Bad: ユーザー固有データに普通の "use cache" を貼る → 他ユーザーに漏れる
+async function MyDashboard() {
+  "use cache"; // 個人データなのに横断キャッシュされる
+  const me = await getCurrentUser();
+  return <Dashboard data={me} />;
+}
+```
+
+**アンチパターン**:
+- ユーザー固有データに引数なしの `"use cache"` を貼り、別ユーザーにキャッシュ内容が漏れる
+- 引数渡しパターンを検討せずに `"use cache: private"` を最初の選択肢にする
+- `"use cache"` 配下で `cookies()` / `headers()` を直接呼ぶ
+- ユーザーごとの個別キャッシュを作って Edge Function 呼び出し回数を爆発させる（横断で集約可能なものは引数の正規化で集約する）
+
+**出典**:
+- [Next.jsの考え方 / 3.5 ユーザー固有データの扱いと保存先の使い分け](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+（Cache Components 前提）
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16
+
+---

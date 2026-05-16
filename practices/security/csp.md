@@ -299,3 +299,93 @@ Content-Security-Policy:
 **バージョン**: CSP Level 3 / Chrome 52+, Firefox 52+, Safari 15.4+
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 6. 静的セキュリティヘッダと動的 CSP/nonce は配信レイヤを分離する
+
+リクエスト毎に値が変わらないセキュリティヘッダ（`Strict-Transport-Security`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` 等）は `next.config.ts` の `async headers()` で静的配信し、リクエスト毎に nonce が変わる `Content-Security-Policy` のみを `proxy.ts`（旧 middleware）で生成・付与する。
+両者で CSP を二重に書くと、片方の古い nonce が新しい nonce を上書きしてポリシーが壊れるため、**CSP は proxy.ts のみで配信**する。
+
+**根拠**:
+- HSTS や `X-Frame-Options` のような静的ヘッダは `next.config.ts` で宣言した方が記述が一元化され、middleware 実行コストもかからない（全リクエストで middleware を通す必要が薄れる）
+- 一方 CSP の nonce はリクエスト毎にランダム生成する必要があり、静的 `headers()` では実現できない（リクエストオブジェクトに触れない）
+- 両所で CSP を書くと「`next.config.ts` の固定 CSP が proxy で生成した nonce 付き CSP を上書き／逆」のような順序事故が起きる。責務を分けると衝突しない
+- Next.js 16 では middleware が `proxy.ts` にリネームされ Node.js runtime デフォルトに変わったため、Web Crypto API ベースの nonce 生成も自然に書ける
+
+**コード例（next.config.ts: 静的ヘッダ）**:
+```ts
+// next.config.ts
+import type { NextConfig } from "next";
+
+const nextConfig: NextConfig = {
+  async headers() {
+    return [
+      {
+        source: "/(.*)",
+        headers: [
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          // 注意: Content-Security-Policy はここに書かない（proxy.ts で動的に付与）
+        ],
+      },
+    ];
+  },
+};
+
+export default nextConfig;
+```
+
+**コード例（proxy.ts: 動的 CSP + nonce）**:
+```ts
+// proxy.ts
+import { NextResponse, type NextRequest } from "next/server";
+
+export const runtime = "nodejs"; // v16 デフォルト
+
+export function proxy(request: NextRequest) {
+  // リクエスト毎に新しい nonce を生成
+  const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
+
+  const csp = `
+    default-src 'self';
+    script-src 'self' 'nonce-${nonce}' 'strict-dynamic';
+    style-src 'self' 'nonce-${nonce}';
+    img-src 'self' blob: data:;
+    object-src 'none';
+    base-uri 'self';
+    frame-ancestors 'none';
+    upgrade-insecure-requests;
+  `.replace(/\s{2,}/g, " ").trim();
+
+  // request headers に nonce を載せて downstream RSC で headers() 経由で読めるようにする
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  // CSP は proxy.ts のみで設定（next.config.ts には書かない）
+  response.headers.set("Content-Security-Policy", csp);
+  return response;
+}
+
+export const config = {
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+};
+```
+
+**よくある失敗**:
+- `next.config.ts` の `headers()` に `Content-Security-Policy` の固定値（nonce 無し）を書いてしまい、proxy.ts で生成した nonce 付き CSP と衝突する
+- 逆に静的ヘッダまで proxy.ts で全部付けようとして middleware 実行コストが上がり、また静的アセットの matcher 除外漏れで余計な処理が走る
+- proxy.ts を Edge runtime のまま `Buffer` を使い、v16 への移行時にハマる（v16 では Node.js runtime がデフォルト）
+
+**出典**:
+- [Next.jsの考え方 / セキュリティヘッダ・CSP](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16

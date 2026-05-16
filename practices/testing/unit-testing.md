@@ -317,3 +317,78 @@ describe('formatRelativeTime', () => {
 **バージョン**: Vitest 2+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 6. `unauthorized()` / `forbidden()` の throw を内部実装非依存で検証する
+
+Next.js App Router の `unauthorized()` / `forbidden()` / `notFound()` は内部で特殊な Error を throw する。これらをテストする際、エラー型・`digest` プロパティ・メッセージ文字列など内部構造に依存して assert すると、Next.js のバージョンアップで簡単に壊れる。原則は **「throw されたことだけを検証する」**（`rejects.toThrow()` のみ）。より厳密に判別したい場合は DAL 内で独自エラーラッパーを設計し、呼び出し側（Server Component / Server Action）で `unauthorized()` に変換する。
+
+**根拠**:
+- Next.js の `unauthorized()` / `forbidden()` が throw する Error の構造（`digest` 値や内部クラス名）は **公開 API ではなく実装詳細**であり、マイナーバージョンアップでも変わりうる
+- `rejects.toThrow(/UNAUTHORIZED/)` のようなメッセージ正規表現マッチングは将来の i18n / メッセージ変更で壊れる
+- テストの目的は「**認可で守られているか**」であって「**Next.js が何を throw したか**」ではない。前者だけ検証すれば十分
+- 独自エラーラッパー（例: `AuthorizationError` クラス）を設けると、DAL の単体テストを Next.js から独立させられ、クラス判定で厳密に検証できる。トレードオフとして変換層が必要
+
+**コード例**:
+```ts
+// Good: throw されたことだけ検証（内部実装非依存）
+import { vi, test, expect, beforeEach } from 'vitest';
+
+vi.mock('./auth', () => ({ verifySession: vi.fn() }));
+vi.mock('@/lib/db', () => ({ db: { post: { findUnique: vi.fn() } } }));
+
+beforeEach(() => vi.clearAllMocks());
+
+test('未ログインなら認可エラーを投げる', async () => {
+  const { verifySession } = await import('./auth');
+  const { getMyDraft } = await import('./post');
+  vi.mocked(verifySession).mockResolvedValue(null);
+
+  // unauthorized() の内部エラー型に依存せず、throw 自体だけ検証
+  await expect(getMyDraft('post-1')).rejects.toThrow();
+});
+
+// Good: 独自エラーラッパー設計（DAL を Next.js から独立させたい場合）
+// app/_lib/dal/errors.ts
+export class AuthorizationError extends Error {
+  constructor() { super('AUTHORIZATION_FAILED'); }
+}
+
+// DAL は独自エラーを投げる純粋関数として設計
+export async function getMyDraft(id: string) {
+  const session = await verifySession();
+  if (!session) throw new AuthorizationError();
+  // ...
+}
+
+// 呼び出し側（Server Component / Server Action）で Next.js の関数に変換
+import { unauthorized } from 'next/navigation';
+try {
+  const draft = await getMyDraft(id);
+} catch (e) {
+  if (e instanceof AuthorizationError) unauthorized();
+  throw e;
+}
+
+// テスト: クラス判定で厳密に検証できる
+test('未ログインなら AuthorizationError を投げる', async () => {
+  vi.mocked(verifySession).mockResolvedValue(null);
+  await expect(getMyDraft('post-1')).rejects.toBeInstanceOf(AuthorizationError);
+});
+
+// Bad: Next.js 内部実装に依存した検証
+await expect(getMyDraft('post-1')).rejects.toThrow(/UNAUTHORIZED/); // メッセージに依存
+await expect(getMyDraft('post-1')).rejects.toMatchObject({
+  digest: 'NEXT_HTTP_ERROR_FALLBACK;401', // 内部 digest 値に依存
+});
+```
+
+**出典**:
+- [Next.jsの考え方 / DAL のテストと特殊エラーの検証](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16

@@ -289,3 +289,74 @@ it('bad example', () => {
 **バージョン**: @testing-library/react 14+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 6. async Server Component のテストツール選択フロー（Vitest / Storybook / E2E の振り分け）
+
+Next.js App Router (v16 時点) では、`async function Page()` のように **データフェッチを内包する Server Component は Vitest で直接テストできない**（RSC レンダラーが必要なため）。テスト対象が「同期コンポーネント」か「async Server Component」かを最初に判別し、適切なツールへ振り分ける。Container/Presentational パターン（Container を薄く、Presentational を厚く）で分離しておくと、Presentational を Vitest + RTL でカバーでき、Container は E2E に任せる割り切りが効きやすい。
+
+**根拠**:
+- Vitest（jsdom / happy-dom）は React Server Components ランタイムを持たないため、`async` を含む Server Component を `render()` すると Promise が露出して assert できない
+- 一方、**同期** Server Component や Client Component は通常の関数コンポーネントとして RTL でテスト可能。境界は「Server か Client か」ではなく「`async` か否か」
+- async Server Component を `renderToStaticMarkup` などで無理やり同期化する迂回はアンチパターン（Suspense / streaming 挙動が再現できず、本番と乖離する）
+- ロジックは DAL に追い出し、Server Component 自体は薄く保つことで Vitest でカバーできる範囲を最大化する設計指針が成立する
+
+**コード例**:
+```text
+判断フロー:
+
+  対象コンポーネントは async？
+   ├─ No (同期 Server Component / Client Component)
+   │    └─ Vitest + React Testing Library で単体テスト
+   │       例: Presentational コンポーネント、Client Component の state / event
+   │
+   └─ Yes (async Server Component / Container)
+        ├─ データ層をモジュールモックで差し替えて UI を確認したい
+        │    └─ Storybook (experimentalRSC) + sb.mock() で server function をモック
+        │       .storybook/main.ts で features.experimentalRSC: true
+        │
+        ├─ ページ全体の挙動 (RSC の出力が DOM に反映された後) を確認したい
+        │    └─ E2E (Playwright)
+        │
+        └─ Container を薄く / Presentational に分離できる
+             └─ Presentational だけ Vitest + RTL で厚くテスト
+                Container 自体は E2E で end-to-end カバー (割り切り)
+```
+
+| 対象 | 推奨ツール | 補足 |
+|---|---|---|
+| 同期 Server Component / Presentational | Vitest + RTL | 通常の関数コンポーネントと同じ扱い |
+| Client Component | Vitest + RTL + `userEvent` | state / event / form を直接検証 |
+| async Server Component（UI 確認重視） | Storybook (experimentalRSC) | `sb.mock()` で server function をモック |
+| async Server Component（end-to-end 確認） | Playwright (E2E) | RSC 出力がブラウザに反映された後を見る |
+| Container (薄いオーケストレーション) | E2E に委譲 | Presentational を Vitest で厚くカバーした上で |
+
+```ts
+// Good: Presentational を Vitest + RTL でテスト（同期）
+// _containers/post/presentational.tsx は普通の純粋コンポーネント
+import { render, screen } from '@testing-library/react';
+import { PostPresentational } from './presentational';
+
+test('title と本文を表示する', () => {
+  render(<PostPresentational post={{ title: 'Hello', body: '...' }} />);
+  expect(screen.getByRole('heading', { name: 'Hello' })).toBeInTheDocument();
+});
+
+// Bad: async Server Component を Vitest で無理やり render
+import { render } from '@testing-library/react';
+import Page from './page'; // async function Page()
+
+test('does not work', async () => {
+  render(<Page />); // Promise が露出して assert できない / RSC ランタイム不在
+});
+```
+
+**出典**:
+- [Next.jsの考え方 / RSC のテスト戦略（async Server Component）](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16

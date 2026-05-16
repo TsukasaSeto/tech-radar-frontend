@@ -333,6 +333,57 @@ Playwright README は「Page Objects Pattern for maintainable, scalable test sui
 
 ---
 
+#### 追加根拠 (2026-05-16) — ルール1「E2E テストはユーザーの重要なジャーニーに絞る」 — 手動取り込み
+
+新たに sstf-5461-admin-app チームドキュメント（原典: akfm_sato 氏 Zenn book）から以下の知見を追加:
+
+**Server Actions のテスト二層構造**:
+- **単体テスト**: Server Action を直接呼び出して入力 → 出力を検証（FormData / Zod スキーマ / 認可失敗・バリデーション失敗・正常系・`revalidateTag` 呼び出し）
+- **E2E テスト**: form 経由で実行し、ユーザー操作と完全に同じパスを通す（ブラウザの実 submit、Next.js のシリアライズ層・同一オリジン保護まで含めた検証）
+
+ログイン・認証フロー（rule 1 のコード例）は Server Action ベースの form submit で実装されることが多く、この二層構造の代表例になる。
+
+**JS 無効でも動作確認する重要フロー**:
+重要なミューテーション（決済、投稿、削除、ログイン）はブラウザの JS 無効化状態でも form submit が成功することを確認する。
+Server Actions は progressive enhancement で JS 無効でも動作するため、これを検証することで完全な可用性を担保する（アクセシビリティ / ネットワーク不安定環境 / ボット耐性の観点でも重要）。
+
+**Playwright での JS 無効テスト**:
+```typescript
+// Playwright: context レベルで JS 無効化
+import { test, expect } from '@playwright/test';
+
+test('checkout form works without JS', async ({ browser }) => {
+  const context = await browser.newContext({ javaScriptEnabled: false });
+  const page = await context.newPage();
+  await page.goto('/checkout');
+  await page.fill('[name="email"]', 'test@example.com');
+  await page.click('button[type="submit"]');
+  await expect(page).toHaveURL('/checkout/complete');
+});
+
+// describe ブロック全体を JS 無効コンテキストにする書き方
+test.describe('プログレッシブ・エンハンスメント', () => {
+  test.use({ javaScriptEnabled: false });
+
+  test('JS 無効でも投稿フォームが submit できる', async ({ page }) => {
+    await page.goto('/posts/new');
+    await page.fill('[name=title]', 'JS なし投稿');
+    await page.fill('[name=body]', '本文');
+    await page.click('button[type=submit]');
+    await expect(page).toHaveURL(/\/posts\/[a-z0-9-]+/);
+  });
+});
+```
+
+重要なフロー（決済、投稿、認証）だけ JS 無効でもテストする運用が現実的。全テストで JS 無効化すると CI コストが倍増するため、対象を絞ること。
+
+**出典**:
+- [Next.jsの考え方 / Server Actions のテスト](https://zenn.dev/akfm/books/nextjs-basic-principle)
+
+**確信度**: 既存（高） → 高
+
+---
+
 #### 追加根拠 (2026-05-06) — ルール5「`toHaveScreenshot()` で視覚的回帰テストを自動化する」
 
 新たに以下の記事/ドキュメントで同じプラクティスが推奨された:

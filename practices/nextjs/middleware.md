@@ -40,6 +40,49 @@ export const config = {
 **確信度**: 高
 **最終更新**: 2026-05-05
 
+#### 追加根拠 (2026-05-16) — 手動取り込み
+
+新たに sstf-5461-admin-app チームドキュメント（原典: akfm_sato 氏 Zenn book）から以下の知見を追加:
+
+**v16 で `middleware.ts` は非推奨化され、`proxy.ts` に名称変更された**:
+v16 では `middleware.ts` が非推奨になり、新規プロジェクトでは `proxy.ts` を使う。ファイル名・関数名・ランタイムが変わる。`middleware.ts` は当面残せるが将来削除予定なので、可能なら設計を見直す。
+
+| 項目 | v15 まで（middleware） | v16+（proxy） |
+|---|---|---|
+| ファイル名 | `middleware.ts` | `proxy.ts` |
+| 関数名 | `middleware` | `proxy` |
+| ランタイム | Edge（デフォルト）/ Node.js | **Node.js 固定**（Edge 非サポート） |
+| 配置の単位 | プロジェクトに 1 つ | プロジェクトに 1 つ |
+
+ランタイムが Node.js 固定になることで、`jsonwebtoken` など Node.js API に依存するライブラリも使えるようになる一方、Edge ランタイム前提の最適化（地理ベースのリダイレクトなど）は失われる。
+
+**Proxy（旧 middleware）は楽観的チェックに留め、最終認可は DAL で行う（CVE-2025-29927 の教訓）**:
+2025 年 3 月に Next.js の middleware で **CVE-2025-29927**（CVSS 9.1）が公表され、`x-middleware-subrequest` ヘッダを送るだけで middleware の認証チェックを完全にバイパスできる脆弱性が判明した。教訓は「middleware（v16 では proxy）単独で守られていると考えない」「認可は DAL に必ず置く（defense-in-depth）」。Proxy は楽観的チェック（速い拒否）、`page.tsx` は粗いガード、**DAL は最終的な砦**という三層を守る。
+
+**コード例**:
+```ts
+// proxy.ts (v16+)
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+
+export function proxy(request: NextRequest) {
+  // ルーティング前に走る。重いロジックや DB アクセスは置かない。
+  // 楽観的チェック（クッキー存在確認・リダイレクト・A/B 振り分け・ヘッダー付与など）に留める
+  return NextResponse.next();
+}
+
+// 公式 codemod でファイル名と関数名を一括変更
+// npx @next/codemod@canary upgrade latest
+```
+
+**出典**:
+- [Next.jsの考え方 / 5.2 Proxy（旧 middleware）・6.4 認可チェックを多段で組む](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [Next.js Docs: middleware → proxy 移行](https://nextjs.org/docs/messages/middleware-to-proxy)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**確信度**: 既存（高）→ 高
+
 ---
 
 ### 2. Middleware でのトークン検証はエッジ互掴の方法で行う

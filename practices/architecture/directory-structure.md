@@ -285,3 +285,80 @@ import { LoginForm } from '@/features/auth'; // 境界のみ経由
 Zenn記事が数学的根拠と実測データを提示: 1ファイルが barrel から import するとき取り込まれる不要モジュールの割合は (N - k) / N（Nはモジュール総数、kは実際に必要なモジュール数）。プロジェクト規模が大きくなるほどNが増大し、オーバーヘッド率が1に収束する。実測でバレルexport 使用時のコンパイル 7.44s vs 直接インポート 5.98s（1.55秒 = 約21%改善）。Bulletproof React公式ドキュメントも「barrel filesを使わずにファイルを直接インポートすること」を明示推奨し、Viteのtree-shakingを有効に維持する目的で feature 内部は直接パス参照を原則にしている。
 
 **確信度**: 既存（高）→ 高（数学的根拠 + 実測コンパイル時間 + 公式ガイド実証済み）
+
+---
+
+### 6. Server Component 配下では Container/Presentational パターンで「データ取得」と「表示」を分離する
+
+React Server Components は React Testing Library / Storybook の対応が遅れているため、Server Component を直接ユニットテスト・ビジュアル確認するのが難しい。
+そこで **DAL 呼び出しなどサーバ処理を担う Container** と **props を受け取って表示するだけの Presentational** に明示的に分離し、Presentational 側をテスト・Storybook の対象にする。
+Container 配下は `_containers/<name>/` でコロケーションし、`index.tsx` から Container のみを再エクスポートして外部公開窓口とする。
+
+**根拠**:
+- RTL / Storybook が Server Component に未対応のため、純粋表示部だけを Client Component（または props 受け取りの関数コンポーネント）として切り出すとテスト・カタログ化が容易になる
+- Container には DAL 呼び出し（§Data Access Layer）が集約され、Presentational は副作用フリーで「props → JSX」の純粋関数として扱える
+- ディレクトリ名 `_containers/` のアンダースコア prefix によりルーティング対象から除外され、`page.tsx` / `layout.tsx` と並べて配置しても URL を汚染しない
+- `index.tsx` 経由でのみ Container を公開することで、`presentational.tsx` への外部 import を機械的に禁止できる
+
+**コード例**:
+```
+// Good: _containers/<name>/ にコロケーション
+app/posts/[postId]/
+├── page.tsx
+├── layout.tsx
+└── _containers/
+    ├── post/
+    │   ├── index.tsx          # Container を re-export（外部公開窓口）
+    │   ├── container.tsx      # DAL 呼び出しなどサーバ処理
+    │   └── presentational.tsx # props を受けて表示するだけ
+    └── user-profile/
+        ├── index.tsx
+        ├── container.tsx
+        └── presentational.tsx
+```
+
+```tsx
+// Good: container.tsx — サーバ処理のみ
+import { getPost } from '@/app/_lib/dal/post';
+import { PostPresentational } from './presentational';
+
+export async function PostContainer({ postId }: { postId: string }) {
+  const post = await getPost(postId); // DAL 経由
+  return <PostPresentational post={post} />;
+}
+
+// Good: presentational.tsx — props を受けて表示するだけ（テスト・Storybook 対象）
+type Props = { post: { title: string; body: string } };
+export function PostPresentational({ post }: Props) {
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <p>{post.body}</p>
+    </article>
+  );
+}
+
+// Good: index.tsx — Container のみ公開
+export { PostContainer } from './container';
+
+// Bad: page.tsx で DAL 呼び出しと JSX を混在させ、Storybook も書けない
+export default async function Page({ params }: { params: Promise<{ postId: string }> }) {
+  const { postId } = await params;
+  const post = await getPost(postId);
+  return <article><h1>{post.title}</h1><p>{post.body}</p></article>;
+}
+```
+
+**アンチパターン**:
+- Presentational を外部から直接 import してしまい、Container 経由の責務分離が崩れる（`eslint-plugin-import-access` や Biome の `noPrivateImports` で防ぐ）
+- Presentational 側に DAL 呼び出しや `cookies()` などのサーバ専用 API を持ち込み、テスト可能性が失われる
+- `_containers/` を作らず、`page.tsx` 1 ファイル内でデータ取得と表示を混在させる（Server Component なのでテスト困難）
+
+**出典**:
+- [Next.jsの考え方 / Container/Presentational パターン](https://zenn.dev/akfm/books/nextjs-basic-principle) (akfm_sato)
+
+**取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
+
+**バージョン**: Next.js 16+
+**確信度**: 高（v16 公式相当の知見）
+**最終更新**: 2026-05-16
