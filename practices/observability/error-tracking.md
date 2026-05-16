@@ -450,6 +450,60 @@ Sentry.init({
 
 ---
 
+### 8. Next.js + Supabase スタックでは `Sentry.supabaseIntegration()` を使い、DB クエリをスパンとして計測する
+
+`@sentry/nextjs` の `supabaseIntegration` を使って Supabase クライアントを Sentry に接続し、
+全 DB クエリを自動的にトレーススパンとしてキャプチャする。
+Next.js + Supabase Edge Functions の混在スタックでは、Sentry プロジェクトをランタイム別に分ける。
+
+**根拠**:
+- `supabaseIntegration` は Supabase の全クエリをスパンとして記録し、N+1 問題やスロークエリを本番で可視化できる
+- DB クエリのスパン計測と Core Web Vitals を同一 Sentry プロジェクト内で照合することで、原因がフロントかバックエンドか判断できる
+- Next.js（Node.js）・Supabase Edge Functions（Deno）を1プロジェクトに混在させると分析ノイズが増す
+- 分離により、ランタイムごとのアラートルールとサンプリングレートを独立して設定できる
+
+**コード例**:
+```ts
+// instrumentation-client.ts
+import * as Sentry from '@sentry/nextjs';
+import { createBrowserClient } from '@supabase/ssr';
+
+const supabaseClient = createBrowserClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+);
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  integrations: [
+    Sentry.supabaseIntegration(supabaseClient, Sentry, {
+      tracing: true,      // DB クエリをスパンとして記録
+      breadcrumbs: true,  // クエリをブレッドクラムにも記録
+    }),
+    Sentry.browserTracingIntegration(),
+  ],
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.1 : 1.0,
+});
+```
+
+**Sentry プロジェクトの推奨分離構成**:
+- `frontend` — Next.js のクライアント + サーバーコンポーネントエラー
+- `supabase-edge` — Supabase Edge Functions（Deno ランタイム）
+- 2つを1プロジェクトに混在させない（エラーの分析精度が低下する）
+
+**出典引用**:
+> "Instruments Supabase queries as spans in your traces so you can see exactly which DB calls are slow"
+> ([From vibe code to production-ready: observability for Next.js and Supabase apps](https://blog.sentry.io/nextjs-supabase-observability/), セクション "Instrumenting Next.js and Supabase Edge Functions") ※2026-05-11に実際にfetch成功
+
+> "Mixing Next.js errors with Deno errors and Postgres logs in a single project makes that analysis noisier and less useful."
+> ([From vibe code to production-ready: observability for Next.js and Supabase apps](https://blog.sentry.io/nextjs-supabase-observability/), セクション "Instrumenting Next.js and Supabase Edge Functions") ※2026-05-11に実際にfetch成功
+
+**バージョン**: @sentry/nextjs 9+, @supabase/ssr 1+
+**確信度**: 高（公式 Sentry Blog）
+**最終更新**: 2026-05-11
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計
