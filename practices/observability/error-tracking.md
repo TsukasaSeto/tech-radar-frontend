@@ -524,6 +524,27 @@ Sentry.init({
 
 ---
 
+### 9. Vercel Protected Source Maps でブラウザソースマップを認証保護する
+
+本番環境に配置するブラウザソースマップ（`.map` ファイル）を Vercel の認証背後に置き、
+チームメンバーのみがアクセスできる状態にする。外部ユーザーへは 404 を返すことで、
+ソースマップ経由のコード構造露出を防ぎながら、内部のデバッグ品質を維持する。
+
+**根拠**:
+- ブラウザソースマップを公開したまま本番デプロイすると、難読化前のソースコード構造が誰でも参照できる
+- Sentry へのアップロード（Rule #4）でデバッグは維持しつつ、`.map` ファイルへの外部アクセスを遮断できる
+- Vercel の認証レイヤーを使うことで追加インフラなしに保護を実現できる
+
+**出典引用**:
+> "Your team can fetch them; everyone else gets a 404."
+> ([Protected Source Maps: Ship browser source maps securely](https://vercel.com/changelog/protected-source-maps-ship-browser-source-maps-securely), Vercel Changelog) ※2026-05-16に実際にfetch成功
+
+**バージョン**: Vercel（全プラン）
+**確信度**: 高（Vercel 公式 Changelog — Pattern 1）
+**最終更新**: 2026-05-16
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計
