@@ -669,3 +669,25 @@ refactor: extract auth logic to separate module
 **最終更新**: 2026-05-15
 
 ---
+
+#### 追加根拠 (2026-05-16) — ルール11「Claude Code の繰り返し作業を独自 Skill に変換し、拡張機能（Skills/MCP/Hooks）を用途別に使い分ける」
+
+新たに以下の記事でエージェントスキル駆動開発（ASDD）の観点から、Skill化の判断基準と Single Source of Truth 原則が示された:
+- [エージェントスキルを中心とした開発手法を考える](https://zenn.dev/tnkn08/articles/asdd-agent-skill-driven-development) (Zenn tnkn08 / 2026-05-15) ※2026-05-16に実際にfetch成功
+
+**出典引用**:
+> "Skill First ── 同じ指示を2回書いたら、3回目を書く前にSkill化"
+> (セクション "7つの実践ルール")
+
+> "Single Source ── ルール分散（Wiki、Slack、README）を避け、Skillに集約"
+> (セクション "7つの実践ルール")
+
+ASDD（Agent Skill Driven Development）は、Skill ファイルをプロジェクトの「正本（Single Source of Truth）」として位置づけ、人間とAIエージェントが同じルール集を参照しながら開発を進める手法。
+
+「同じ指示を2回書いたら、3回目を書く前にSkill化」という具体的な閾値基準は、Skill化を判断する際の実践的なルールとして機能する（CLAUDE.md や README へのルール追記を2回繰り返した時点がシグナル）。
+
+ASDD では Skill のライフサイクルを 5 フェーズで管理する: Bootstrap（初期セット） → Develop（Skillを参照しながら開発） → Capture（新ルールをSkill化） → Review（コード同等のレビュー対象・CI検証対象） → Measure（効果測定・棚卸しで不要Skillを削除）
+
+**確信度**: 既存（高）→ 高（Skill化判断の具体的閾値・SSOT原則・5フェーズライフサイクルが追加）
+
+---
