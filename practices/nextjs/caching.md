@@ -192,3 +192,22 @@ const getCachedProductList = unstable_cache(
 **最終更新**: 2026-05-06
 
 ---
+
+#### 追加根拠 (2026-05-12)
+
+新たに以下の記事で同じプラクティスが言及され、本番運用での具体的知見が追加された:
+- [Next.js 16 Cache Components: A Real Migration From a 4.2M-MAU Site](https://dev.to/nilesh_kasar_2b00e7247dd5/nextjs-16-cache-components-a-real-migration-from-a-42m-mau-site-49d8) (dev.to / 2026-05-12) ※2026-05-12に実際にfetch成功
+
+**出典引用**:
+> "You explicitly mark a component as cacheable with the new 'use cache' directive."
+> ([Next.js 16 Cache Components: A Real Migration From a 4.2M-MAU Site], セクション "What Cache Components Are (and Why They Replaced Fetch-Based Caching)")
+
+4.2M MAU の本番サービスで Next.js 15.3 → 16 へ移行した実例。TTFB p50 が 70% 改善、月次費用が 64% 削減（$4,800→$1,720）。`use cache` 運用での重要な注意点が明らかになった:
+
+1. **キャッシュタグは意図を表す粒度で命名する**: `articles` のような汎用的な単語タグは避け、`articles:latest`・`articles:by-author:{id}` のように用途が分かる名前にする。汎用タグへの `revalidateTag` 1回でキャッシュの 80% が失われた事例あり。
+
+2. **`cacheKey()` でユーザーセグメント単位のキャッシュキーに集約する**: ログイン済み/未ログイン・地域バリアントなどを `cacheKey()` で論理セグメントに畳み込むと、ユーザーごとの個別キャッシュを作らずに済み、Edge Function 呼び出し回数を最大 96% 削減できる。
+
+3. **`use cache` 境界の内部で `cookies()` を呼ばない**: キャッシュコンポーネント内から `cookies()` を直接呼び出すと Next.js がビルドエラーを発生させる。Cookie の値は外部コンポーネントで取得し、props として渡す。
+
+**確信度**: 既存（中）→ 高（4.2M MAU 本番事例で実証済み）

@@ -90,6 +90,26 @@ export default function GlobalError({
 
 ---
 
+#### 追加根拠 (2026-05-12)
+
+新たに以下の記事（Sentry 公式ブログ）で Next.js + Supabase 構成の観測性パターンが示された:
+- [From vibe code to production-ready: observability for Next.js and Supabase apps](https://blog.sentry.io/nextjs-supabase-observability/) (Sentry Blog / 2026-05-11) ※2026-05-12に実際にfetch成功
+
+**出典引用**:
+> "mixing Next.js errors with Deno errors and Postgres logs clouds AI-assisted analysis and makes debugging harder."
+> ([From vibe code to production-ready: observability for Next.js and Supabase apps], セクション "Separate Projects by Runtime")
+
+複数ランタイムを持つ構成（Next.js + Edge Functions + インフラ）では、Sentry プロジェクトをランタイムごとに**分離**することが推奨される。具体的には:
+
+- **プロジェクト分割の指針**: Next.js（Node.js）/ Edge Functions（Deno 等）/ インフラログ（DB、CDN）を別 Sentry プロジェクトにする。混在させると AI 支援デバッグの精度が下がり、エラー原因の特定に手間がかかる。
+- **DB クエリレベルの可視化**: ORM/SDK の integration を instrumentation.ts に追加し、「どの SQL が遅いか」まで追跡できるようにする。API ルートが遅いことは分かっても原因クエリが分からない状況を防ぐ。
+- **Log Drain の活用**: Supabase や外部インフラのログを Sentry に引き込み、アプリトレースとインフライベント（コネクション断等）を相関させる。
+- **N+1 自動検出**: 本番トレースで N+1 クエリを自動フラグ立てする。dev 環境の小データセットでは見えない問題が本番規模で顕在化するため、本番サンプリングから外さない。
+
+**確信度**: 既存（高）→ 高（Sentry 公式ブログで複数ランタイム分離パターンを追加）
+
+---
+
 ### 2. 本番では tracesSampleRate を 0.1 以下に設定し、コストを管理する
 
 開発・ステージング環境では 1.0、本番では 0.05〜0.1 を基本とし、
