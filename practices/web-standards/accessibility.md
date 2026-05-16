@@ -22,42 +22,21 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
   return (
     <div>
       <button
-        aria-expanded={isOpen}       // 展開状態をスクリーンリーダーに伝える
-        aria-controls={contentId}    // 制御する要素を指定
+        aria-expanded={isOpen}     // 展開状態をスクリーンリーダーに伝える
+        aria-controls={contentId}  // 制御する要素を指定
         onClick={() => setIsOpen(v => !v)}
       >
         {title}
       </button>
-      <div
-        id={contentId}
-        role="region"
-        aria-labelledby={/* button の id */undefined}
-        hidden={!isOpen}             // hidden で非表示時にスクリーンリーダーからも隠す
-      >
+      <div id={contentId} role="region" hidden={!isOpen}>
         {content}
       </div>
     </div>
   );
 }
-
-// ライブリージョン（動的なコンテンツ更新を通知）
-function StatusMessage({ message }: { message: string }) {
-  return (
-    <div
-      role="status"           // 割り込まない通知
-      aria-live="polite"      // 現在の読み上げが終わったら通知
-      aria-atomic="true"      // メッセージ全体を読み上げる
-    >
-      {message}
-    </div>
-  );
-}
-
-// エラーメッセージ（即座に通知）
-<div role="alert" aria-live="assertive">
-  フォームの送信に失敗しました
-</div>
 ```
+
+他の典型パターン（StatusMessage / alert / aria-live）は [Rule #4](#4-aria-live-リージョンで動的コンテンツの変化をスクリーンリーダーに通知する) を、それ以外は [WAI-ARIA Authoring Practices Guide](https://www.w3.org/WAI/ARIA/apg/) を参照。
 
 **出典**:
 - [MDN: ARIA](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA) (MDN Web Docs)
@@ -82,58 +61,16 @@ function StatusMessage({ message }: { message: string }) {
 **コード例**:
 ```tsx
 // Bad: onClick のみでキーボード非対応
-<div onClick={handleClick} className="card">
-  クリックしてください
-</div>
+<div onClick={handleClick} className="card">クリックしてください</div>
 
 // Good: button を使う（Enter/Space でフォーカス時に起動）
-<button onClick={handleClick} className="card">
-  クリックしてください
-</button>
-
-// モーダルのフォーカス管理
-'use client';
-import { useEffect, useRef } from 'react';
-
-function Modal({ isOpen, onClose, children }: ModalProps) {
-  const firstFocusableRef = useRef<HTMLButtonElement>(null);
-  const modalRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      // モーダルが開いたら最初のフォーカス可能要素にフォーカス
-      firstFocusableRef.current?.focus();
-    }
-  }, [isOpen]);
-
-  // Escape キーで閉じる
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    if (isOpen) document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
-
-  return (
-    <div
-      ref={modalRef}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="modal-title"
-    >
-      <h2 id="modal-title">タイトル</h2>
-      {children}
-      <button ref={firstFocusableRef} onClick={onClose}>閉じる</button>
-    </div>
-  );
-}
+<button onClick={handleClick} className="card">クリックしてください</button>
 
 // tabIndex={0}: タブ順序に追加（div を focusable にする最終手段）
 // tabIndex={-1}: プログラム的なフォーカスのみ可能（タブ順序から除外）
 ```
+
+モーダルのフォーカストラップ・Escape キー処理は `<dialog>` + `showModal()` でブラウザが自動的に提供する（[`web-standards/html.md` Rule #4](./html.md) 参照）。手書きの focus trap は `<dialog>` が使えない旧ブラウザ対応時のみ。
 
 **出典**:
 - [WCAG 2.1: Keyboard Accessible](https://www.w3.org/TR/WCAG21/#keyboard-accessible) (W3C WCAG)
@@ -196,15 +133,10 @@ Ajax通信結果・フォームバリデーション・進捗状況など、DOM 
 `aria-live` リージョンを適切に配置し、視覚的変化をスクリーンリーダーに伝える。
 
 **根拠**:
-- スクリーンリーダーはフォーカスが当たった要素しか読まないため、フォーカス外の更新は読み上げられない
-- `aria-live="polite"` は現在の読み上げ完了後に通知し、`aria-live="assertive"` は即座に割り込む
+- スクリーンリーダーはフォーカスが当たった要素しか読まないため、フォーカス外の更新は読み上げられない（WCAG 2.1 SC 4.1.3 Status Messages はこの種のプログラム的通知を要求する）
+- `aria-live="polite"` は現在の読み上げ完了後に通知し、`aria-live="assertive"` は即座に割り込む。`assertive` の過剰使用は読み上げ中断で体験を損なう
 - `aria-atomic="true"` を設定するとリージョン全体を一括で読み上げ、部分更新の誤読を防ぐ
-- ライブリージョンはページ初期読み込み時から DOM に存在させ、後から追加しない
-
-**根拠**:
-- スクリーンリーダーはフォーカスのない DOM 更新を自動的には読み上げない
-- WCAG 2.1 SC 4.1.3（Status Messages）は状態メッセージのプログラム的提供を要求する
-- `assertive` の過剰使用は読み上げの中断を引き起こし体験を損なう
+- ライブリージョンはページ初期読み込み時から DOM に存在させ、後から追加しない（追加されたリージョンは無視するブラウザがある）
 
 **コード例**:
 ```tsx

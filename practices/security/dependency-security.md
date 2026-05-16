@@ -1,5 +1,9 @@
 # 依存セキュリティのベストプラクティス
 
+> **役割分担**: このファイルは **脆弱性スキャン / supply chain attack 対策 / 緊急アップデート / SBOM** を扱う。
+> **lockfile 戦略 / packageManager 固定 / 通常の更新ポリシー**は [`dx/dependency-management.md`](../dx/dependency-management.md) を参照。
+> 「正しく固定する」は dx 側、「壊れた依存を検知・封じ込める」は security 側 という分担。
+
 npm エコシステムは supply chain attack の最大の標的。lockfile・脆弱性監査・自動更新・SBOM の 4 点セットで運用する。
 
 ## ルール

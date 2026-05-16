@@ -1,5 +1,9 @@
 # 依存管理のベストプラクティス
 
+> **役割分担**: このファイルは **環境再現性 / 開発体験**（lockfile 戦略、packageManager の固定、未使用検出、パッチ管理、更新フロー）を扱う。
+> **脆弱性スキャン / supply chain attack 対策 / 自動緊急アップデート**は [`security/dependency-security.md`](../security/dependency-security.md) を参照。
+> lockfile 周りは両ファイルで触れるが、**「正しく固定する」は dx 側、「壊れた依存を検知・封じ込める」は security 側** という分担を基本にする。
+
 `package.json` の `dependencies` は本番に乗る代物。雑な追加・放置がそのまま負債とセキュリティリスクになる。
 
 ## ルール

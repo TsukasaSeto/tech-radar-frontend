@@ -1,17 +1,27 @@
 # エラー追跡のベストプラクティス
 
+> **層責任**: このファイルは **観測 / 集計層**（Sentry でのキャプチャ、サンプリング、フィルタ、PII スクラブ、Source Map、リリース管理）を扱う。
+> - **UI 層**（Error Boundary、`error.tsx`、Result 型、回復 UI）→ [`architecture/error-handling.md`](../architecture/error-handling.md)
+> - **HTTP / API 層**（4xx・5xx 分類、リトライ判定）→ [`api-client/error-handling.md`](../api-client/error-handling.md)
+>
+> 流れは `HTTP エラー検知 → 分類 → 回復 UI → ログ・Sentry 通知（ここ）` の方向。
+
 ## ルール
 
-### 1. Sentry を Next.js に統合し、全環境でエラーを自動キャプチャする
+### 1. Sentry を Next.js に統合し、全環境・全ランタイムでエラーを自動キャプチャする
 
-`@sentry/nextjs` の公式ウィザードで初期設定を行い、
-クライアント・サーバー・Edge の3ランタイムを個別に設定する。
+`@sentry/nextjs` の公式ウィザードで初期設定を行い、クライアント・サーバー・Edge の 3 ランタイムを個別に設定する。
+さらに React 19 環境では `createRoot` のエラーハンドラ 3 種（`onUncaughtError` / `onCaughtError` / `onRecoverableError`）も Sentry にブリッジし、ErrorBoundary でも `global-error.tsx` でも捕捉できないカテゴリを塞ぐ。
 
 **根拠**:
 - Sentry の Next.js SDK はクライアント・サーバー（Node.js）・Edge Runtime を個別に設定する必要がある
 - ウィザード（`npx @sentry/wizard@latest -i nextjs`）が `instrumentation.ts` と `app/global-error.tsx` を自動生成する
 - Source Map が自動アップロードされ、本番でも可読なスタックトレースが得られる
 - `withSentryConfig` が `next.config.ts` をラップし、ビルド時に設定が適用される
+- `Sentry.setUser()` / `Sentry.setTag()` でユーザーコンテキストを付与すると、イベントを個人レベルでフィルタ・検索できる
+- React 19 の `onUncaughtError`（イベントハンドラ・非同期・setTimeout 内）/ `onCaughtError`（ErrorBoundary キャッチ済み・`Sentry.ErrorBoundary` 未使用時でも捕捉可）/ `onRecoverableError`（ハイドレーションミスマッチ等の自動回復系、`level: 'warning'` で記録推奨）を併用しないと捕捉漏れカテゴリが残る
+- 複数ランタイム構成（Next.js + Edge Functions + Supabase 等）では Sentry プロジェクトを**ランタイムごとに分離**するのが Sentry 公式推奨。混在させると AI 支援デバッグの精度が下がる
+- ORM / SDK の integration（`Sentry.supabaseIntegration()` 等）を `instrumentation.ts` に追加すると DB クエリ単位でスパンが取れ、N+1 を本番トレースから自動検出できる
 
 **コード例**:
 ```bash
@@ -81,32 +91,20 @@ export default function GlobalError({
 }
 ```
 
+**運用上の補足**:
+- **プロジェクト分割**: Next.js（Node.js）/ Edge Functions（Deno 等）/ インフラログ（DB、CDN）を別 Sentry プロジェクトにする
+- **Log Drain**: Supabase や外部インフラのログを Sentry に引き込み、アプリトレースとインフライベント（コネクション断等）を相関させる
+- **N+1 自動検出**: 本番トレースで N+1 クエリを自動フラグ立て。dev 環境の小データセットでは見えない問題が本番規模で顕在化する
+
 **出典**:
 - [Sentry Docs: Next.js SDK](https://docs.sentry.io/platforms/javascript/guides/nextjs/) (Sentry公式)
+- [getsentry/sentry-javascript packages/nextjs README](https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/packages/nextjs/README.md) (Sentry 公式 develop ブランチ、React 19 の `createRoot` エラーハンドラ統合パターン) ※2026-05-06 fetch
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06 fetch
+- [From vibe code to production-ready: observability for Next.js and Supabase apps](https://blog.sentry.io/nextjs-supabase-observability/) (Sentry Blog、複数ランタイム分離 / DB スパン / N+1 検出) ※2026-05-12 fetch
 
 **バージョン**: @sentry/nextjs 8+, Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
-
----
-
-#### 追加根拠 (2026-05-12)
-
-新たに以下の記事（Sentry 公式ブログ）で Next.js + Supabase 構成の観測性パターンが示された:
-- [From vibe code to production-ready: observability for Next.js and Supabase apps](https://blog.sentry.io/nextjs-supabase-observability/) (Sentry Blog / 2026-05-11) ※2026-05-12に実際にfetch成功
-
-**出典引用**:
-> "mixing Next.js errors with Deno errors and Postgres logs clouds AI-assisted analysis and makes debugging harder."
-> ([From vibe code to production-ready: observability for Next.js and Supabase apps], セクション "Separate Projects by Runtime")
-
-複数ランタイムを持つ構成（Next.js + Edge Functions + インフラ）では、Sentry プロジェクトをランタイムごとに**分離**することが推奨される。具体的には:
-
-- **プロジェクト分割の指針**: Next.js（Node.js）/ Edge Functions（Deno 等）/ インフラログ（DB、CDN）を別 Sentry プロジェクトにする。混在させると AI 支援デバッグの精度が下がり、エラー原因の特定に手間がかかる。
-- **DB クエリレベルの可視化**: ORM/SDK の integration を instrumentation.ts に追加し、「どの SQL が遅いか」まで追跡できるようにする。API ルートが遅いことは分かっても原因クエリが分からない状況を防ぐ。
-- **Log Drain の活用**: Supabase や外部インフラのログを Sentry に引き込み、アプリトレースとインフライベント（コネクション断等）を相関させる。
-- **N+1 自動検出**: 本番トレースで N+1 クエリを自動フラグ立てする。dev 環境の小データセットでは見えない問題が本番規模で顕在化するため、本番サンプリングから外さない。
-
-**確信度**: 既存（高）→ 高（Sentry 公式ブログで複数ランタイム分離パターンを追加）
+**最終更新**: 2026-05-12
 
 ---
 
@@ -120,6 +118,7 @@ export default function GlobalError({
 - 全トレースが必要なのは開発・ステージング時のみ（デバッグ目的）
 - `tracesSampler` 関数で「チェックアウト」や「ログイン」などクリティカルフローのみ 100% サンプルできる
 - エラーは `tracesSampleRate` と独立してキャプチャされるため、エラー取りこぼしは起きない
+- エラーイベント自体も 2 段階サンプリングできる: `beforeSend` 内で通常エラーを 25% のみ通過させ、checkout / auth / payment 等のクリティカルパスのみ 100% 送信。月間イベント消費量を抑えつつ重要エラーを取りこぼさない
 
 **コード例**:
 ```ts
@@ -149,10 +148,11 @@ Sentry.init({
 
 **出典**:
 - [Sentry Docs: Performance Sampling](https://docs.sentry.io/platforms/javascript/performance/) (Sentry公式)
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi、エラーレベル 2 段階サンプリング) ※2026-05-06 fetch
 
 **バージョン**: @sentry/nextjs 8+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-06
 
 ---
 
@@ -244,6 +244,8 @@ Sentry.init({
 - Source Map があれば元のファイル名・行番号・変数名がSentry上で確認できる
 - Source Map ファイル自体はクライアントに配信されないため、ソースコード漏洩のリスクはない
 - SENTRY_AUTH_TOKEN を CI の環境変数に設定することでビルド時に自動アップロードされる
+- `getsentry/action-release@v1` GitHub Action を使うとデプロイ後に自動でリリースを作成し Source Map をアップロードできる
+- リリース名を `Application@1.0.0+202611100932`（名前 + バージョン + タイムスタンプ）形式にすると Sentry 上での時系列比較が容易。`dist` を `yyyyMMddHHmm` 形式にしておけば同一バージョンの複数デプロイも区別できる
 
 **コード例**:
 ```ts
@@ -283,10 +285,11 @@ env:
 
 **出典**:
 - [Sentry Docs: Source Maps for Next.js](https://docs.sentry.io/platforms/javascript/guides/nextjs/manual-setup/#configure-source-maps) (Sentry公式)
+- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi、`action-release` 連携 / リリース命名規則) ※2026-05-06 fetch
 
 **バージョン**: @sentry/nextjs 8+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-06
 
 ---
 
@@ -550,37 +553,3 @@ Sentry.init({
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計
 - [`observability/logging.md`](./logging.md) - 構造化ロギング
 - [`api-client/error-handling.md`](../api-client/error-handling.md) - API エラーの分類と処理
-
----
-
-#### 追加根拠 (2026-05-06) — ルール1「Sentry を Next.js に統合し、全環境でエラーを自動キャプチャする」
-
-新たに以下のソースでエラーカバレッジの拡張パターンが確認された:
-- [getsentry/sentry-javascript packages/nextjs README](https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/packages/nextjs/README.md) (Sentry公式 / developブランチ) ※2026-05-06に実際にfetch成功
-- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
-
-`Sentry.setUser()` / `Sentry.setTag()` でユーザーコンテキストを付与し、イベントを個人レベルでフィルタ・検索できるようになる。React 19 では `createRoot` に3種のエラーハンドラコールバックが追加され、`global-error.tsx` だけでは捕捉できなかったカテゴリをカバーできる: `onUncaughtError`（イベントハンドラ・非同期・setTimeout 内のエラー）、`onCaughtError`（ErrorBoundary でキャッチされたエラー — `Sentry.ErrorBoundary` 未使用時でも捕捉可）、`onRecoverableError`（ハイドレーションミスマッチ等 React が自動回復するエラー、`level: 'warning'` で記録推奨）。
-
-**確信度**: 既存（高）→ 高（React 19 の追加エラーカテゴリを実践記事で確認）
-
----
-
-#### 追加根拠 (2026-05-06) — ルール2「本番では tracesSampleRate を 0.1 以下に設定し、コストを管理する」
-
-新たに以下の記事でエラーレベルの動的サンプリングパターンが示された:
-- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
-
-トレースサンプリング（`tracesSampleRate`）とは独立して、エラーイベント自体もサンプリングできる: `beforeSend` 内で通常エラーを 25% のみ通過させ、クリティカルパス（checkout・auth・payment 等）のエラーは 100% 送信する。この2段階サンプリングにより Sentry の月間イベント消費量を大幅に削減しながら、重要エラーを取りこぼさない。
-
-**確信度**: 既存（高）→ 高（エラーレベルサンプリングの2段階パターンを実践記事で確認）
-
----
-
-#### 追加根拠 (2026-05-06) — ルール4「Source Map をビルド時に自動アップロードし、本番のスタックトレースを可読にする」
-
-新たに以下の記事で Source Map のリリース管理パターンが示された:
-- [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06に実際にfetch成功
-
-`getsentry/action-release@v1` GitHub Action を使うと、デプロイ後に自動でリリースを作成し Source Map をアップロードできる。リリース名に "Application@1.0.0+202511100932"（名前+バージョン+タイムスタンプ）フォーマットを採用すると、Sentry 上でのリリース間比較・時系列フィルタリングが可能になる。`dist` を "yyyyMMddHHmm" 形式のタイムスタンプにすることで、同一バージョン内での複数デプロイも区別できる。
-
-**確信度**: 既存（高）→ 高（GitHub Actions リリース連携と命名規則を実践記事で確認）

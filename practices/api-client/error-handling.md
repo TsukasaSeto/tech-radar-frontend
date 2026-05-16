@@ -1,5 +1,11 @@
 # API エラー処理のベストプラクティス
 
+> **層責任**: このファイルは **HTTP / API 層**（4xx・5xx 分類、リトライ判定、認証エラー処理、トランスポートエラー）を扱う。
+> - **UI 層**（Error Boundary、`error.tsx`、Result 型、回復 UI）→ [`architecture/error-handling.md`](../architecture/error-handling.md)
+> - **観測 / 集計層**（Sentry キャプチャ、ノイズ削減、PII スクラブ）→ [`observability/error-tracking.md`](../observability/error-tracking.md)
+>
+> 流れは `HTTP エラー検知（ここ）→ 分類 → 回復 UI → ログ・Sentry 通知` の方向。
+
 ## ルール
 
 ### 1. HTTP ステータスコードを分類してエラー種別を判定する

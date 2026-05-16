@@ -1,5 +1,9 @@
 # レンダリングパフォーマンスのベストプラクティス
 
+> **役割分担**: このファイルは **計測駆動の最適化テクニック**（Profiler での再レンダー特定、仮想スクロール、コンテキスト分割、Core Web Vitals 連携）を扱う。
+> **React API の基本パターン**（`memo` / `useMemo` / `startTransition` の使いどころと意味論）は [`react/rendering.md`](../react/rendering.md) を参照。
+> 「いつどう書くか」は react 側、「測ってどう調整するか」はこのファイル の分担。
+
 ## ルール
 
 ### 1. 不要な再レンダリングを `React DevTools Profiler` で特定してから最適化する

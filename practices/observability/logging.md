@@ -1,7 +1,7 @@
-# ロギングのベストプラクティス
+# ロギングの実装ガイド
 
-> **注意**: `practices/architecture/logging.md` に基本的なルール（構造化ログの採用、Sentry 統合、PII 排除）が記載されています。
-> このファイルはその詳細ガイドです。
+> **役割分担**: 「どの層が何をログするか」という責任分担は [`architecture/logging.md`](../architecture/logging.md) が定義する。このファイルは**実装パターン**（Pino 設定 / redact / ログレベル / Correlation ID 伝播）を集約する。
+> エラー特化の経路は [`observability/error-tracking.md`](./error-tracking.md)、分散トレーシングは [`observability/tracing.md`](./tracing.md) を参照。
 
 ## ルール
 

@@ -15,7 +15,21 @@
 - ジョブ間の依存（`needs:`）で並列化と直列化を制御できる
 - failed run の調査も 1 ファイル内なら追いやすい
 
-**標準テンプレート**:
+**標準テンプレート**（pnpm + Node セットアップは Composite Action に切り出して共通化する）:
+
+```yaml
+# .github/actions/setup/action.yml — Install pnpm, Node, deps
+name: Setup
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v3
+    - uses: actions/setup-node@v4
+      with: { node-version: '20', cache: pnpm }
+    - shell: bash
+      run: pnpm install --frozen-lockfile
+```
+
 ```yaml
 # .github/workflows/ci.yml
 name: CI
@@ -28,97 +42,21 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-env:
-  NODE_VERSION: '20'
-
 jobs:
-  install:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-  typecheck:
-    needs: install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-
-  lint:
-    needs: install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-
-  test:
-    needs: install
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test --reporter=verbose
-
+  typecheck: { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm typecheck} ] }
+  lint:      { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm lint} ] }
+  test:      { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm test --reporter=verbose} ] }
   build:
-    needs: install
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup
       - run: pnpm build
         env:
           NEXT_PUBLIC_APP_URL: https://example.com
 ```
 
-**Composite Action でセットアップを共通化**:
-```yaml
-# .github/actions/setup/action.yml
-name: Setup
-description: Install pnpm, Node, and dependencies
-runs:
-  using: composite
-  steps:
-    - uses: pnpm/action-setup@v3
-    - uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: pnpm
-    - shell: bash
-      run: pnpm install --frozen-lockfile
-```
-
-```yaml
-# ci.yml が短くなる
-jobs:
-  typecheck:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup
-      - run: pnpm typecheck
-```
+Composite Action を使わずに setup ステップを各ジョブで直書きすると、`pnpm/action-setup` / `actions/setup-node` / `pnpm install` の 3 ステップが 4 ジョブで重複し、保守性が落ちる。`actions/cache` を使う場合も Composite Action 内に取り込む。
 
 **判断軸**:
 - ワークフローは「トリガー × デプロイ先」で分ける

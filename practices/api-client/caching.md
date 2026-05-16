@@ -1,5 +1,9 @@
 # API レスポンスキャッシュ戦略のベストプラクティス
 
+> **層の役割**: このファイルは **Client 層**（TanStack Query / SWR / 楽観的更新 / Hydration Boundary 受け取り側）を扱う。
+> **Server 層**（Next.js の 4 層キャッシュ、`"use cache"`、`revalidateTag`）は [`nextjs/caching.md`](../nextjs/caching.md) を参照。
+> RSC で取得して Client にハイドレートする境界では、**取得側ロジックは Server 層、再フェッチ / 楽観更新は Client 層** という分担を基本にする。
+
 ## ルール
 
 ### 1. TanStack Query と SWR の使い分けを理解する

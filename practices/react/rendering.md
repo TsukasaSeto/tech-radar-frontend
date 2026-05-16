@@ -1,4 +1,8 @@
-# レンダリング最適化のベストプラクティス
+# React レンダリングの基本パターン
+
+> **役割分担**: このファイルは **React の基本パターン**（`memo` / `useMemo` / `useCallback` の使いどころ、`startTransition` / `useDeferredValue` の意味論）を扱う。
+> **計測駆動の最適化テクニック**（Profiler での再レンダー特定、仮想スクロール、コンテキスト分割、Core Web Vitals 連携）は [`performance/rendering.md`](../performance/rendering.md) を参照。
+> 両者は重なる API（`memo`, `startTransition`）を扱うが、**「いつどう書くか」は react 側、「測ってどう調整するか」は performance 側** の分担。
 
 ## ルール
 

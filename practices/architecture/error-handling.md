@@ -1,5 +1,11 @@
 # エラーハンドリングのベストプラクティス
 
+> **層責任**: エラー処理は 3 レイヤーで分担する。このファイルは **UI 層**（Error Boundary、`error.tsx`、Result 型、回復 UI）を扱う。
+> - **HTTP / API 層**（4xx・5xx 分類、リトライ判定、認証エラー処理）→ [`api-client/error-handling.md`](../api-client/error-handling.md)
+> - **観測 / 集計層**（Sentry でのキャプチャ、フィルタ、ノイズ削減、PII スクラブ）→ [`observability/error-tracking.md`](../observability/error-tracking.md)
+>
+> 流れは `HTTP エラー検知 → 分類 → 回復 UI / Error Boundary → ログ・Sentry 通知` の方向。
+
 ## ルール
 
 ### 1. Next.js の `error.tsx` と `not-found.tsx` でエラー境界を設定する
