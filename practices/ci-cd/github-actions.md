@@ -503,3 +503,97 @@ module.exports = {
 **バージョン**: GitHub Actions
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 6. `pull_request_target` + フォーク checkout の組み合わせを避け、二分割パターンで安全に PR を処理する
+
+外部フォークからの PR を `pull_request_target` + フォーク checkout で処理すると、信頼できないコードが secrets にアクセスできる状態で実行されてしまう。
+Cache Poisoning を利用して本番環境を汚染される（「PR を出しただけで汚染」）リスクがある。
+解決策は「信頼できないコードの実行」と「secrets を使う処理」をワークフローレベルで分離すること。
+
+**根拠**:
+- `pull_request_target` はデフォルトブランチのコンテキストで実行されるが、`actions/checkout` でフォーク側のコードを取得するとその制限が無効になる
+- CI cache はワークフロー間で共有されるため、悪意あるコードがキャッシュを汚染→後続ビルドに混入
+- npm supply chain 攻撃解説（Zenn 2026-05-15）でも「GitHub Actions の `pull_request_target` を避けるべき」と明記
+- OWASP GitHub Actions Security Cheat Sheet でも同パターンを危険と指摘
+
+**危険なパターン（避けること）**:
+```yaml
+# ❌ BAD: pull_request_target + フォーク checkout の組み合わせ
+on:
+  pull_request_target:
+
+jobs:
+  comment:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # ← フォーク側コードを取得
+      - run: pnpm build  # ← 信頼できないコードを secrets のある環境で実行 ← 危険
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**安全な二分割パターン（推奨）**:
+```yaml
+# ワークフロー 1: 信頼できないコードを secrets なし環境でビルド
+name: Build (Untrusted)
+on:
+  pull_request:   # ← pull_request_target ではなく pull_request を使う
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-result
+          path: ./dist
+
+---
+# ワークフロー 2: ビルド結果を使った secrets 処理は別ワークフローで
+name: Comment (Trusted)
+on:
+  workflow_run:
+    workflows: ["Build (Untrusted)"]
+    types: [completed]
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-result
+          run-id: ${{ github.event.workflow_run.id }}
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}  # ← secrets はここだけで使う
+          script: |
+            // PR にコメントを投稿する処理
+```
+
+**判断軸（いつ二分割が必要か）**:
+| ケース | 対処 |
+|---|---|
+| 外部フォークの PR で secrets を使いたい | 二分割パターン必須 |
+| 自分のブランチからの PR のみ | `pull_request` トリガーで OK |
+| Bot PR (Renovate/Dependabot) | secrets 露出しないよう `pull_request` のまま |
+| ラベル起動（trusted PR のみ） | `pull_request_target` + `if: github.actor == 'dependabot[bot]'` で制限可 |
+
+**チェックリスト**:
+- [ ] `pull_request_target` を使っている場合、フォーク checkout をしていないか確認
+- [ ] secrets を使う処理は `workflow_run` トリガーで artifact 経由にしているか
+- [ ] Renovate/Dependabot の PR ワークフローは `pull_request` トリガーか
+
+**出典引用**:
+> "「PRを出しただけ」で本番環境が汚染される——GitHub Actions Cache Poisoning攻撃を理解する"
+> ([GitHub Actions Cache Poisoning攻撃を理解する](https://zenn.dev/singularity/articles/2026-05-13-github-actions-cache-poisoning), セクション "Cache Poisoning の仕組み") ※2026-05-16に実際にfetch成功
+
+**バージョン**: GitHub Actions
+**確信度**: 高
+**最終更新**: 2026-05-16
