@@ -217,13 +217,110 @@ for (let i = 0; i < 3; i++) {
 }
 ```
 
+**HTTP ステータスコード別リトライ判定表**:
+
+クライアント側で「リトライしてよいか」を一義的に判断するための表。
+リトライの可否は **冪等性** と **エラーの一時性** の 2 軸で決まる。
+
+| ステータス | 意味 | 冪等メソッド (GET/HEAD/PUT/DELETE) | 非冪等メソッド (POST/PATCH) |
+|---|---|---|---|
+| **408** Request Timeout | クライアント送信が間に合わなかった | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
+| **425** Too Early | early data 拒否 | ✅ 再試行 | ✅ 再試行 |
+| **429** Too Many Requests | レート制限 | ✅ `Retry-After` ヘッダー尊重 | ✅ `Retry-After` ヘッダー尊重 |
+| **500** Internal Server Error | サーバー側エラー | ✅ 再試行（1〜3 回） | ❌ サーバー側で処理済の可能性あり、冪等性キー必須 |
+| **502** Bad Gateway | 上流サーバー応答異常 | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
+| **503** Service Unavailable | 一時的障害 | ✅ `Retry-After` 尊重 | ✅ `Retry-After` 尊重 |
+| **504** Gateway Timeout | 上流タイムアウト | ✅ 再試行 | ⚠️ サーバー側到達確認後に再試行 |
+| **400** Bad Request | リクエスト不正 | ❌ リトライ不可 | ❌ リトライ不可 |
+| **401** Unauthorized | 認証失敗 | ⚠️ トークンリフレッシュ後 1 回のみ | ⚠️ トークンリフレッシュ後 1 回のみ |
+| **403** Forbidden | 認可失敗 | ❌ リトライ不可 | ❌ リトライ不可 |
+| **404** Not Found | リソース不在 | ❌ リトライ不可 | ❌ リトライ不可 |
+| **409** Conflict | 楽観ロック競合等 | ⚠️ 最新版を取得して再試行（ロジック側で判断） | ⚠️ 最新版を取得して再試行 |
+| **410** Gone | 削除済み | ❌ リトライ不可 | ❌ リトライ不可 |
+| **422** Unprocessable Entity | バリデーション失敗 | ❌ リトライ不可 | ❌ リトライ不可 |
+| Network error | DNS/TCP/TLS 失敗 | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
+
+凡例: ✅ リトライしてよい / ⚠️ 条件付き / ❌ リトライ不可
+
+**冪等性チェックリスト（非冪等メソッドをリトライする前に確認）**:
+
+1. **`Idempotency-Key` ヘッダーをサーバーが受け付けるか？**
+   - Stripe / Square / 主要決済 API は対応。重複リクエストを検出してくれる
+   - 自社 API なら同等の仕組みを実装する
+2. **クライアント側で `crypto.randomUUID()` を生成しているか？**
+   - リクエスト ID を Mutation 単位で固定（UI 上の 1 操作 = 1 ID）
+   - リトライしても同じ ID を再送する
+3. **副作用が外部に伝播する操作か？**
+   - メール送信、課金、外部 webhook → 冪等性キー必須
+   - 内部 DB 更新のみ → サーバー側で重複排除しているなら緩めて良い
+4. **タイムアウト後の状態が判明しているか？**
+   - 504 後に「リソース作成済みか」を GET で確認してから再試行する設計が安全
+
+**コード例（Idempotency-Key）**:
+```ts
+import ky from 'ky';
+
+async function purchase(item: Item, quantity: number) {
+  const idempotencyKey = crypto.randomUUID(); // 1 操作 = 1 ID
+
+  return ky.post('/api/purchase', {
+    json: { itemId: item.id, quantity },
+    headers: { 'Idempotency-Key': idempotencyKey },
+    retry: {
+      limit: 3,
+      methods: ['post'], // 通常 ky は POST をリトライしないが、Idempotency-Key 付きなら可
+      statusCodes: [408, 425, 429, 500, 502, 503, 504],
+    },
+  }).json();
+}
+```
+
+**`Retry-After` ヘッダーの尊重**:
+
+サーバーが `Retry-After: 30`（秒）または HTTP-date 形式で返したら、それを尊重する。
+固定指数バックオフよりサーバーが指定した値を優先することで、レート制限解除を最短で待てる。
+
+```ts
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (!Number.isNaN(seconds)) return seconds * 1000;
+  const date = Date.parse(header);
+  if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+  return null;
+}
+
+// retry callback で Retry-After を尊重
+ky.create({
+  retry: {
+    limit: 5,
+    statusCodes: [429, 503],
+    delay: (attempt) => Math.min(0.3 * 2 ** (attempt - 1) * 1000, 3000),
+  },
+  hooks: {
+    afterResponse: [
+      async (req, opts, res) => {
+        const retryAfter = parseRetryAfter(res.headers.get('Retry-After'));
+        if (retryAfter && (res.status === 429 || res.status === 503)) {
+          await new Promise(r => setTimeout(r, retryAfter));
+        }
+        return res;
+      },
+    ],
+  },
+});
+```
+
 **出典**:
 - [AWS: Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) (AWS Architecture Blog / 2015)
 - [ky README: retry](https://github.com/sindresorhus/ky#retry) (sindresorhus/ky / GitHub)
+- [RFC 9110: HTTP Semantics - Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#field.retry-after) (IETF)
+- [RFC 9110: HTTP Semantics - Idempotent Methods](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2) (IETF)
+- [Stripe API: Idempotent Requests](https://docs.stripe.com/api/idempotent_requests) (Stripe Docs)
 
 **バージョン**: ky 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-05 / 補強 2026-05-16
 
 ---
 

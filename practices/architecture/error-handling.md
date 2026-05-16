@@ -156,12 +156,111 @@ if (!result.ok) {
 }
 ```
 
+**Throw / Result / Promise.reject の判断フロー**:
+
+3 つのエラー伝達方法は排他ではなく、**境界ごとに使い分ける**。判断の核心は「呼び出し元が回復可能か」と「エラーが型システムに表れる必要があるか」。
+
+```dot
+digraph error_strategy {
+    "エラー発生" [shape=doublecircle];
+    "回復可能？" [shape=diamond];
+    "呼び出し元が分岐したい？" [shape=diamond];
+    "境界を越える？\n(Server Action / API / Worker)" [shape=diamond];
+
+    "Use Result<T, E>" [shape=box, style=filled, fillcolor="#d1fae5"];
+    "Throw + Error Boundary" [shape=box, style=filled, fillcolor="#fef3c7"];
+    "Throw + 共通ハンドラ" [shape=box, style=filled, fillcolor="#fee2e2"];
+
+    "エラー発生" -> "回復可能？";
+    "回復可能？" -> "Throw + Error Boundary" [label="No (バグ・不変条件違反)"];
+    "回復可能？" -> "呼び出し元が分岐したい？" [label="Yes"];
+    "呼び出し元が分岐したい？" -> "境界を越える？\n(Server Action / API / Worker)" [label="Yes"];
+    "呼び出し元が分岐したい？" -> "Throw + 共通ハンドラ" [label="No (たまたまリトライ等)"];
+    "境界を越える？\n(Server Action / API / Worker)" -> "Use Result<T, E>" [label="Yes"];
+    "境界を越える？\n(Server Action / API / Worker)" -> "Use Result<T, E>" [label="No"];
+}
+```
+
+**判断マトリクス**:
+
+| シチュエーション | 手段 | 理由 |
+|---|---|---|
+| Server Action / API レスポンス | **Result 型** | 呼び出し元が UI 分岐したい・型で網羅性確認 |
+| ユーザー入力のバリデーション失敗 | **Result 型**（zod の `safeParse`） | 全エラーを集約してフォームに表示 |
+| 検索結果が見つからない（404 相当の業務ロジック） | **Result 型** または `null`/`Option` | 「失敗」ではなく「正常な結果の 1 つ」 |
+| 認証・認可失敗 | **Result 型** | UI で異なる扱いが必要（ログインモーダル等） |
+| ネットワーク・DB 接続失敗 | **Throw** → グローバルハンドラ | 局所で扱えず、全体で対処 |
+| プログラミングエラー（assertion 失敗・型保証違反） | **Throw** | バグ。クラッシュさせて Sentry で観測 |
+| サードパーティ SDK の例外伝播 | **Throw** → Result 変換層 | 境界で `tryCatch` して Result 化 |
+| 競合状態（race condition） | **Throw** + Error Boundary | レンダリング途中の予期せぬ状態。Suspense 再試行 |
+
+**「常に Result 型」が破綻するケース**:
+
+```ts
+// Bad: 深い呼び出しチェーンで全関数が Result を返す → ノイズが多い
+function deeplyNested(): Result<Data, AllErrors> {
+  const a = stepA();
+  if (!a.ok) return err(a.error);
+  const b = stepB(a.value);
+  if (!b.ok) return err(b.error);
+  const c = stepC(b.value);
+  if (!c.ok) return err(c.error);
+  return c;
+}
+
+// Good: 境界では Result、内部では throw して境界で catch する
+async function performTransaction(input: Input): Promise<Result<Output, TxError>> {
+  try {
+    const validated = validate(input);       // throw on validation failure
+    const fetched = await fetchData(validated);  // throw on network error
+    const processed = process(fetched);      // throw on logic error
+    return ok(processed);
+  } catch (e) {
+    return err(classifyError(e));            // 境界で Result に変換
+  }
+}
+```
+
+**Promise.reject はいつ使うか**:
+
+`Promise.reject` は本質的には async コンテキストでの `throw` と同等。明示的に使う場面は限られる:
+
+- TanStack Query の `queryFn` が「リトライさせたい」エラーを返す時（Query は throw を期待する）
+- React の `use()` フックが Promise を解決する文脈（reject → ErrorBoundary に伝播）
+- 既存の Promise ベース API（fetch、IndexedDB 等）との互換性
+
+```ts
+// Good: TanStack Query が throw されたエラーを必要とする
+useQuery({
+  queryKey: ['user', id],
+  queryFn: async () => {
+    const result = await loginAction(); // Result 型を返す内部
+    if (!result.ok) {
+      throw new Error(result.error.message); // Query 用に throw に変換
+    }
+    return result.value;
+  },
+});
+```
+
+**ライブラリ選定（neverthrow / fp-ts / Effect）**:
+
+- **手書きの Result 型**（推奨デフォルト）: 上記コード例の形。学習コストゼロ、依存追加なし
+- **neverthrow**: `Result<T, E>` + `.map()` / `.andThen()` チェーン。関数型に親しめるチーム向け
+- **fp-ts**: Either / TaskEither など本格関数型。チームに既存知識がなければ過剰
+- **Effect**: エラー・依存・副作用を統合した次世代型。新規プロジェクトでチーム合意があれば
+
+選定原則: **言語標準の機能で書ける範囲なら自前で書く**。チームのスキルセットと相談。
+
 **出典**:
 - [TypeScript Docs: Discriminated Unions](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#discriminated-unions) (TypeScript公式)
+- [Joel Spolsky: Exceptions](https://www.joelonsoftware.com/2003/10/13/13/) (Joel on Software, 2003)
+- [neverthrow](https://github.com/supermacro/neverthrow) (supermacro)
+- [Effect documentation](https://effect.website/) (Effect TS)
 
 **バージョン**: TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-05 / 補強 2026-05-16
 
 ---
 

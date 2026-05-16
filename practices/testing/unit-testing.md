@@ -40,13 +40,49 @@ it('should show loading indicator while submitting', async () => {
 });
 ```
 
+**実装詳細テストの 8 つの兆候（コードレビュー時のチェック）**:
+
+以下のいずれかに該当するテストは「実装詳細をテストしている」可能性が高い。リファクタリング耐性が低いため、書き換えを検討する。
+
+1. **`_` プレフィックスの private メソッドを直接呼ぶ** — 例: `expect(cart._calculate).toHaveBeenCalled()` → ユーザーが触れない関数。public API 経由でテスト
+2. **`useState` の戻り値の `setState` を直接アサート** — 例: `expect(setState).toHaveBeenCalledWith('loading')` → 内部 state を観測している。レンダリング結果をテスト
+3. **コンポーネントの内部変数名・hook 名に依存** — 例: `result.current.isLoading` を直接見る → 名前変更でテスト崩壊。`screen.getByRole('status')` 等の UI 経由
+4. **Mock の呼び出し回数を厳密に検証** — 例: `expect(fetcher).toHaveBeenCalledTimes(1)` → リトライ実装の変更で壊れる。最終的な結果（"ユーザーにデータが表示される"）を検証
+5. **CSS クラス名・テストID・data-\* 属性で要素を取得** — 例: `getByTestId('submit-btn')` → クラスリネームで壊れる。`getByRole('button', { name: '送信' })` 等のセマンティック検索
+6. **スナップショットテストのみで振る舞いを保証** — DOM ツリー全体のスナップショットは「何が壊れたか」を伝えない（`test-strategy.md` Rule 4 参照）
+7. **コンポーネントの内部 import をモック** — 例: 子コンポーネントを `vi.mock` で全部スタブ化 → 統合の壊れを検出できない。MSW で外部 API のみモック
+8. **アサーションが実装と 1:1 対応** — 「コードの言い換え」になっている。例: `if (x > 0) { add(); }` というロジックに対して `if x > 0 のとき add が呼ばれる` のテスト → ロジックリファクタで即座に壊れる
+
+**書き換えガイド**:
+
+| 兆候 | 書き換え方針 |
+|---|---|
+| 内部メソッド呼び出し | public API / UI を呼んで結果を検証 |
+| setState アサート | `screen.findBy*` で表示される結果を検証 |
+| Hook 内部 state | `<TestComponent>` で使い、UI 出力を検証 |
+| Mock 回数 | 「最終結果」（DB 状態 / UI 表示）を検証 |
+| testid | `getByRole` + `name` で意味的に検索 |
+| スナップショット | 重要な要素だけを個別 assert |
+| 子コンポーネント mock | MSW で API のみモック、子は本物を使う |
+| 1:1 対応 | テスト名に「何のために」を書き、結果のみ assert |
+
+**「振る舞い」の定義**:
+
+ユーザー（人間 or 上位コード）から観測可能な入出力。具体的には:
+- レンダリングされる DOM（テキスト・ロール・aria 属性）
+- 発火するイベント・URL 遷移
+- 外部 API へのリクエスト内容（method / URL / body）
+- ローカルストレージ・Cookie・DB の最終状態
+
 **出典**:
 - [Testing Implementation Details](https://kentcdodds.com/blog/testing-implementation-details) (Kent C. Dodds)
 - [Write tests. Not too many. Mostly integration.](https://kentcdodds.com/blog/write-tests) (Kent C. Dodds)
+- [Testing Library: Guiding Principles](https://testing-library.com/docs/guiding-principles) (Testing Library 公式)
+- [Common mistakes with React Testing Library](https://kentcdodds.com/blog/common-mistakes-with-react-testing-library) (Kent C. Dodds)
 
-**バージョン**: Vitest 1+, Jest 27+
+**バージョン**: Vitest 1+, Jest 27+, Testing Library 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-05 / 補強 2026-05-16
 
 ---
 

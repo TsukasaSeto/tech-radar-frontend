@@ -139,12 +139,76 @@ function UserProfile({ userId }: { userId: string }) {
 }
 ```
 
+**状態管理ツール選定マトリクス**:
+
+「グローバル状態が必要」と決めた後、何を使うかを以下の基準で選ぶ。**先に [Rule 1](#1-状態は最も近い共通の親コンポーネントに置くstate-colocation) で本当にグローバルが必要か検討する**ことが前提。
+
+| 用途 | 推奨ツール | 理由 |
+|---|---|---|
+| サーバーから取得したデータ | **TanStack Query / SWR** | キャッシュ・再検証・楽観的更新・無限ロードを自動化 |
+| URL 由来の状態（フィルタ・タブ・ページ） | **`useSearchParams` / `nuqs`** | ブックマーク・共有・戻る/進むに耐える |
+| 単純なフラグ・テーマ・i18n locale | **React Context** | 1〜数個の値、変更頻度が低い、Provider 1 つで完結 |
+| 中規模のクライアント状態（カート・フォーム下書き等） | **Zustand** | API が薄い、Provider 不要、persistence ミドルウェアあり |
+| アトミックな状態（細粒度購読） | **Jotai** | useState ライクな API、各 atom 単位で購読、依存グラフを表現 |
+| 大規模・複雑な状態遷移（admin / 業務 SaaS） | **Redux Toolkit** | DevTools・時間旅行デバッグ、明確な action ログ |
+| ステートマシン（複雑な UI フロー） | **XState** | 状態と遷移を視覚化、不正遷移を型で防止 |
+| フォーム状態 | **React Hook Form** + **zod** | 大量フィールドでも再レンダリングを抑制、検証を型と統合 |
+
+**判断軸の優先順位**:
+
+1. **URL に乗せられるか？** → 乗せる（[Rule 5 の URL State 参照](../react/suspense.md)）
+2. **サーバー由来か？** → TanStack Query / SWR で扱う
+3. **コンポーネントツリーで共有が必要か？** → No なら `useState`
+4. **変更頻度が低く、Provider 1 つで済むか？** → Context
+5. **複数の独立した state スライスが必要か？** → Zustand（フラットなストア）/ Jotai（atom グラフ）
+6. **アクション履歴を追跡したいか？（admin・分析等）** → Redux Toolkit
+
+**Context の落とし穴（よくある誤用）**:
+
+```tsx
+// Bad: 1 つの Context に大きなオブジェクトを詰める → 一部の更新で全消費者が再レンダリング
+const AppContext = createContext<{
+  user: User | null;
+  theme: Theme;
+  cart: Cart;
+  notifications: Notification[];
+}>(/* ... */);
+
+// Good: 関心ごとに Context を分割（or Zustand で selector 購読）
+const UserContext = createContext<User | null>(null);
+const ThemeContext = createContext<Theme>('light');
+const CartContext = createContext<Cart>(emptyCart);
+
+// Good: state と setState を別 Context にして「読むだけ」のコンポーネントを再レンダリングから守る
+const CartStateContext = createContext<Cart>(emptyCart);
+const CartDispatchContext = createContext<Dispatch<CartAction>>(() => {});
+```
+
+**Zustand を選ぶ典型ケース**:
+- 「Redux ほど大袈裟ではないが、Context だと再レンダリング問題が深刻」な中規模アプリ
+- カスタム hook で関心ごとに分割しやすい（`useCart` / `useNotifications` 等）
+- Server Components が増えて、Client 側に残る state が「数個のスライス」程度
+
+**Jotai を選ぶ典型ケース**:
+- 状態が細かく、互いに依存している（atom A → derive atom B → derive atom C）
+- フォームの各フィールドを独立 atom にして再レンダリングを最小化
+- React Suspense との統合が必要
+
+**避けるべき選定**:
+- 全部 Context に詰める（再レンダリング問題と Provider 地獄）
+- 全部 Redux Toolkit（小規模アプリではボイラープレートが過剰）
+- グローバル状態 + `useEffect` でサーバー同期を自作（TanStack Query で置換）
+
 **出典**:
 - [TanStack Query: Overview](https://tanstack.com/query/latest/docs/framework/react/overview) (TanStack公式)
+- [Zustand Docs](https://zustand.docs.pmnd.rs/) (pmndrs)
+- [Jotai Docs](https://jotai.org/docs/introduction) (jotai)
+- [Redux Toolkit: When to use](https://redux.js.org/faq/general#when-should-i-use-redux) (Redux 公式)
+- [React Docs: Passing Data Deeply with Context](https://react.dev/learn/passing-data-deeply-with-context) (React 公式)
 
-**バージョン**: React 18+, TanStack Query v5+
+**バージョン**: React 18+, TanStack Query v5+, Zustand v4+, Jotai v2+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-05 / 補強 2026-05-16
 
 ---
 

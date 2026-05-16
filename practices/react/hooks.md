@@ -133,12 +133,111 @@ useEffect(() => {
 }, [userId, token]);
 ```
 
+**Stale Closure 検出パターン**:
+
+「依存配列を省略すれば古い値を参照する」のはバグ。意図的に「最新の値を読みたいが、それで再実行はしたくない」という要件は、以下のパターンで分離する。
+
+```tsx
+// 問題: 1秒ごとに count を console.log したいが、interval は1回だけ張りたい
+// Bad: count を deps に入れると interval が毎回張り直されて重い
+useEffect(() => {
+  const id = setInterval(() => {
+    console.log(count); // ← deps に count が必要だが、interval は再設定したくない
+  }, 1000);
+  return () => clearInterval(id);
+}, [count]);
+
+// Bad: deps を空にすると stale closure（count が常に初期値）
+useEffect(() => {
+  const id = setInterval(() => {
+    console.log(count); // 常に初期値の 0 が出る
+  }, 1000);
+  return () => clearInterval(id);
+}, []);
+
+// Good (React 18 まで): useRef で最新値を保持
+function useLatest<T>(value: T) {
+  const ref = useRef(value);
+  ref.current = value;       // レンダリングごとに最新値に更新
+  return ref;
+}
+
+function Example({ count }: { count: number }) {
+  const latestCount = useLatest(count);
+  useEffect(() => {
+    const id = setInterval(() => {
+      console.log(latestCount.current); // 常に最新値
+    }, 1000);
+    return () => clearInterval(id);
+  }, []); // interval は1回だけ張る
+}
+
+// Good (React 19+): useEffectEvent で「非反応的なロジック」を分離
+import { useEffectEvent } from 'react';
+
+function Example({ count }: { count: number }) {
+  const logCount = useEffectEvent(() => {
+    console.log(count); // 常に最新の count を読む（deps に含めなくて良い）
+  });
+
+  useEffect(() => {
+    const id = setInterval(logCount, 1000);
+    return () => clearInterval(id);
+  }, []); // logCount は deps 不要
+}
+```
+
+**Object / Array deps の対処**:
+
+```tsx
+// Bad: オブジェクトリテラルを deps に入れる（参照が毎回変わる）
+useEffect(() => {
+  fetcher.get('/users', { filter });
+}, [{ filter }]); // 毎回新規オブジェクト → 無限ループ
+
+// Bad: 親から渡された配列・オブジェクトを deps に（親の再レンダリングで参照変化）
+function List({ items }: { items: Item[] }) {
+  useEffect(() => {
+    saveItems(items);
+  }, [items]); // items の中身が同じでも参照が変われば再実行
+}
+
+// Good: プリミティブに展開する
+useEffect(() => {
+  fetcher.get('/users', { filter });
+}, [filter]);
+
+// Good: 中身で比較したい場合は useMemo / use-deep-compare-effect
+const itemsKey = useMemo(() => items.map(i => i.id).join(','), [items]);
+useEffect(() => {
+  saveItems(items);
+}, [itemsKey]);
+
+// Good: そもそも Effect ではなくイベントハンドラーで実行する（推奨）
+// 「items が変わったら保存」ではなく「ユーザー操作時に保存」が本来のセマンティクス
+```
+
+**React Compiler 移行への影響**:
+
+- React Compiler（React 19 で beta）は自動的に memoization を行うため、`useMemo` / `useCallback` の手動使用が大幅に減る
+- ただし **`useEffect` の依存配列は引き続き正確に記述する必要がある**。Compiler は副作用の依存関係を推論しない
+- 移行前後で `exhaustive-deps` ルールを違反していたコードは、Compiler 後に動作差分が出る可能性がある（参照同一性が変わるため）。移行前に lint エラーをゼロにしておく
+
+**チェックリスト（Code Review）**:
+- [ ] `// eslint-disable-next-line react-hooks/exhaustive-deps` がない（あれば理由をコメント必須）
+- [ ] deps にオブジェクト・配列リテラルが直接入っていない
+- [ ] 「最新値を読みたいが再実行はしたくない」要件は `useEffectEvent` または `useRef` で分離
+- [ ] Effect 内で setState する場合、無限ループにならないか確認
+- [ ] そもそも `useEffect` が必要か（[Rule 5: イベントハンドラーに置く](#5-ユーザー操作に起因する処理は-useeffect-ではなくイベントハンドラーに置く) と [Rule 1: useEffect でデータ取得しない](#1-useeffect-でデータ取得しない-react-の公式立場) を再確認）
+
 **出典**:
 - [React Docs: Specifying Reactive Dependencies](https://react.dev/learn/lifecycle-of-reactive-effects#react-verifies-that-you-specified-every-reactive-value-as-a-dependency) (React公式)
+- [React Docs: Separating Events from Effects](https://react.dev/learn/separating-events-from-effects) (React公式)
+- [React Docs: useEffectEvent](https://react.dev/reference/react/experimental_useEffectEvent) (React公式)
 
-**バージョン**: React 18+
+**バージョン**: React 18+ / `useEffectEvent` は React 19+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-05 / 補強 2026-05-16
 
 ---
 
