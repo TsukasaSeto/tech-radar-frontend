@@ -556,3 +556,71 @@ vibe clean                  # 完了した worktree を削除
 **最終更新**: 2026-05-14
 
 ---
+
+### 11. Claude Code の繰り返し作業を独自 Skill に変換し、拡張機能（Skills/MCP/Hooks）を用途別に使い分ける
+
+繰り返し発生する作業（タスク分解・検証・品質ゲート）を再利用可能な Skill に変換する。
+外部マーケットプレイスの Skill を集めるのではなく、自チームのワークフローに特化した独自 Skill を育てることが持続的な生産性向上につながる。
+
+**根拠**:
+- 繰り返す作業を Skill に変換することで、同じプロンプト指示を毎回書かずに済む
+- Skills（「何を考えるか」）と MCP（「何にアクセスするか」）を組み合わせることで複雑なタスクに対応できる
+- Hooks で品質ゲート（linting・テスト実行）を自動化することで、コンテキストを保ちながら品質を維持できる
+- 第三者 Skill には悪意あるコードが混入するリスクがある（2025年のClawHavoc事件では341個の不正Skillが発見された）
+
+**拡張機能の使い分け**:
+| 拡張 | 用途 | 例 |
+|---|---|---|
+| **Skills** | 繰り返し指示・思考テンプレート | `plan-task`, `post-task-verification`, `/daily-schedule` |
+| **MCP** | 外部サービスへのアクセス | Notion, GitHub, Slack 連携 |
+| **Hooks** | イベント駆動の自動化 | コミット前 lint・テスト自動実行 |
+| **Plugins** | Skills/MCP/Hooks のパッケージ化 | チーム別ロールベース配布 |
+
+**コード例（独自 Skill の定義例）**:
+```yaml
+# .claude/skills/plan-task.yaml
+name: plan-task
+description: GitHub Issue を複数サブタスクに分解し、依存関係を解析して並列実行計画を立てる
+steps:
+  - コードベースを探索して影響範囲のファイル・サービス・パターンを特定する
+  - Issue を独立した作業単位に分割する（GitHub のサブイシュー API で親子関係を作成）
+  - 依存関係のないタスクを並列キューに入れ、依存するものは順次キューに入れる
+  - 各ワーカーに作業前にプランを提示させ、承認後にコーディングを開始させる
+```
+
+```yaml
+# .claude/skills/post-task-verification.yaml
+name: post-task-verification
+description: 実装完了後、各要件が実際のコード変更で満たされているかを読み取り専用で検証する
+steps:
+  - Issue の受け入れ条件を一覧化する
+  - 各条件について、実装がどのファイル・関数で実現しているか確認する
+  - 未実装・不完全な実装を列挙し、ギャップレポートを作成する
+  - lint とテストを自動実行する
+```
+
+**コミット粒度の規則（AI エージェントのコミット順序）**:
+```
+# 変更を目的別に分割してコミットする順序:
+lint/docs → dependencies → tests → schema → refactoring → fixes → features
+
+# フォーマット: <prefix>: <description>
+feat: add rate-limit feature
+fix: resolve null pointer in user service
+refactor: extract auth logic to separate module
+```
+
+意図的な順序でコミットを積むことで、エージェントが誤った変更をした際に `git revert <commit>` で精密な取り消しができる。
+
+**出典引用**:
+> "The most valuable approach: 'Identify tasks repeating in your own work, then Skill-ify them' rather than collecting external marketplace items. This creates sustainable, customized productivity gains."
+> ([Break It Small, Ship It Right – Skills for Coding Agents](https://developers.cyberagent.co.jp/blog/archives/63674/), CyberAgent Engineering Blog) ※2026-05-15に実際にfetch成功
+
+> "Skills teach *what to think*; MCP provides *what to access* — both are necessary for complex tasks like document analysis."
+> ([Skills/MCP/Hooks/Plugins Claude Code 4つの拡張を使い分ける実践ガイド](https://zenn.dev/kenimo49/articles/claude-code-multi-tool-skills-mcp-hooks), Zenn) ※2026-05-15に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン共通）
+**確信度**: 高
+**最終更新**: 2026-05-15
+
+---

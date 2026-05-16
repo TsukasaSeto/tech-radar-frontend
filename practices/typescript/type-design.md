@@ -340,6 +340,25 @@ const bad = {
 
 ---
 
+#### 追加根拠 (2026-05-15) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
+
+新たに以下の2記事で同じプラクティスが独立して言及された:
+- [TypeScript Patterns Every Frontend Engineer Should Know](https://medium.com/codescoop-dev/typescript-patterns-every-frontend-engineer-should-know-5e85243ab421) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
+- [TypeScript Patterns That Eliminate Runtime Bugs](https://medium.com/@prathameshbelvalkars/typescript-patterns-that-eliminate-runtime-bugs-5828a6233fe8) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
+
+**出典引用**:
+> "This pattern 'makes impossible states unrepresentable' by creating mutually exclusive state types. Instead of scattered boolean flags that allow contradictory combinations"
+> ([TypeScript Patterns Every Frontend Engineer Should Know], セクション "Discriminated Unions")
+
+> "The fix isn't discipline. It's making the wrong thing impossible to write."
+> ([TypeScript Patterns That Eliminate Runtime Bugs], セクション "Discriminated Unions Over Boolean Flags")
+
+複数 boolean フラグ（`isLoading: boolean; isError: boolean`）は「loading かつ error」という不正な状態組み合わせを型上で許容してしまう。Discriminated Union の `status: 'idle' | 'loading' | 'success' | 'error'` では不正な組み合わせがコンパイル時に排除される。2つの独立した記事が同じパターンを「フロントエンド必須の最重要 TypeScript パターン」として挙げており、状態管理における中核手法として改めて確認された。
+
+**確信度**: 既存（高）→ 高（コミュニティ複数記事で再確認）
+
+---
+
 #### 追加根拠 (2026-05-06) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
 
 新たに以下の記事/ドキュメントで同じプラクティスが推奨された:

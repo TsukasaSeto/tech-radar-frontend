@@ -47,6 +47,28 @@ export default function NewUserPage() {
 
 ---
 
+#### 追加根拠 (2026-05-15) — ルール1「フォームのミューテーションには Server Actions を使う」
+
+新たに以下の記事で Server Actions が API Route に対して削減するボイラープレートの具体像が示された:
+- [I stopped creating API routes for simple forms in Next.js](https://medium.com/@waqar105lgu.edu/i-stopped-creating-api-routes-for-simple-forms-in-next-js-5dacf5d31ff1) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
+
+**出典引用**:
+> "Server Actions can remove a surprising amount of complexity from your Next.js apps"
+> ([I stopped creating API routes for simple forms in Next.js], セクション "Benefits")
+
+Server Actions が適切なケースと API Route が引き続き必要なケースを明確化する:
+
+| パターン | 推奨アプローチ | 理由 |
+|---|---|---|
+| フォーム送信・内部データ変更 | **Server Actions** | API Route・`fetch()`・ローディング状態管理が不要になる |
+| 公開 API（外部サービス向け） | **API Route** | Server Actions はアプリ内部専用 |
+| モバイルアプリのバックエンド | **API Route** | エンドポイントとして外部から呼び出す必要あり |
+| サードパーティ統合（webhook 等） | **API Route** | 外部サービスから叩かれる |
+
+**確信度**: 既存（高）→ 高（適用ケースと非適用ケースを明確化）
+
+---
+
 ### 2. `useActionState` でフォームの状態とエラーを管理する
 
 Server Actions の結果は `useActionState`（React 19）で管理する。

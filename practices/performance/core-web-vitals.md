@@ -271,6 +271,43 @@ LCP対象ウォールペーパー画像に `<link rel="preload" as="image" fetch
 
 ---
 
+#### 追加根拠 (2026-05-15) — ルール4「`web-vitals` ライブラリで Core Web Vitals を本番計測してアナリティクスに送信する」
+
+新たに以下の記事で Lab データと Field データの使い分け、および RUM データ拡充の重要性が実践的に示された:
+- [DX支援エンジニアのための『サイト計測 × 表示速度改善』ガイド](https://zenn.dev/bizlink/articles/52de291b484008) (Zenn / 2026-05-14) ※2026-05-15に実際にfetch成功
+
+**出典引用**:
+> "Lab data enables root cause identification; Field data drives business decisions and SEO evaluation"
+> ([DX支援エンジニアのための『サイト計測 × 表示速度改善』ガイド], セクション "Lab vs. Field データ")
+
+既存ルール4（`web-vitals` ライブラリ）を補完する2点:
+
+1. **Lab/Field データの目的分離**: Lighthouse（ラボ）は原因特定に使い、CrUX/RUM（フィールド）は SEO 評価とビジネス意思決定に使う。「Lighthouse 100点 ≠ 実ユーザーが良好」であることを認識する。Google が検索ランキングに使うのは実ユーザー計測の Field データ（75パーセンタイル）。
+
+2. **RUM に deviceType と URL を含めてセグメント化**:
+```javascript
+function sendToAnalytics(metric) {
+  const body = JSON.stringify({
+    name: metric.name,
+    value: metric.value,
+    rating: metric.rating, // 'good' | 'needs-improvement' | 'poor'
+    deviceType: /Mobi|Android/i.test(navigator.userAgent) ? 'mobile' : 'desktop',
+    url: location.href, // ルート別にセグメント化
+  });
+  if (navigator.sendBeacon) {
+    navigator.sendBeacon('/api/vitals', body);
+  } else {
+    fetch('/api/vitals', { body, method: 'POST', keepalive: true });
+  }
+}
+```
+
+deviceType と URL を含めることで「モバイルの特定ページで INP が悪化している」といった問題を特定できる。閾値の80%（LCP 2.0s、INP 160ms、CLS 0.08）でアラートを設定し、悪化を早期検知する。
+
+**確信度**: 既存（高）→ 高（Lab/Field 分離の実践的観点を追加）
+
+---
+
 #### 追加根拠 (2026-05-06) — ルール1「LCP（最大コンテンツ描画）を最適化する」（2回目）
 
 新たに以下の記事でサードパーティスクリプトをユーザーインタラクションまで遅延させる手法が実測データで示された:

@@ -72,6 +72,23 @@ function useUser(id: string) {
 
 ---
 
+#### 追加根拠 (2026-05-15) — ルール1「TanStack Query と SWR の使い分けを理解する」
+
+新たに以下の記事で `QueryClient` を `useState` で初期化することの必要性が実例で示された:
+- [自前キャッシュをTanStack Queryに移行したらコードが半分になった](https://zenn.dev/hiroki0304/articles/tanstack-query-migration-custom-cache) (Zenn / 2026-05-15) ※2026-05-15に実際にfetch成功
+
+**出典引用**:
+> "サーバーサイドではこのインスタンスが全リクエストで共有されるため、ユーザーAのキャッシュがユーザーBのレスポンスに混入するデータ漏えいが起こります"
+> ([自前キャッシュをTanStack Queryに移行したらコードが半分になった], セクション "QueryClient の初期化")
+
+Next.js App Router（SSR）では `QueryClient` をモジュールスコープ（ファイルトップレベル）で定義すると全リクエスト間でインスタンスが共有され、ユーザー間でキャッシュが漏洩する。`useState(() => new QueryClient(...))` でリクエストごとに新しいインスタンスを生成することで漏洩を防ぐ（既存のコード例はこの正しいパターンを採用済み）。
+
+また、`staleTime` はデータの揮発性に応じて設定する。ホテル詳細のような比較的安定したデータでは5分（300,000ms）が実用的とされており、`staleTime: 0`（デフォルト）のまま放置すると不要なリフェッチが多発する。この記事の移行事例では、手動キャッシュ管理コード176行がTanStack Query採用により82行に削減された（53%削減）。
+
+**確信度**: 既存（高）→ 高（Next.js SSR でのデータ漏洩リスクを具体例で明示化）
+
+---
+
 ### 2. staleTime と gcTime（cacheTime）を意図的に設計する
 
 TanStack Query のデフォルト値はほとんどのユースケースに適していないため、
