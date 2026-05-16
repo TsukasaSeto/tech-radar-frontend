@@ -149,3 +149,53 @@ export function LikeButton({ post }: { post: Post }) {
 **バージョン**: Next.js 14+, React 18+
 **確信度**: 高
 **最終更新**: 2026-05-05
+
+---
+
+### 5. Server Actions を公開エンドポイントとして扱い、認証・認可・入力検証を必ず実装する
+
+`'use server'` はコードをサーバーで実行するディレクティブであり、エンドポイントを非公開にしない。すべての Server Action でセッション確認・権限チェック・入力バリデーションを実装する。
+
+**根拠**:
+- Server Action はビルド時にハッシュ化された POST エンドポイントとしてコンパイルされ、クライアントバンドルに含まれる
+- Next.js は CSRF 保護を提供するが、認証（セッション確認）・認可（権限チェック）・入力バリデーションは開発者の責任
+- UI で管理者ボタンを非表示にしても、エンドポイント自体はインターネット上の誰もが直接 POST 呼び出しできる
+
+**コード例**:
+```tsx
+// Bad: 認証・バリデーションなし（誰でも呼び出せる）
+'use server';
+export async function deleteUser(userId: string) {
+  await db.users.delete(userId);
+}
+
+// Good: 認証・認可・バリデーションを必ず実装
+'use server';
+import { z } from 'zod';
+import { getServerSession } from '@/lib/auth';
+
+const DeleteUserInput = z.object({ userId: z.string().uuid() });
+
+export async function deleteUser(raw: unknown) {
+  // 1. 認証チェック
+  const session = await getServerSession();
+  if (!session?.user) throw new Error('Unauthorized');
+
+  // 2. 認可チェック
+  if (session.user.role !== 'admin') throw new Error('Forbidden');
+
+  // 3. 入力バリデーション
+  const { userId } = DeleteUserInput.parse(raw);
+
+  await db.users.delete(userId);
+  revalidatePath('/users');
+}
+```
+
+**出典引用**:
+> "A Server Action is a public API route wearing a function signature. Anyone on the internet can invoke it."
+> (['use server' Doesn't Mean Private](https://medium.com/@raselhasan11/use-server-doesn-t-mean-private-fbffbca20ea3), セクション "The Hidden Security Risk") ※2026-05-14に実際にfetch成功
+
+**バージョン**: Next.js 14+
+**確信度**: 高
+**最終更新**: 2026-05-14
