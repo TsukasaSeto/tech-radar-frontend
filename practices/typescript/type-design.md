@@ -304,6 +304,7 @@ type HandlerName = 'onClick' | 'onFocus' | 'onBlur' | 'onChange';
 - 型注釈だと具体的なリテラル型が失われ、メソッドの補完精度が下がる
 - 型アサーション（`as`）はコンパイラのチェックを回避してしまう
 - `satisfies` は「型チェックはするが型推論は維持する」というバランスを実現する
+- ドメイン定数のシングルソース管理と組み合わせることで、複数ファイルでの定義二重管理を防げる
 
 **コード例**:
 ```tsx
@@ -331,42 +332,75 @@ const bad = {
 } satisfies Palette;
 ```
 
+```typescript
+// Good: ドメイン定数のメンバーシップ確認 — schemas.ts をシングルソースにして satisfies で検証
+// schemas.ts
+const INGREDIENT_CATEGORIES = ['食材', '調味料', '未分類'] as const;
+export type IngredientCategory = typeof INGREDIENT_CATEGORIES[number];
+
+// 別ファイルでリテラルを使う際も satisfies で型制約を検証（as と異なり「嘘をつけない」）
+const defaultCategory = "未分類" satisfies IngredientCategory;  // ✅
+
+// ❌ カテゴリに存在しない値はコンパイルエラー
+const invalidCategory = "その他" satisfies IngredientCategory;
+// Type '"その他"' is not assignable to type '"食材" | "調味料" | "未分類"'
+```
+
+**出典引用**:
+> "型チェックはするが型推論は維持する" ── `satisfies` の本質
+> ([TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator), TypeScript公式)
+
+> "「この型を満たすか」をチェックする。`as`と違って嘘をつけない。"
+> ([TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants), セクション "satisfies の特性") ※2026-05-17に実際にfetch成功
+
 **出典**:
 - [TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator) (TypeScript公式 / 2022-11)
+- [TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants) (Zenn saytooy_arch, schemas.ts シングルソースへの satisfies 応用) ※2026-05-17 fetch
 
 **バージョン**: TypeScript 4.9+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-05-17
 
 ---
 
-#### 追加根拠 (2026-05-15) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
+#### 追加根拠 (2026-05-10) — ルール8「`satisfies` 演算子で型チェックと型推論を両立する」
 
-新たに以下の2記事で同じプラクティスが独立して言及された:
-- [TypeScript Patterns Every Frontend Engineer Should Know](https://medium.com/codescoop-dev/typescript-patterns-every-frontend-engineer-should-know-5e85243ab421) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
-- [TypeScript Patterns That Eliminate Runtime Bugs](https://medium.com/@prathameshbelvalkars/typescript-patterns-that-eliminate-runtime-bugs-5828a6233fe8) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
+新たに以下の記事で同じプラクティスが言及された:
+- [TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e) (Zenn karumaru / 2026-05-09) ※2026-05-10に実際にfetch成功
 
 **出典引用**:
-> "This pattern 'makes impossible states unrepresentable' by creating mutually exclusive state types. Instead of scattered boolean flags that allow contradictory combinations"
-> ([TypeScript Patterns Every Frontend Engineer Should Know], セクション "Discriminated Unions")
+> "型を狭めずに、制約だけ効かせる──これが`satisfies`の本質だ"
+> ([TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e), セクション "satisfies の本質")
 
-> "The fix isn't discipline. It's making the wrong thing impossible to write."
-> ([TypeScript Patterns That Eliminate Runtime Bugs], セクション "Discriminated Unions Over Boolean Flags")
+業務コード全体に `satisfies` を適用した実例として、2つの新規パターンが紹介された:
 
-複数 boolean フラグ（`isLoading: boolean; isError: boolean`）は「loading かつ error」という不正な状態組み合わせを型上で許容してしまう。Discriminated Union の `status: 'idle' | 'loading' | 'success' | 'error'` では不正な組み合わせがコンパイル時に排除される。2つの独立した記事が同じパターンを「フロントエンド必須の最重要 TypeScript パターン」として挙げており、状態管理における中核手法として改めて確認された。
+1. **`as const satisfies` の組み合わせ**（設定オブジェクト）: `as const` で値のリテラル型を保持しつつ、`satisfies` で型制約を検証する。ルーティング定義や固定設定オブジェクトに有効。
+2. **環境変数バリデーション**: `satisfies { apiBase: string; port: number }` 形式で、env オブジェクトが期待する型を満たすことをコンパイル時に検証。`env.t3.gg` などのパターンと組み合わせ可能。
 
-**確信度**: 既存（高）→ 高（コミュニティ複数記事で再確認）
+実測値として「型エラーが約1/3に削減、コードレビューでの `any` 型指摘がほぼゼロ」という定量的な改善効果が示されている。
 
----
+**追加コード例**:
+```typescript
+// as const satisfies の組み合わせ（設定オブジェクト）
+const routes = {
+  home: { method: "GET", auth: false },
+  profile: { method: "GET", auth: true },
+} as const satisfies Record<string, { method: "GET" | "POST"; auth: boolean }>;
 
-#### 追加根拠 (2026-05-06) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
+// 環境変数バリデーション
+function required(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
 
-新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
-- [TypeScript Handbook: Narrowing - Discriminated Unions](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Narrowing.md) (microsoft/TypeScript-Website / v2ブランチ) ※2026-05-06に実際にfetch成功
+export const env = {
+  apiBase: required("API_BASE"),
+  port: Number(required("PORT")),
+} satisfies { apiBase: string; port: number };
+```
 
-Narrowing.md は Discriminated Union を「TypeScript でもっとも推奨される状態モデリングパターン」として取り上げている。判別子プロパティ（例: `kind: "circle"`）を持つインターフェースの Union として定義し、`switch (shape.kind)` で分岐することで TypeScript がそれぞれの case 内で型を自動的に絞り込む。さらに `default: const _exhaustiveCheck: never = shape` の never チェックで exhaustiveness を保証するパターンは、公式ドキュメントで「新しい Shape 型を追加した際にコンパイルエラーで変更漏れを検出できる」と明示されており、状態管理の安全性を高める中核的な手法として確認された。
-
-**確信度**: 既存（高）→ 高（公式文書で実証済み）
+**確信度**: 既存（高）→ 高（業務適用実績の定量的エビデンス付き）
 
 ### 9. Branded Types でプリミティブ型の混同を防ぐ（phantom string literal パターン）
 
@@ -476,41 +510,30 @@ function query(arg: string | string[] | { role: string }): User | User[] {
 
 ---
 
-#### 追加根拠 (2026-05-10) — ルール8「`satisfies` 演算子で型チェックと型推論を両立する」
+#### 追加根拠 (2026-05-15) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
 
-新たに以下の記事で同じプラクティスが言及された:
-- [TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e) (Zenn karumaru / 2026-05-09) ※2026-05-10に実際にfetch成功
+新たに以下の2記事で同じプラクティスが独立して言及された:
+- [TypeScript Patterns Every Frontend Engineer Should Know](https://medium.com/codescoop-dev/typescript-patterns-every-frontend-engineer-should-know-5e85243ab421) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
+- [TypeScript Patterns That Eliminate Runtime Bugs](https://medium.com/@prathameshbelvalkars/typescript-patterns-that-eliminate-runtime-bugs-5828a6233fe8) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
 
 **出典引用**:
-> "型を狭めずに、制約だけ効かせる──これが`satisfies`の本質だ"
-> ([TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e), セクション "satisfies の本質")
+> "This pattern 'makes impossible states unrepresentable' by creating mutually exclusive state types. Instead of scattered boolean flags that allow contradictory combinations"
+> ([TypeScript Patterns Every Frontend Engineer Should Know], セクション "Discriminated Unions")
 
-業務コード全体に `satisfies` を適用した実例として、2つの新規パターンが紹介された:
+> "The fix isn't discipline. It's making the wrong thing impossible to write."
+> ([TypeScript Patterns That Eliminate Runtime Bugs], セクション "Discriminated Unions Over Boolean Flags")
 
-1. **`as const satisfies` の組み合わせ**（設定オブジェクト）: `as const` で値のリテラル型を保持しつつ、`satisfies` で型制約を検証する。ルーティング定義や固定設定オブジェクトに有効。
-2. **環境変数バリデーション**: `satisfies { apiBase: string; port: number }` 形式で、env オブジェクトが期待する型を満たすことをコンパイル時に検証。`env.t3.gg` などのパターンと組み合わせ可能。
+複数 boolean フラグ（`isLoading: boolean; isError: boolean`）は「loading かつ error」という不正な状態組み合わせを型上で許容してしまう。Discriminated Union の `status: 'idle' | 'loading' | 'success' | 'error'` では不正な組み合わせがコンパイル時に排除される。2つの独立した記事が同じパターンを「フロントエンド必須の最重要 TypeScript パターン」として挙げており、状態管理における中核手法として改めて確認された。
 
-実測値として「型エラーが約1/3に削減、コードレビューでの `any` 型指摘がほぼゼロ」という定量的な改善効果が示されている。
+**確信度**: 既存（高）→ 高（コミュニティ複数記事で再確認）
 
-**追加コード例**:
-```typescript
-// as const satisfies の組み合わせ（設定オブジェクト）
-const routes = {
-  home: { method: "GET", auth: false },
-  profile: { method: "GET", auth: true },
-} as const satisfies Record<string, { method: "GET" | "POST"; auth: boolean }>;
+---
 
-// 環境変数バリデーション
-function required(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing env: ${name}`);
-  return v;
-}
+#### 追加根拠 (2026-05-06) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
 
-export const env = {
-  apiBase: required("API_BASE"),
-  port: Number(required("PORT")),
-} satisfies { apiBase: string; port: number };
-```
+新たに以下の記事/ドキュメントで同じプラクティスが推奨された:
+- [TypeScript Handbook: Narrowing - Discriminated Unions](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Narrowing.md) (microsoft/TypeScript-Website / v2ブランチ) ※2026-05-06に実際にfetch成功
 
-**確信度**: 既存（高）→ 高（業務適用実績の定量的エビデンス付き）
+Narrowing.md は Discriminated Union を「TypeScript でもっとも推奨される状態モデリングパターン」として取り上げている。判別子プロパティ（例: `kind: "circle"`）を持つインターフェースの Union として定義し、`switch (shape.kind)` で分岐することで TypeScript がそれぞれの case 内で型を自動的に絞り込む。さらに `default: const _exhaustiveCheck: never = shape` の never チェックで exhaustiveness を保証するパターンは、公式ドキュメントで「新しい Shape 型を追加した際にコンパイルエラーで変更漏れを検出できる」と明示されており、状態管理の安全性を高める中核的な手法として確認された。
+
+**確信度**: 既存（高）→ 高（公式文書で実証済み）

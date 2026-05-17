@@ -237,6 +237,7 @@ location ~* \.js\.map$ {
 - `.env.example` を整備すると「どの環境変数が必要か」がドキュメント化され、オンボーディングが速くなる
 - pre-commit フックで `.env*.local` の commit を機械的に防ぐ
 - Vercel / Cloudflare Pages はダッシュボード経由で環境変数を設定し、リポジトリには入れない
+- AI コーディング環境では作業テンポが速く注意力が有限なため、`.env` ファイルだけでなく Markdown ドキュメントや設定ファイルへの誤混入も gitleaks で機械的に検出する
 
 **標準的な `.gitignore`**:
 ```gitignore
@@ -299,6 +300,34 @@ if git diff --cached --name-only | grep -E '^\.env$'; then
 fi
 ```
 
+**gitleaks + lefthook による広範な秘密情報検出**:
+
+`.env` パターンだけでは検出できない Markdown ドキュメントや設定ファイルへの誤混入を、gitleaks + lefthook の組み合わせで広範に検出する。AI コーディング環境では「AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます」という注意力の有限性を機械的に補う:
+
+```yaml
+# lefthook.yml
+pre-commit:
+  commands:
+    gitleaks:
+      run: gitleaks git --staged --redact --verbose
+```
+
+```toml
+# .gitleaks.toml — プロジェクト固有パターン追加（デフォルトルールを継承）
+[extend]
+  useDefault = true
+
+[[rules]]
+  id = "japanese-secret-fields"
+  description = "Japanese field names often used for secrets in any file type"
+  regex = '''(パスワード|APIキー|api.?key|シークレット)\s*[:=]\s*\S+'''
+  severity = "ERROR"
+```
+
+**出典引用**:
+> "AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます。"
+> ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本質") ※2026-05-17に実際にfetch成功
+
 **事故った時の対応**:
 1. シークレットを **即座に rotate**（git history から消しても、すでに漏れた値は永久に流出している前提）
 2. git history からの削除は `git filter-repo` または BFG Repo-Cleaner で
@@ -322,10 +351,11 @@ fi
 - [dotenv-safe](https://github.com/rolodato/dotenv-safe) — 必須環境変数のチェック
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables#test-environment-variables) (Next.js 公式)
 - [GitHub: Removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) (GitHub Docs)
+- [AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer) (Zenn takna, gitleaks+lefthook+GitHub Push Protection+Claude Hooks による4層防御) ※2026-05-17 fetch
 
 **バージョン**: 一般原則
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-05-17
 
 ---
 
