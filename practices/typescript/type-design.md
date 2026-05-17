@@ -510,7 +510,7 @@ function query(arg: string | string[] | { role: string }): User | User[] {
 
 ---
 
-#### 追加根拠 (2026-05-10) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
+#### 追加根拠 (2026-05-15) — ルール2「Union 型で網羅的な分岐を強制する（Discriminated Union）」
 
 新たに以下の2記事で同じプラクティスが独立して言及された:
 - [TypeScript Patterns Every Frontend Engineer Should Know](https://medium.com/codescoop-dev/typescript-patterns-every-frontend-engineer-should-know-5e85243ab421) (Medium / 2026-05-15) ※2026-05-15に実際にfetch成功
