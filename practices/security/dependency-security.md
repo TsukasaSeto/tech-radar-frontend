@@ -346,6 +346,30 @@ ignore-scripts=true
 - `--ignore-scripts`（このルール）
 - `socket-security` / `snyk` / `Aikido` 等の OSS supply chain スキャナーを CI に追加
 - Renovate の `:disablePeerDependencies` などで不要な依存追加を制限
+- **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）
+
+```bash
+# npm 11.10+: プロジェクト単位で最低公開 24h 経過を要求
+npm config set min-release-age=1 --location=project
+
+# yarn 4.10+: 1440分（24h）
+yarn config set npmMinimalAgeGate 1d
+
+# pnpm 10.16+: 1440分（24h）
+pnpm config set --location=project minimumReleaseAge 1440
+```
+
+```yaml
+# Dependabot (.github/dependabot.yml) でも冷却期間を設定
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 1
+```
 
 **社内パッケージの dependency confusion 対策**:
 ```
@@ -359,10 +383,14 @@ ignore-scripts=true
 - [Socket: npm supply chain security](https://socket.dev/) (Socket)
 - [Snyk: npm security best practices](https://snyk.io/blog/ten-npm-security-best-practices/) (Snyk Blog)
 - [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs)
+- [Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984) (dev.to、release-age gate の npm/yarn/pnpm 設定例) ※2026-05-17に実際にfetch成功
 
-**バージョン**: pnpm 9+
+> "Delaying dependency resolution gives the ecosystem time to catch bad versions before your project installs them."
+> ([Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984), dev.to) ※2026-05-17に実際にfetch成功
+
+**バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-05-17
 
 #### 追加根拠 (2026-05-16)
 

@@ -642,3 +642,84 @@ refactor: extract auth logic to separate module
 **最終更新**: 2026-05-16
 
 ---
+
+### 12. Claude Code hooks を3層（セキュリティ / 状態管理 / 学習）で設計し、`async` と `exit 2` の非互換を把握する
+
+hooks はイベント種別ごとに「何を目的にするか」を層で分けて設計する。Layer 0（セキュリティゲート）では `exit 2` でブロック、Layer 1（状態管理）では情報収集とコンテキスト注入、Layer 2（学習）では非同期の観測と失敗パターン分析を担う。
+**`async: true` と `exit 2` は同時に使えない**——バックグラウンドプロセスは Claude の実行をブロックできないため、ブロック用フックは必ず同期実行にする。
+
+**根拠**:
+- `PreToolUse` + `exit 2` でシークレット検出・予算超過・破壊操作を機械的にブロックできる
+- `UserPromptSubmit` でキーワードマッチしてドキュメントやコンテキストを自動注入し、毎回の手動指示を省ける
+- `Stop` フックで会話終了時に git の未 push 状態を表示すると、コミット漏れを防げる
+- `PreCompact` フックでコンテキスト圧縮前にセッションログを `_inbox/` へ退避し、情報損失を防げる
+- `async: true` にするとバックグラウンドで実行されるが `exit 2` の効果がなくなる—ロギング目的のみに使う
+
+**フック層の分担**:
+| 層 | イベント | 目的 | `exit 2` |
+|---|---|---|---|
+| Layer 0（セキュリティ） | `PreToolUse` | 危険操作ブロック・シークレット検出 | 使用可 |
+| Layer 1（状態管理） | `UserPromptSubmit`, `PostToolUse` | コンテキスト注入・バリデーション | 使用可 |
+| Layer 2（学習） | `Stop`, `PreCompact` | ログ退避・git 状態表示 | **使用不可**（async 推奨）|
+
+**コード例**:
+```python
+# Layer 0: シークレット検出フック（PreToolUse）
+import sys, re, json
+sys.stdout.reconfigure(encoding="utf-8")  # Windows 環境での文字化け防止（必須）
+sys.stderr.reconfigure(encoding="utf-8")
+
+input_data = json.load(sys.stdin)
+tool_input = input_data.get("tool_input", {})
+content = json.dumps(tool_input)
+
+PATTERNS = [r'sk-[a-zA-Z0-9]{48}', r'sk-ant-[a-zA-Z0-9-]{90,}']
+for pattern in PATTERNS:
+    if re.search(pattern, content):
+        print("シークレットが含まれています。コミット前に確認してください。", file=sys.stderr)
+        sys.exit(2)  # Claude の実行をブロック
+sys.exit(0)
+```
+
+```bash
+# Layer 1: キーワードでドキュメントを自動注入（UserPromptSubmit）
+#!/bin/bash
+PROMPT=$(jq -r '.prompt' <<< "$CLAUDE_TOOL_INPUT")
+if echo "$PROMPT" | grep -qE 'n8n|workflow'; then
+  cat .claude/skills/n8n-guide.md  # stdout への出力がコンテキストに追加される
+fi
+exit 0
+```
+
+```bash
+# Layer 2: Stop フックで git 状態を表示（async 不要、exit 2 使わない）
+#!/bin/bash
+for repo in . ../sub-module; do
+  modified=$(git -C "$repo" diff --name-only | wc -l)
+  unpushed=$(git -C "$repo" log @{u}.. --oneline 2>/dev/null | wc -l)
+  echo "[$(basename $repo)] 変更:$modified 未push:$unpushed"
+done
+exit 0
+```
+
+```bash
+# Layer 2: PreCompact でセッションログを退避
+#!/bin/bash
+DEST="_inbox/claude-sessions/$(date +%Y%m%d-%H%M%S).md"
+mkdir -p _inbox/claude-sessions
+cp "$CLAUDE_SESSION_FILE" "$DEST" 2>/dev/null || true
+exit 0
+```
+
+**出典引用**:
+> "指示する」から「設計する」に変わった瞬間、世界が変わった。指示は消耗する。設計は蓄積する。"
+> ([Claude Code hooksを47本実装した話：AIへの自動指示を設計するという仕事](https://zenn.dev/thinkyou0714/articles/claude-code-hooks-47), セクション "設計への転換") ※2026-05-17に実際にfetch成功
+
+> "生ログを手元に残すほうが情報損失が少ない"
+> ([Claude Code hookをauto-recapより先に試すべき3パターン](https://zenn.dev/joemike/articles/claude-code-hooks-auto-recap-alternative-2026), セクション "PreCompact フック") ※2026-05-17に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン共通）
+**確信度**: 高
+**最終更新**: 2026-05-17
+
+---
