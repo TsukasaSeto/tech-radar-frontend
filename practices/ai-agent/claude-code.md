@@ -723,3 +723,64 @@ exit 0
 **最終更新**: 2026-05-17
 
 ---
+
+### 13. 組織での Claude Code 導入を Managed Settings・最小権限・OpenTelemetry 監査の3層で制御する
+
+Claude Code を組織全体で安全に展開するには、個人設定で上書きできない **Managed Settings**、
+**最小権限の原則**（使うものだけを有効にする）、そして **OpenTelemetry 監査**（初日から証跡を残す）の3層を組み合わせる。
+1層でも欠けると、個人が意図せず規制を回避したり、インシデント後の追跡が不可能になる。
+
+**根拠**:
+- `disableBypassPermissionsMode: 'disable'` を Managed Settings に設定しないと、個人が無制限権限モードを有効化できる
+- `.gitignore` だけでは不十分：ローカルに実在する `.env`・`~/.ssh/**`・`~/.aws/**` への Read アクセスは Deny ルールで明示的に禁止する
+- OS サンドボックスは `failIfUnavailable: true` にしないと、未対応環境でサイレントに無効化される
+- `CLAUDE_CODE_ENABLE_TELEMETRY=1` を後付けにすると、インシデント発生前のログが存在せず追跡不可能になる
+- 最小権限は「後で追加する」前提で始める：拡張機能も半年ごとに棚卸しし、未使用を無効化する
+
+**コード例（Managed Settings 最小安全設定）**:
+```json
+// managed-settings.json（組織統制ファイル）
+{
+  "disableBypassPermissionsMode": "disable",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "allowedDomains": [
+      "registry.npmjs.org",
+      "github.com",
+      "api.github.com"
+    ]
+  }
+}
+```
+
+```bash
+# OTel 監査（初日から有効化）
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+```
+
+**最小権限チェックリスト**:
+- [ ] 使わない MCP Server は無効化する（`disabled: true`）
+- [ ] 信頼できないソース（外部URL・ユーザー入力）をAIに渡す前に、ファイル変更・git push・API呼び出しを一時無効化する
+- [ ] 拡張機能は半年ごとに棚卸しして未使用を削除する
+- [ ] `curl`/`wget` を Bash deny に追加する（ワイルドカードパターン回避より確実）
+
+**出典引用**:
+> "すべての層を強制力のあるレベルで設定する" — `disableBypassPermissionsMode: 'disable'` が Managed Settings のコア設定
+> ([Claude Codeを社内に安全に導入する：システムエンジニアのためのセキュリティ実践ガイド](https://zenn.dev/nocodesolutions/articles/f71479fa5711fe), セクション "4層モデル") ※2026-05-18に実際にfetch成功
+
+> "信頼できないソースをAIに読ませるときは、その会話でファイル変更・git push・API呼び出しができない状態にしてから渡します"
+> ([AIエージェントは最小権限で使う｜Claude Code・MCP・VS Code拡張の安全な設定](https://zenn.dev/takibilab/articles/ai-agent-least-privilege), セクション "信頼できないソースの扱い") ※2026-05-18に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）、Enterprise Managed Settings 対応環境
+**確信度**: 中
+**最終更新**: 2026-05-18
+
+---
