@@ -150,6 +150,7 @@ export async function getPostsUncached() {
 - [Next.js Docs: Caching](https://nextjs.org/docs/app/building-your-application/caching) (Next.js公式 / 2024)
 - [React Docs: cache](https://react.dev/reference/react/cache) (React公式 / 2024)
 - [Next.js App Router のキャッシュを完全理解する：fetch メモ化・Data Cache・Full Route Cache の違い](https://zenn.dev/fuelda/articles/nextjs-app-router-cache-guide) (Zenn、App Router の fetch 自動メモ化と cache() の使い分け) ※2026-05-20に実際にfetch成功
+- [Next.js App Routerで`cache()`を足す前に、requestを揃える](https://zenn.dev/fuelda/articles/nextjs-app-router-request-memoization-vs-cache) (Zenn、generateMetadata とページコンポーネントでパラメータを統一した実例) ※2026-05-20に実際にfetch成功
 
 **バージョン**: Next.js 15+
 **確信度**: 高

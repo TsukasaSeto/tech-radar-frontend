@@ -12,6 +12,7 @@ Protocol Buffers 定義から自動生成する。
 - スキーマ駆動ならCI でフロントエンドとバックエンドの整合性を検証できる
 - 型生成ツールはスキーマ変更時に TypeScript エラーで変更箇所を教えてくれる
 - チーム間での「型の正」が単一のスキーマファイルに集約される
+- OpenAPI codegen ツールの選択は「何を生成できるか」より「生成物をチームがどこまでメンテできるか」で決める。選定指針: (1) まず `openapi-typescript` で型のみ生成（~1.5 秒/75k 行スキーマ）→ (2) SDK 関数・統合引数・インターセプタ認証が必要になったら `hey-api`（~8.0 秒）→ (3) TanStack Query フック・Zod スキーマ・MSW モックまで欲しければ `Orval`（~5.5 秒）→ (4) ファイル単位の生成哲学が合う場合のみ `Kubb`（~18.1 秒）
 
 **コード例**:
 ```bash
@@ -50,10 +51,11 @@ const { data } = await client.GET('/users/{id}', {
 **出典**:
 - [openapi-typescript Docs](https://openapi-ts.dev/introduction) (openapi-ts.dev)
 - [GraphQL Code Generator Docs](https://the-guild.dev/graphql/codegen/docs/getting-started) (The Guild公式)
+- [OpenAPI codegen どれ選ぶん？ openapi-typescript / hey-api / Orval / Kubb 比較](https://zenn.dev/nyaomaru/articles/openapi-generator) (Zenn、75k行スキーマでの生成速度実測とツール選定フレームワーク) ※2026-05-20に実際にfetch成功
 
 **バージョン**: openapi-typescript 7+, @graphql-codegen/cli 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-20
 
 ---
 
