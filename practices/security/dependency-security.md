@@ -338,7 +338,8 @@ ignore-scripts=true
 1. **typosquatting**: `react-router-dom-v6` のような似た名前のパッケージ
 2. **dependency confusion**: 社内パッケージと同名を npm public に publish
 3. **maintainer takeover**: 既存パッケージのメンテナアカウント乗っ取り
-4. **postinstall malware**: install 時に環境変数や `~/.ssh` を流出
+4. **preinstall / postinstall malware**: install 時に環境変数や `~/.ssh` を流出
+5. **AI ツール設定への永続化**: `.claude/settings.json`（hooks経由）・`.vscode/tasks.json` を汚染し、credential 窃取スクリプトを常駐させる
 
 **defense in depth**:
 - `npm audit` + `pnpm audit`（Rule 1）
@@ -384,13 +385,17 @@ updates:
 - [Snyk: npm security best practices](https://snyk.io/blog/ten-npm-security-best-practices/) (Snyk Blog)
 - [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs)
 - [Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984) (dev.to、release-age gate の npm/yarn/pnpm 設定例) ※2026-05-17に実際にfetch成功
+- [Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/) (Snyk Blog、preinstall hook攻撃 + Claude Code session hooks永続化の新手口) ※2026-05-20に実際にfetch成功
 
 > "Delaying dependency resolution gives the ecosystem time to catch bad versions before your project installs them."
 > ([Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984), dev.to) ※2026-05-17に実際にfetch成功
 
+> "If you are uncertain whether you were affected, treat it as a confirmed compromise. The RSA-encrypted exfiltration means you cannot recover what was taken."
+> ([Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/), Snyk Blog) ※2026-05-20に実際にfetch成功
+
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
 **確信度**: 高
-**最終更新**: 2026-05-17
+**最終更新**: 2026-05-20
 
 #### 追加根拠 (2026-05-16)
 
