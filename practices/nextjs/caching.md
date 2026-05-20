@@ -118,6 +118,7 @@ export default async function Page() {
 - `cache()` はリクエストのライフタイム内のみ有効で、再検証制御はできない
 - `unstable_cache` は Data Cache に書き込み、`revalidateTag` 等で無効化できる
 - Next.js 15 では `use cache` ディレクティブが `unstable_cache` の後継として提供されている
+- `fetch()` ベースの同一パラメータリクエストは App Router が同一レンダリング内で自動メモ化するため、`cache()` を追加する前にリクエストのパラメータ統一を先に検討する
 
 **コード例**:
 ```tsx
@@ -148,10 +149,11 @@ export async function getPostsUncached() {
 - [Next.js Docs: unstable_cache](https://nextjs.org/docs/app/api-reference/functions/unstable_cache) (Next.js公式 / 2024)
 - [Next.js Docs: Caching](https://nextjs.org/docs/app/building-your-application/caching) (Next.js公式 / 2024)
 - [React Docs: cache](https://react.dev/reference/react/cache) (React公式 / 2024)
+- [Next.js App Router のキャッシュを完全理解する：fetch メモ化・Data Cache・Full Route Cache の違い](https://zenn.dev/fuelda/articles/nextjs-app-router-cache-guide) (Zenn、App Router の fetch 自動メモ化と cache() の使い分け) ※2026-05-20に実際にfetch成功
 
 **バージョン**: Next.js 15+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-05-20
 
 ---
 
