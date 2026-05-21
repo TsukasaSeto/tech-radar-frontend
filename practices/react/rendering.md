@@ -254,3 +254,60 @@ const HeavyResultList = memo(function HeavyResultList({ query }: { query: string
 **最終更新**: 2026-05-06
 
 ---
+
+### 7. 大規模コードベースへの React Compiler 導入は `compilationMode: "annotation"` で漸進的に行う
+
+7,000 ファイル超の大規模プロジェクトへ React Compiler を全ファイル一括適用するのではなく、`compilationMode: "annotation"` でファイル単位のオプトインに限定し、Oxlint のデュアルルールと組み合わせてリスクを抑えながら段階的に導入する。
+
+**根拠**:
+- React Compiler の公式ドキュメントでは `compilationMode: "annotation"` が段階的導入に推奨されている
+- 全ファイル一括（`compilationMode: "all"`）は TanStack Table v8・react-hook-form 等の非互換ライブラリが混在する場合に高リスク
+- Oxlint の `react-hooks-js/*` ルール（eslint-plugin-react-hooks v7 経由）でコンパイラ非互換パターンをデプロイ前に静的検出できる
+- `"use no memo";` ディレクティブで非互換ファイルを明示的にオプトアウトでき、互換性の問題範囲を局所化できる
+
+**コード例**:
+```ts
+// react-compiler.config.ts
+export const ReactCompilerConfig = {
+  target: "18",
+  compilationMode: "annotation",
+} as const;
+```
+
+```tsx
+// Good: コンパイラ対象ファイルには "use memo"; を冒頭に追加
+"use memo";
+export function ProductCard({ product }: { product: Product }) {
+  return <div>{product.name}</div>;
+}
+
+// ライブラリ非互換ファイルには "use no memo"; で明示的にオプトアウト
+"use no memo";
+import { useForm } from 'react-hook-form'; // Compiler 非互換
+```
+
+```jsonc
+// .oxlintrc.json — Compiler 非互換パターンを事前検出するデュアルルール
+{
+  "plugins": ["react-hooks"],
+  "rules": {
+    "react-hooks/rules-of-hooks": "error",     // 従来のフックルール
+    "react-hooks-js/react-compiler": "error"   // Compiler 固有の非互換検出
+  }
+}
+```
+
+**アンチパターン**:
+- 非互換ライブラリの確認なしに `compilationMode: "all"` で全ファイルを一括最適化する
+- Compiler 非互換ライブラリを使うファイルに `"use memo";` を付けてビルドエラーを発生させる
+- `oxlint-disable` をファイル単位で無効化して非互換を長期放置する
+
+**出典引用**:
+> "全ファイル一括は早々に諦め、**`compilationMode: "annotation"`**（annotationモード）でファイル単位のオプトインに切り替えることにしました。"
+> ([React CompilerをannotationモードとOxlintで漸進的に導入する](https://zenn.dev/dress_code/articles/92dfb9206f50f3), セクション "annotationモードの採用") ※2026-05-20に実際にfetch成功
+
+**バージョン**: React 19+, React Compiler (beta), Oxlint 0.x
+**確信度**: 中
+**最終更新**: 2026-05-20
+
+---
