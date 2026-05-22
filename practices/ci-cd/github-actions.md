@@ -542,3 +542,78 @@ jobs:
 **バージョン**: GitHub Actions
 **確信度**: 高
 **最終更新**: 2026-05-20
+
+---
+
+### 7. GitHub Actions から AWS への認証は OIDC（短命トークン）に移行する
+
+`secrets` に長期間有効な AWS アクセスキーを保存する方式を廃止し、
+GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーションして一時認証トークンを発行する。
+「保存している」という事実がリスクになる長期クレデンシャルを根本から排除する設計。
+
+**根拠**:
+- AWS アクセスキーを `secrets` に保存すると、漏洩時に長期間にわたって不正利用されるリスクがある。有効期限がないため「保存されている」だけでリスクが生じる
+- OIDC では CI 実行のたびに短命トークン（15分〜1時間）を発行。漏洩しても即失効するため構造的リスクが排除できる
+- `permissions.id-token: write` を workflow に追加し、`aws-actions/configure-aws-credentials` の `role-to-assume` を設定するだけで移行できる
+- AWS IAM ロールの信頼ポリシーで GitHub リポジトリ・ブランチを絞れるため、最小権限原則と相性がよい
+
+**コード例**:
+```yaml
+# Bad: 長期間有効なクレデンシャルを Secrets に保存
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ap-northeast-1
+
+# Good: OIDC で短命トークンを都度発行（アクセスキーは不要）
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write    # OIDC トークン発行に必要
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.OIDC_ROLE_ARN }}
+          aws-region: ap-northeast-1
+```
+
+**AWS IAM ロール信頼ポリシー（最小権限設定）**:
+```json
+{
+  "Effect": "Allow",
+  "Principal": { "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com" },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringLike": {
+      "token.actions.githubusercontent.com:sub": "repo:my-org/my-repo:ref:refs/heads/main"
+    }
+  }
+}
+```
+
+**移行チェックリスト**:
+- [ ] workflow に `permissions.id-token: write` を追加
+- [ ] `role-to-assume` に IAM ロール ARN（`vars.OIDC_ROLE_ARN` 等）を設定
+- [ ] `aws-access-key-id` / `aws-secret-access-key` の指定を削除
+- [ ] AWS 側で GitHub OIDC プロバイダーを作成（アカウントに1回）
+- [ ] IAM ロールの信頼ポリシーで `sub` 条件をリポジトリ・ブランチに絞る（`*` は禁止）
+- [ ] 古い AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY を secrets から削除
+
+**アンチパターン**:
+- 信頼ポリシーの `sub` 条件を `*` にする → 全ブランチ・全フォークからの AssumeRole を許可してしまう
+- 旧クレデンシャルを secrets に残したまま OIDC を追加するだけ → 移行メリットが半減する
+
+**出典引用**:
+> "「保存している」という事実がリスクとなります。一時的なトークンを都度発行する設計にすることで、この構造的リスクを排除できます"
+> ([GitHub ActionsからAWSへの認証をOIDCで行う](https://zenn.dev/hisa_tech_2973/articles/9f41f231827ec4), セクション "OIDCを使う理由") ※2026-05-21に実際にfetch成功
+
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+
+**確信度**: 高
+**最終更新**: 2026-05-21

@@ -564,3 +564,82 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **バージョン**: Next.js 14+, Node.js 20+
 **確信度**: 高
 **最終更新**: 2026-05-07
+
+---
+
+### 10. Modern CSS の3大原則（論理プロパティ・`:focus-visible`・opacity/transform アニメーション）を適用する
+
+Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のための論理プロパティ、キーボード専用フォーカスリング（`:focus-visible`）、リフローを起こさないコンポジタレイヤアニメーション（opacity/transform）の3つを一貫して使う。
+
+**根拠**:
+- **論理プロパティ**: `margin-left` 等の物理プロパティは LTR を前提とするため RTL レイアウトで反転対応が必要。`margin-inline-start` 等の論理プロパティは書字方向に応じて自動で適切な方向が適用される
+- **`:focus-visible`**: `:focus` はマウスクリック時もフォーカスリングを表示する。`:focus-visible` はキーボードナビゲーション時のみリングを表示するため、マウスユーザーに不要なスタイルが表示されない
+- **opacity/transform アニメーション**: `height`・`width`・`top` 等はアニメーション時にレイアウト再計算（リフロー）が発生する。`opacity`・`transform` はコンポジタレイヤで処理されリフローが不要。GPU 加速により 60fps を維持しやすい
+
+**コード例**:
+```css
+/* Good: 論理プロパティ — LTR/RTL 両対応 */
+.card {
+  margin-inline-start: 1rem;  /* LTR: margin-left / RTL: margin-right */
+  padding-inline: 1rem;       /* 左右両方に適用 */
+  border-inline-end: 1px solid #ddd;
+}
+
+/* Bad: 物理プロパティ — RTL で崩れる */
+.card {
+  margin-left: 1rem;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+
+/* Good: キーボードナビ時のみフォーカスリングを表示 */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Bad: マウスクリック時にもフォーカスリングが出る */
+:focus {
+  outline: 2px solid var(--color-primary);
+}
+
+/* Good: コンポジタレイヤのアニメーション（リフローなし） */
+.modal {
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 200ms ease, transform 200ms ease;
+}
+.modal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Bad: リフローが発生するアニメーション */
+.modal {
+  height: 0;
+  overflow: hidden;
+  transition: height 200ms ease;  /* レイアウト再計算が毎フレーム発生 */
+}
+```
+
+**論理プロパティ対応表（主なもの）**:
+| 物理プロパティ | 論理プロパティ |
+|---|---|
+| `margin-left` / `margin-right` | `margin-inline-start` / `margin-inline-end` |
+| `padding-left` / `padding-right` | `padding-inline-start` / `padding-inline-end` |
+| `border-left` / `border-right` | `border-inline-start` / `border-inline-end` |
+| `left` / `right`（position） | `inset-inline-start` / `inset-inline-end` |
+| `width` / `height` | `inline-size` / `block-size` |
+
+**アンチパターン**:
+- i18n 対応が不要と判断して論理プロパティをスキップする → 後からの RTL 対応が困難になる
+- `outline: none` でフォーカスを完全消去する → キーボードユーザーがナビゲーション不能になる
+- `top` / `height` をアニメーション対象にする → パフォーマンス問題が発生する
+
+**出典引用**:
+> "論理プロパティを使う" / "フォーカスリングは`:focus-visible`で定義する" / "OpacityとTransformを優先する"
+> ([Googleの「Modern Web Guidance」で学ぶModern CSSのDo's and Don'ts](https://zenn.dev/ubie_dev/articles/modern-css-dos-donts), セクション "Modern CSSのDo's and Don'ts") ※2026-05-21に実際にfetch成功
+
+**バージョン**: CSS Living Standard（全モダンブラウザで対応済み）
+**確信度**: 高（Google 公式 Modern Web Guidance 準拠）
+**最終更新**: 2026-05-21

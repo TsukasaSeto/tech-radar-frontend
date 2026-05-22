@@ -221,3 +221,60 @@ const CartDispatchContext = createContext<Dispatch<CartAction>>(() => {});
 You Might Not Need an Effect では「URL を状態として持つ」「store identifiers not derived values（IDを保持し、データは導出する）」など、状態の最小化と局所化の具体例を多数示している。Zustand 記事は「必要な状態や関数だけをセレクトして取り出す（Selective State Retrieval）」を推奨しており、グローバルストアを使う場合でも「使うスライスだけを購読する」ことで不必要な再レンダリングを防ぐパターンを解説。コロケーションの原則はグローバル状態ツールを使う際にも適用できる（ストアの購読範囲を最小化する形で）。
 
 **確信度**: 既存（高）→ 高（公式文書 + コミュニティ記事で実証済み）
+
+---
+
+### 5. `useSelector` で配列を返すセレクタは `createSelector` でメモ化する
+
+`useSelector` で `|| []` フォールバックを使うと `shallowEqual` を使っても毎回新しい配列参照が生成され、
+意図しない再レンダリングが発生する。`createSelector`（Reselect）でセレクタ出力をメモ化し、参照を安定させる。
+
+**根拠**:
+- `state.docs?.ids || []` は `docs` が `undefined` のとき毎回 `[]` を新規生成する。`[] === []` は `false` のため `shallowEqual` は参照が変化したと判定し再レンダリングが走る
+- `shallowEqual` はオブジェクト内のプロパティを比較するが、プロパティの値が新規 `[]` インスタンスの場合は参照が異なると判定される
+- `createSelector` は入力セレクタの出力が変化しない限り前回の返り値（同じ参照）を返す。これにより「配列の中身が同じなら再レンダリングしない」が保証される
+- Redux Toolkit に同梱の `createSelector`（Reselect v5）は双方向メモ化に対応
+
+**コード例**:
+```typescript
+// Bug: shallowEqual を使っても毎回新しい [] が生成されて再レンダリングが走る
+const { docIds } = useSelector(
+  (state: RootState) => ({
+    docIds: state.docGroup?.docsPerDoc?.docIds || [],  // ← undefined 時に [] を新規生成
+  }),
+  shallowEqual
+);
+
+// Good: createSelector で出力をメモ化し、参照を安定させる
+import { createSelector } from '@reduxjs/toolkit';  // Reselect v5 同梱
+
+const getActiveDocIds = createSelector(
+  [(state: RootState) => state.docGroup?.docsPerDoc],
+  (docsPerDoc) => docsPerDoc?.docIds ?? []  // 入力が同じなら同じ参照を返す
+);
+
+const docIds = useSelector(getActiveDocIds);
+// docGroup?.docsPerDoc が変化しない限り docIds の参照は安定する
+```
+
+**判断軸（どのセレクタをメモ化すべきか）**:
+| セレクタパターン | メモ化が必要か |
+|---|---|
+| `state.user.name` などスカラー値 | 不要（プリミティブは参照比較が安定） |
+| `state.ids \|\| []` など配列フォールバック | **必要**（undefined 時に毎回新規生成） |
+| `state.items.filter(...)` などの派生配列 | **必要**（フィルタ結果は毎回新規配列） |
+| `state.items.map(...)` などの派生オブジェクト | **必要**（map 結果は毎回新規配列） |
+| `state.entities[id]` などの単一エンティティ取得 | 通常不要（参照が安定している場合） |
+
+**アンチパターン**:
+- `useSelector` で `|| []` を使いながら `shallowEqual` で最適化しようとする（根本解決にならない）
+- 親コンポーネントで `createSelector` のインスタンスを子コンポーネントと共有する（各コンポーネントは自分のメモ化インスタンスを持つべき）
+- `createSelector` を使わずに `useMemo` で代替する（`useMemo` はコンポーネント再レンダリング時に評価されるため不完全）
+
+**出典引用**:
+> "プロパティ `ary` の値を `===` で比較するとき、それぞれの `[]` は別のインスタンスであるため参照が異なると判定される"
+> ([useSelector で配列を返すとき shallowEqual では不十分なケースがある](https://tech.smarthr.jp/entry/2026/05/20/190738), セクション "shallowEqual の限界") ※2026-05-21に実際にfetch成功
+
+**バージョン**: Redux Toolkit v2+（Reselect v5 同梱）, React-Redux v8+
+**確信度**: 高
+**最終更新**: 2026-05-21
