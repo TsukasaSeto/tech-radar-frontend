@@ -543,3 +543,64 @@ npx license-checker --failOn 'GPL;AGPL;LGPL' --production
 **バージョン**: CycloneDX 1.5+, SPDX 2.3+
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 6. 開発ツール拡張機能（VS Code等）のサプライチェーンリスクを管理する
+
+VS Code 拡張機能はインストール時から Node.js プロセスとして開発者権限で実行され、
+`process.env`（`TOKEN`/`SECRET`/`KEY`等）・ファイルシステム・CLI ツールへのアクセスが可能。
+悪意ある拡張機能や汚染されたアップデートが配布されると、開発環境の認証情報が流出する。
+拡張機能は npm パッケージとは別のサプライチェーンリスクとして、導入・更新を審査する。
+
+**根拠**:
+- 2026-05-22 に確認された事例: Nx Console v18.95.0（VS Code 拡張機能）に悪意ある
+  コードが混入し、GitHub の内部リポジトリ約 3,800 件が 11〜18 分で窃取された（TeamPCP 攻撃）
+- 拡張機能の `activate()` は VS Code 起動のたびに実行され、継続的なクレデンシャル収集が可能
+- インストールのみで即座に env 変数・ワークスペースのファイルへアクセスできる
+- 「有名ツールだから安全」という前提が攻撃の起点になる
+
+**コード例（悪意ある拡張機能の仕組み）**:
+```typescript
+// 悪意ある拡張機能の activate() のパターン（参考）
+export function activate(context: vscode.ExtensionContext): void {
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  // TOKEN / SECRET / KEY / PASSWORD にマッチする環境変数を収集
+  const keyNames = Object.keys(process.env)
+    .filter((key) => /(TOKEN|SECRET|KEY|PASSWORD)/i.test(key));
+  // 外部サーバーへ送信...
+}
+```
+
+**審査・防御チェックリスト**:
+- [ ] インストール前に **Publisher の信頼性を確認**（公式 Publisher か・評価数・更新頻度）
+- [ ] **自動更新を無効化**または更新前にリリースノートを確認（Marketplace での手動レビュー）
+- [ ] **VS Code Profiles / Workspace Trust** で作業コンテキスト別に拡張機能を分離
+- [ ] **Restricted Mode** を使用して外部ソースのコードに対してはデフォルトで制限
+- [ ] `.vsix` を Marketplace 経由でなく手動インストールする場合は **事前にパッケージ内容を解凍・確認**
+- [ ] 未使用の拡張機能は定期的に**アンインストール**（攻撃対象領域を最小化）
+
+**侵害検知 IOC（Nx Console / TeamPCP 攻撃の例）**:
+```bash
+# macOS: 感染インジケーターを確認
+ls ~/.local/share/kitty/cat.py 2>/dev/null && echo "INFECTED: cat.py found"
+ls ~/Library/LaunchAgents/com.user.kitty-monitor.plist 2>/dev/null && echo "INFECTED: plist found"
+
+# 侵害が確認された場合の対応
+# → GitHub トークン・AWS キーを即時失効し Rule #4 の侵害チェックリストを実行
+```
+
+**出典引用**:
+> "VS Code extensions run as Node.js processes with developer permissions from the moment of installation, allowing access to sensitive information."
+> ([VS Code 拡張機能のインストールだけで開発環境が侵害されるリスク — デモと対策](https://zenn.dev/hisa_tech_2973/articles/51b62bd8c3bd11), セクション "VS Code 拡張機能の仕組みとリスクの構造") ※2026-05-22に実際にfetch成功
+
+> 「攻撃者はこのリリースに悪意のあるコードを仕込み、Marketplace 上に公開しました」「『有名なツールだから大丈夫』という常識が、一瞬で覆された瞬間です」
+> ([たった11分で3,800リポジトリが流出——GitHubを陥落させたVS Code拡張機能サプライチェーン攻撃](https://zenn.dev/esta_dev/articles/fa0269c791ced3), セクション "侵入経路：「毒入りVS Code拡張機能」が仕掛けた罠") ※2026-05-22に実際にfetch成功
+
+**アンチパターン**:
+- 「有名ツールの拡張機能だから自動更新で問題ない」→ maintainer アカウント乗っ取りでいつでも汚染可能
+- npm `--ignore-scripts` を設定しながら VS Code 拡張機能は無審査 → 攻撃経路が残る
+
+**バージョン**: VS Code 全バージョン
+**確信度**: 高
+**最終更新**: 2026-05-22
