@@ -340,6 +340,7 @@ ignore-scripts=true
 3. **maintainer takeover**: 既存パッケージのメンテナアカウント乗っ取り
 4. **preinstall / postinstall malware**: install 時に環境変数や `~/.ssh` を流出
 5. **AI ツール設定への永続化**: `.claude/settings.json`（hooks経由）・`.vscode/tasks.json` を汚染し、credential 窃取スクリプトを常駐させる
+6. **tag/version redirection**: フォーク先の悪意あるコミットにタグを付け直し、npm / Composer 等のレジストリ経由で配布する（2026-05 Laravel Lang 攻撃で確認）——パッケージの信頼境界はブラウザで見るソースリポジトリではなく、コミットを成果物にする一連の仕組み（タグ・CI・レジストリへの push）にある
 
 **defense in depth**:
 - `npm audit` + `pnpm audit`（Rule 1）
@@ -386,6 +387,10 @@ updates:
 - [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs)
 - [Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984) (dev.to、release-age gate の npm/yarn/pnpm 設定例) ※2026-05-17に実際にfetch成功
 - [Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/) (Snyk Blog、preinstall hook攻撃 + Claude Code session hooks永続化の新手口) ※2026-05-20に実際にfetch成功
+- [Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/) (Snyk Blog、Composerタグリダイレクション攻撃・信頼境界の原則) ※2026-05-23に実際にfetch成功
+
+> "A package's trust boundary is not the source repository in your browser tab. It is the chain of systems that decides which commit becomes a published artifact."
+> ([Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/), Snyk Blog, セクション "Incident Analysis") ※2026-05-23に実際にfetch成功
 
 > "Delaying dependency resolution gives the ecosystem time to catch bad versions before your project installs them."
 > ([Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984), dev.to) ※2026-05-17に実際にfetch成功
@@ -395,7 +400,7 @@ updates:
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
 **確信度**: 高
-**最終更新**: 2026-05-20
+**最終更新**: 2026-05-23
 
 #### 追加根拠 (2026-05-16)
 
@@ -604,3 +609,52 @@ ls ~/Library/LaunchAgents/com.user.kitty-monitor.plist 2>/dev/null && echo "INFE
 **バージョン**: VS Code 全バージョン
 **確信度**: 高
 **最終更新**: 2026-05-22
+
+---
+
+### 7. MCPサーバーとAIコーディングエージェントの設定ファイルを独立したサプライチェーンリスクとして管理する
+
+MCP（Model Context Protocol）サーバーは npm パッケージや VS Code 拡張機能とは異なる攻撃経路を持つ。
+悪意ある MCP サーバーはツール定義のメタデータにプロンプトインジェクションを埋め込み、
+AI が承認なしに意図しない操作を実行させる（ツールポイズニング）。
+また `.mcp.json`・`.claude/settings.json` などの設定ファイル自体が攻撃ベクターとして悪用される
+（TrustFall 攻撃で RCE が確認: CVE-2025-59536, CVE-2026-21852）。
+
+**根拠**:
+- MCP では「データの中に命令が混ざり得る」ため、外部ソース経由のコンテンツはすべて潜在的な攻撃経路
+- read-access（ファイル読み取り）と external-send（外部送信）MCP を同時に有効化すると間接プロンプトインジェクションで情報流出が起きる
+- 設定ファイルはパーミッションが評価される「前」に処理されるケースがある（TrustFall の仕組み）
+- 承認ダイアログは「approval fatigue」を意図した UI デザインが存在し、ユーザーが内容を確認せずに承認してしまう
+- postmark-mcp 経由の感染事例で約300組織が影響を受けた（2026年確認）
+
+**MCP リスク管理チェックリスト**:
+- [ ] MCP サーバーは公式・実績あるものだけ使用し、未知ソースからはインストールしない
+- [ ] read-access MCP（ファイル読み取り等）と external-send MCP（外部送信等）を同時に有効化しない
+- [ ] OAuth スコープは最小権限にする（`drive` ではなく `drive.readonly`、`calendar` ではなく `calendar.readonly`）
+- [ ] `.mcp.json` や `.claude/settings.json` をプロジェクトに含める場合はコードレビューと同じ基準で内容を審査する
+- [ ] 外部リポジトリの clone 時は `.mcp.json` の内容を確認してから Claude Code / Cursor を起動する
+- [ ] `allowedTools` / `permissions` は Managed Settings で組織統制する（Rule #13 参照）
+
+**3つの主要攻撃パターン**:
+
+| パターン | 仕組み | 対策 |
+|---|---|---|
+| 間接プロンプトインジェクション | 文書・Web コンテンツに埋め込まれた命令を AI が実行 | 外部コンテンツを読む MCP と送信する MCP を分離 |
+| ツールポイズニング | ツール定義メタデータに悪意あるプロンプトを仕込む | インストール前にツール定義の内容を確認 |
+| Confused Deputy | AI の委任権限を悪用して未認可操作を実行 | 承認ダイアログの内容を毎回確認（「常に許可」を使わない） |
+
+**出典引用**:
+> "承認制はあっても、UIの設計次第でその意味が失われる"
+> ([MCPを使う前に知っておくべきこと――便利さの裏にある攻撃の仕組み](https://zenn.dev/masuda_masuo/articles/2026-05-23-mcp-security), セクション "承認の限界") ※2026-05-23に実際にfetch成功
+
+> "The attack surface is not the model, but configuration files that no one reviews"
+> ([AIコーディングエージェントの本当の攻撃面は設定ファイルだった](https://zenn.dev/ju571n/articles/ai-agent-config-attack-surface), セクション "TrustFall Attack") ※2026-05-23に実際にfetch成功
+
+**アンチパターン**:
+- 知人作の MCP サーバーだからと内容を確認せずにインストールする（rug-pull: 承認後に悪意あるコードへ差し替えられる可能性）
+- 承認ダイアログを習慣的に「常に許可」でクリアする
+- `.mcp.json` が含まれるリポジトリをそのまま Claude Code で開く
+
+**バージョン**: Claude Code / Cursor / MCP Protocol 全バージョン
+**確信度**: 高
+**最終更新**: 2026-05-23

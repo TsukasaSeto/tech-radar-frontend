@@ -817,3 +817,119 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 **最終更新**: 2026-05-20
 
 ---
+
+### 14. 大規模タスクのコンテキスト消費は70%/85%を閾値として管理し、設計決定・進捗・文脈を`.claude/`ファイルで永続化する
+
+Claude Code のコンテキストウィンドウを「記憶」として使うと、大規模リファクタリングや長期タスクでは
+70% 超え以降に「コンテキストロット」（設計決定の忘却・矛盾の増加）が起き、85% 超えでコンパクションループや損失が発生する。
+コンテキストウィンドウは「作業スペース」として扱い、永続化が必要な情報は必ず `.claude/` 配下のファイルに外部化する。
+
+**根拠**:
+- ファイル1件の読み込み ≈ 3,000 トークン。100ファイルのモノリスは200Kウィンドウを超過する
+- 70%: 応答速度の低下・確認頻度の増加など最初の症状が出る → この段階で外部化を実施する
+- 85%: 自動コンパクションループ・データ損失が起き始める → この段階では手遅れ
+- セッション間の引き継ぎを外部ファイルに書くと、複数セッション・並列ワークツリーが同じ決定を参照できる
+- Plan Mode（設計フェーズのみで使用）を先行させるとトークン消費を40〜60%削減できる
+
+**コード例**:
+```markdown
+# .claude/architecture-map.md — パッケージ依存関係の記録
+## Package Dependencies
+- domain.user → domain.payment（暗黙依存、分離必要）
+- domain.payment → infrastructure.stripe（直接参照、抽象化必要）
+
+## Module Split Priority
+1. Payment（外部依存が多い・変更頻度高）
+2. User（クロスモジュール参照が最多）
+3. Notification（独立・リスク最低）
+```
+
+```markdown
+# .claude/handoff.md — ワークツリー内・セッション間引き継ぎ
+## Current State
+- Payment モジュールリファクタリング: 40% 完了
+- Next: domain.user → domain.payment の依存を切り離す
+
+## Files Modified
+- packages/payment/src/index.ts（リファクタリング済み）
+- packages/user/src/service.ts（作業中）
+
+## Next Actions
+- [ ] IPaymentRepository インターフェースを定義
+- [ ] UserPaymentService を packages/user から分離
+```
+
+**セッション設計のベストプラクティス**:
+- タスクをフェーズ分割: 分析 → インターフェース定義 → 実装（各フェーズで1セッション）
+- 1セッション当たりのファイル変更は5〜20件に抑える
+- `HANDOFF.md` にフェーズ完了時の状態・次アクションを記録してからセッションを閉じる
+
+**アンチパターン**:
+- コンテキスト使用率が 85% を超えてから新規セッションを開始する（設計記憶が消える）
+- 設計判断を「Claude が覚えている」として外部化しない
+
+**出典引用**:
+> "コンテキスト使用率 **70% が「手を打つべき」ライン。85% を超えたら手遅れ**"
+> ([Claude Codeのコンテキスト枯渇に立ち向かう──大規模リファクタリングのセッション設計](https://zenn.dev/miyan/articles/claude-code-context-exhaustion-strategy), セクション "コンテキストロットの3段階") ※2026-05-23に実際にfetch成功
+
+> "バトンタッチとは、エージェントを並べることではなく **作業の文脈に持ち運び可能な実体を与えること** だった"
+> ([worktree の『バトンタッチ』問題を、自前 skill・Codex・Augment で比べて反省した](https://zenn.dev/yasunami_daichi/articles/worktree-handoff-codex-augment), セクション "結論") ※2026-05-23に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）
+**確信度**: 中
+**最終更新**: 2026-05-23
+
+---
+
+### 15. 並列サブエージェント実行前にgrill-with-docsで暗黙前提を外部化し、CONTEXT.mdとADRで受け渡す
+
+Claude Code のサブエージェントはメイン会話のコンテキストを一切継承しない空の状態で起動する。
+「会話で決めたこと」は書かれていなければサブエージェントにとって存在しないのと同じため、
+並列実行の前に必ず「grill-with-docs」フェーズでプランを問い詰め、暗黙の前提を `CONTEXT.md` や ADR として外部化する。
+
+**根拠**:
+- "Subagents inherit zero context from the main conversation. What wasn't written in the instructions simply doesn't exist to them."
+- grill-with-docs はプランを「問い詰め（grill）」て、用語定義・設計決定・制約を洗い出し文書化する
+- 外部化した `CONTEXT.md` + ADR があれば、セッション跨ぎ・ツール跨ぎ（Codex / Augment）での引き継ぎも可能
+- grill フェーズを省いて委任すると「薄い指示が薄い結果を生む」—再作業コストは節約したトークンを上回る
+
+**コード例**:
+```
+# 並列サブエージェント起動の手順
+1. /grill → プランを問い詰め、前提を CONTEXT.md と ADR に書き出す
+2. git worktree add -b feature/X ../worktree-X  （タスクごとにブランチを分離）
+3. 各サブエージェントに委任: "Read CONTEXT.md and ADR-001.md, then implement Y"
+```
+
+```markdown
+# CONTEXT.md — サブエージェント向け共有コンテキスト
+## 用語定義
+- PaymentService: ユーザーから直接呼ばれる公開サービス（domain.payment に存在）
+- IPaymentRepository: domain.payment が依存するインターフェース（まだ未定義）
+
+## 設計決定（ADRs）
+- ADR-001: UserPaymentService を packages/user から packages/payment に移動する
+- ADR-002: domain.user は domain.payment に直接依存しない
+
+## 実装の境界
+- subagent A: packages/payment のインターフェース定義
+- subagent B: packages/user の依存クリーン
+```
+
+**アンチパターン**:
+- grill フェーズを省いてサブエージェントに委任する（プランの細部が「暗黙前提」のまま渡る）
+- `CONTEXT.md` を会話の要約として書く（問い詰めずに書いた要約は暗黙前提を含んだまま）
+- 全タスクを1つのサブエージェントに渡す（コンテキスト分離の恩恵がなくなる）
+
+**出典引用**:
+> "Subagent を並列で回す前に、やることがある。**頭の中の暗黙の前提を、subagent が読める形に外部化すること**"
+> ([独立コンテキストの subagent には grill-with-docs を渡せ](https://zenn.dev/yasunami_daichi/articles/parallel-agent-context-grill-with-docs), セクション "並列委任の落とし穴") ※2026-05-23に実際にfetch成功
+
+> "Skipping the 'grill' phase before parallel delegation amplifies thin instructions into thin results—tripling rework instead of output."
+> ([独立コンテキストの subagent には grill-with-docs を渡せ](https://zenn.dev/yasunami_daichi/articles/parallel-agent-context-grill-with-docs), セクション "grill-with-docs とは") ※2026-05-23に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）
+**確信度**: 中
+**最終更新**: 2026-05-23
+
+---
