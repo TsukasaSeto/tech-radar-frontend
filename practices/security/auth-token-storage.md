@@ -455,3 +455,79 @@ if (localStorage.getItem('isLoggedIn')) { ... }
 **バージョン**: Next.js 13+
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 6. DPoP + Web Crypto API `extractable: false` で API リクエストに署名し、セッション盗用を根本から防ぐ
+
+HttpOnly Cookie が使えない構成（別ドメイン API への直接呼び出し・WebSocket・Native-like PWA）では、
+DPoP（RFC 9449）と Web Crypto API の `extractable: false` を組み合わせ、ブラウザ外に秘密鍵が出られない設計にする。
+IndexedDB は Structured Clone Algorithm により `CryptoKey` オブジェクトをそのまま永続化できる唯一のWeb Storageであり、
+`extractable: false` の鍵は `.exportKey()` で文字列・バイト列へのエクスポートが不可能なため、
+XSS でコードを実行されても攻撃者は鍵を外部に持ち出せない。
+
+**根拠**:
+- DPoP は各リクエストに ECDSA 署名付き JWT を添付し、トークン単体を盗んでも別デバイスから再利用できなくする（RFC 9449 §1）
+- `window.crypto.subtle.generateKey()` で `extractable: false` を指定した `CryptoKey` は署名には使えるが `.exportKey()` で外に出せない
+- `localStorage` / `sessionStorage` は文字列のみ保存でき `CryptoKey` を格納できない。IndexedDB だけが Structured Clone Algorithm で `CryptoKey` を格納できる
+- 「ブラウザ外に秘密鍵が出られない」+「盗まれたトークンを別デバイスから再送できない」の2条件が揃い、XSS に対する根本的な耐性が得られる
+
+**コード例（鍵生成・永続化・DPoP Proof 作成）**:
+```javascript
+// 1. 鍵ペアを生成（extractable: false で外部エクスポート不可）
+const keyPair = await window.crypto.subtle.generateKey(
+  { name: "ECDSA", namedCurve: "P-256" },
+  false,           // extractable: false — 鍵はブラウザ外に出られない
+  ["sign", "verify"]
+);
+
+// 2. IndexedDB に CryptoKey ごと保存（Structured Clone で保持）
+const db = await openDB('auth-keys', 1, {
+  upgrade(db) { db.createObjectStore('keys'); }
+});
+await db.put('keys', keyPair, 'dpop-keypair');
+```
+
+```javascript
+// 3. DPoP Proof の生成（リクエストごとに署名）
+async function createDPoPProof(method, url) {
+  const { privateKey, publicKey } = await db.get('keys', 'dpop-keypair');
+  const payload = {
+    jti: crypto.randomUUID(),   // 再送攻撃防止
+    htm: method,                // HTTP メソッド
+    htu: url,                   // リクエスト先 URL
+    iat: Math.floor(Date.now() / 1000),
+  };
+  const jwk = await crypto.subtle.exportKey("jwk", publicKey); // 公開鍵は exportable
+  return signJWT(payload, privateKey, { jwk });
+}
+```
+
+**HttpOnly Cookie vs DPoP の選択基準**:
+| シナリオ | 推奨方式 |
+|---|---|
+| 通常の Web アプリ（同一ドメイン BFF） | HttpOnly Cookie（Rule #1） |
+| 別ドメイン API を SPA が直接呼ぶ | DPoP + IndexedDB |
+| WebSocket / long-polling | DPoP + IndexedDB |
+| Native アプリ相当の PWA | DPoP + IndexedDB |
+
+**アンチパターン**:
+- `extractable: true` で鍵を生成 → localStorage にシリアライズして保存でき XSS で盗まれる
+- sessionStorage + CryptoKey — sessionStorage は文字列のみ。CryptoKey を直接保存できない
+- HttpOnly Cookie で対応可能なケースに DPoP を導入 → 複雑さのコストが上回る
+
+**出典引用**:
+> "IndexedDB is the sole location capable of storing `CryptoKey` objects directly." — Structured Clone Algorithm が CryptoKey をシリアライズせずそのまま保持できる唯一の Web Storage
+> ([DPoP + IndexedDB でフロントエンドセッションをがっちり守る](https://zenn.dev/kuboon/articles/e5d955f2cba108), セクション "Why IndexedDB?") ※2026-05-24に実際にfetch成功
+
+**出典**:
+- [RFC 9449 — OAuth 2.0 Demonstrating Proof of Possession (DPoP)](https://datatracker.ietf.org/doc/html/rfc9449) (IETF)
+- [DPoP + IndexedDB でフロントエンドセッションをがっちり守る](https://zenn.dev/kuboon/articles/e5d955f2cba108) (Zenn、ブラウザ実装ガイド) ※2026-05-24にfetch成功
+- [MDN: SubtleCrypto.generateKey()](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/generateKey) (MDN Web Docs)
+- [MDN: IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) (MDN Web Docs)
+
+**バージョン**: モダンブラウザ（Web Crypto API + IndexedDB 対応、Firefox/Chrome/Safari）
+**確信度**: 中
+**最終更新**: 2026-05-24
+
+---
