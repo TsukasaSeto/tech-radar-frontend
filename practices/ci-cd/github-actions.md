@@ -635,3 +635,49 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 **バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS
 **確信度**: 高
 **最終更新**: 2026-05-22
+
+---
+
+### 8. `actions/checkout` に `persist-credentials: false` を設定し、トークンの自動永続化を無効にする
+
+デフォルトでは `actions/checkout` は GitHub トークンを `$RUNNER_TEMP/git-credentials-<UUID>.config` ファイルに書き込んで永続化する。
+後続ステップでサードパーティアクションや侵害されたスクリプトが実行された場合、このファイルからトークンを奪取できてしまう。
+`persist-credentials: false` でトークン永続化を無効にし、認証が必要な場合のみ `gh auth setup-git` で都度設定する。
+
+**根拠**:
+- デフォルト (`persist-credentials: true`) では Base64 エンコードされたトークンが git 認証設定ファイルに書き込まれ、後続の全ステップからアクセス可能
+- Rule #6 の pull_request_target サプライチェーンリスクと組み合わせると、外部 PR のスクリプトがトークンを奪取する攻撃経路になる
+- `persist-credentials: false` を設定することでトークンが git 設定ファイルに保存されなくなる
+- `gh auth setup-git` は git コマンド実行時にのみトークンを参照し、永続ファイルを作成しない
+- `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる
+
+**コード例**:
+```yaml
+# Bad: デフォルト（トークンが $RUNNER_TEMP に永続化される）
+- uses: actions/checkout@v4
+
+# Good: persist-credentials を無効化 + SHA ピニング（Rule #6 推奨事項）
+- uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+  with:
+    persist-credentials: false
+
+# 認証が必要な git 操作がある場合は gh auth setup-git で設定
+- name: Setup git credentials
+  run: gh auth setup-git  # 実行時のみトークンを参照、永続ファイルは作成しない
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+- name: Push changes
+  run: git push origin main  # gh auth setup-git 後は認証済みで動作する
+```
+
+**出典引用**:
+> "the auth token is persisted in the local git config. This enables your scripts to run authenticated git commands. The token is removed during post-job cleanup."
+> ([actions/checkout README](https://raw.githubusercontent.com/actions/checkout/main/README.md)) ※2026-05-25に実際にfetch成功
+
+> "後続ステップは credential ファイルから GitHub トークンを容易に奪取できます。persist-credentials: false を設定することで、このリスクを根本から排除できます。"
+> ([【GitHub Actions】actions/checkout には persist-credentials: false を設定するべき](https://zenn.dev/kou_pg_0131/articles/gha-checkout-persist-credentials), セクション "persist-credentials: false を設定するべき理由") ※2026-05-25に実際にfetch成功
+
+**バージョン**: actions/checkout v4+
+**確信度**: 高
+**最終更新**: 2026-05-25

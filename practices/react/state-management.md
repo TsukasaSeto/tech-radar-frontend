@@ -46,6 +46,7 @@ function ParentComponent() {
 - 複数の `setState` 呼び出しを一つのアクションにまとめられる
 - 状態遷移ロジックをコンポーネント外でテストできる
 - Discriminated Union で型安全に管理できる
+- 「元データから計算できる値」は state に持たない（SSOT: Single Source of Truth）。カウント・集計値・フラグなど派生値を state として持つと、「1箇所更新したが別の state と不整合」というバグが起きやすい。undo/redo 実装時にこの問題が露呈する典型パターンがある
 
 **コード例**:
 ```tsx
@@ -74,12 +75,31 @@ function formReducer(state: FormState, action: FormAction): FormState {
 }
 ```
 
+**コード例（SSOT: 派生値を state に持たない）**:
+```tsx
+// Bad: ボール・ストライク・アウトを独立した state で管理
+const [pitches, setPitches] = useState([]);
+const [balls, setBalls] = useState(0);     // pitches から計算できる
+const [strikes, setStrikes] = useState(0); // 同上
+// → undo 実装時に pitches だけ戻しても balls/strikes が残り不整合になる
+
+// Good: pitches のみが SSOT、派生値は都度計算
+const [pitches, setPitches] = useState([]);
+const { balls, strikes, outs } = deriveGameState(pitches);
+// undo は1行で済む
+const handleUndo = () => setPitches(pitches.slice(0, -1));
+```
+
 **出典**:
 - [React Docs: Extracting State Logic into a Reducer](https://react.dev/learn/extracting-state-logic-into-a-reducer) (React公式)
+- [Reactで「取り消し機能」を実装しようとして気づいた設計ミス](https://zenn.dev/ysaya_dev/articles/react-single-source-of-truth) (Zenn、SSOT 原則違反による undo 実装の困難さを実体験で示す) ※2026-05-25に実際にfetch成功
+
+> "balls, strikes, outs は pitches 配列から計算できる値なのに state として持っていたため、undo 時に pitches だけ巻き戻しても他の state と整合性が取れなくなりました。"
+> ([Reactで「取り消し機能」を実装しようとして気づいた設計ミス](https://zenn.dev/ysaya_dev/articles/react-single-source-of-truth), セクション "設計ミスの正体") ※2026-05-25に実際にfetch成功
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-25
 
 ---
 
