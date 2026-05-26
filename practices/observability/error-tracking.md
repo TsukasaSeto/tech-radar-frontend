@@ -548,6 +548,47 @@ Sentry.init({
 
 ---
 
+### 10. Sentry の本番コンテキスト（スタックトレース・リクエスト・ブレッドクラム）を AI エージェントに渡して修正精度を上げる
+
+AI エージェントが本番バグを修正するには「実際に何が壊れているか」の情報が必要。
+Sentry MCP（Claude Code・Cursor 等の MCP 対応ツール用）または Sentry CLI（CI/CD・スクリプト用）で
+スタックトレース・リクエストペイロード・環境変数・ブレッドクラムをエージェントのコンテキストに注入する。
+修正は Draft PR で開いてレビューを挟み、自動マージは避ける。
+
+**根拠**:
+- エージェントはコードベースだけでは本番の実際の壊れ方を把握できない。再現に必要なリクエストパラメータが欠落するため誤診が増える
+- Sentry の分散トレーシングを使えばマイクロサービスをまたいだ根本原因を追跡できる
+- Draft PR ＋ 人間レビューで誤ったマジックフィックスの本番流出を防ぐ
+
+**コード例（Sentry CLI で 1 件のイシューをエージェントに説明させる）**:
+```bash
+# Sentry CLI 認証
+sentry auth login
+
+# イシューのフル文脈を取得してエージェントに渡す
+sentry issue explain CHECKOUT-P1
+
+# 自動化スクリプト（CI/CD から呼び出す場合）
+sentry issue list --status unresolved --limit 5 | \
+  xargs -I{} sentry issue explain {}
+```
+
+**MCP 設定例（Claude Code / Cursor 向け）**:
+```bash
+# Sentry MCP をワンライナーで追加
+npx add-mcp https://mcp.sentry.dev/mcp
+```
+
+**出典引用**:
+> "Your agents need someone/something telling them what's breaking in the wild and giving them the context they need to understand why."
+> ([Your agent can't fix what it can't see](https://blog.sentry.io/agents-need-production-context/), セクション "What agents actually need") ※2026-05-26に実際にfetch成功
+
+**バージョン**: Sentry SDK 全バージョン（MCP: 2026 年対応 SDK）
+**確信度**: 高（Sentry 公式ブログ — Pattern 1）
+**最終更新**: 2026-05-26
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計

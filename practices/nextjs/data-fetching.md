@@ -109,16 +109,20 @@ const revalidatedData = await fetch('https://api.example.com/posts', {
 **根拠**:
 - 最も遅いデータがページ全体の表示を妨げなくなる
 - ユーザーは部分的なコンテンツを先に見られる
+- **LCP 要素（ヒーロー画像・主要見出し等）は Suspense 境界の外側（初期シェル）に置く**。スローデータを待つ Suspense 内に LCP 要素があると、シェルが届いてもレンダリングが遅延し LCP が最大 400ms 悪化するケースが観測されている
 
 **コード例**:
 ```tsx
-// app/dashboard/page.tsx
+// app/dashboard/page.tsx — LCP要素を初期シェルに、スローデータをSuspense境界内に分離
 import { Suspense } from 'react';
 
 export default function DashboardPage() {
   return (
     <div>
+      {/* 初期シェル: LCP対象要素（ヒーロー画像等）はここに置く */}
+      <HeroImage />  {/* ← LCP要素: Suspenseの外側 */}
       <PageHeader />
+      {/* スローデータ: Suspenseで遅延 */}
       <Suspense fallback={<StatsSkeleton />}>
         <StatsPanel />
       </Suspense>
@@ -132,10 +136,11 @@ export default function DashboardPage() {
 
 **出典**:
 - [Next.js Docs: Streaming with Suspense](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming) (Next.js公式)
+- [Streaming SSR Is Not a Free LCP Win](https://dev.to/nosyos/streaming-ssr-is-not-a-free-lcp-win-5b8l) (dev.to、LCP配置の実測データ) ※2026-05-26に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-26
 
 ---
 
