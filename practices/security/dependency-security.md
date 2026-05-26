@@ -289,6 +289,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - CI 環境では install script を実行しないだけで攻撃の大部分を防げる
 - pnpm の `onlyBuiltDependencies` で「必要な script のみ allowlist」運用が現実的
 - lockfile-lint で lockfile の整合性（resolved URL・integrity hash）も検証する
+- `npm audit` / `pnpm audit` は CVE 登録済みの既知脆弱性のみを検出する。Socket のような行動解析型スキャナーは install script 実行可否・ネットワーク接続要求・ファイルシステム操作を静的解析し、CVE に存在しない新種マルウェアや公開直後の zero-day 汚染を検知できる
 
 **`--ignore-scripts` の運用**:
 ```bash
@@ -346,7 +347,7 @@ ignore-scripts=true
 - `npm audit` + `pnpm audit`（Rule 1）
 - `--frozen-lockfile`（Rule 3）
 - `--ignore-scripts`（このルール）
-- `socket-security` / `snyk` / `Aikido` 等の OSS supply chain スキャナーを CI に追加
+- `socket-security` / `snyk` / `Aikido` 等の OSS supply chain スキャナーを CI に追加（Socket は install script の実行可否・ネットワーク接続要求・ファイルシステム操作を行動解析し、既知 CVE 外の新種マルウェアも検知; GitHub App 連携で PR ごとに差分スキャンできる）
 - Renovate の `:disablePeerDependencies` などで不要な依存追加を制限
 - **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）
 
@@ -388,6 +389,7 @@ updates:
 - [Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984) (dev.to、release-age gate の npm/yarn/pnpm 設定例) ※2026-05-17に実際にfetch成功
 - [Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/) (Snyk Blog、preinstall hook攻撃 + Claude Code session hooks永続化の新手口) ※2026-05-20に実際にfetch成功
 - [Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/) (Snyk Blog、Composerタグリダイレクション攻撃・信頼境界の原則) ※2026-05-23に実際にfetch成功
+- [GitHub サプライチェーン攻撃が怖すぎるので Socket.dev を試してみた](https://zenn.dev/tomodo_ysys/articles/socket-github-supply-chain-attack) (Zenn、Socket 行動解析・GitHub App 実践導入) ※2026-05-24に実際にfetch成功
 
 > "A package's trust boundary is not the source repository in your browser tab. It is the chain of systems that decides which commit becomes a published artifact."
 > ([Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/), Snyk Blog, セクション "Incident Analysis") ※2026-05-23に実際にfetch成功
@@ -400,7 +402,7 @@ updates:
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
 **確信度**: 高
-**最終更新**: 2026-05-23
+**最終更新**: 2026-05-24
 
 #### 追加根拠 (2026-05-16)
 
