@@ -147,14 +147,34 @@ export default {
 - 同 SVG を `dangerouslySetInnerHTML` で **インライン埋め込み** すると `<script>` が実行される → XSS
 - SVG は常に `<img src>` または `<object>` で外部読み込みとして扱う
 
+**サーバーサイドでの URL 検査（SSRF 対策）**:
+
+同じ `new URL()` による正規化は、Next.js API ルート等でサーバーサイドが外部 URL へリクエストを行う場合にも必須。
+文字列の見た目だけで IP やホストを判定すると、`http://0x7f000001/` （16進IPv4）や `http://2130706433/` （10進IPv4）、`http://expected.com@attacker.com/` （userinfo偽装）等のバイパスが成立する。
+
+```typescript
+// サーバーサイド SSRF 対策: 必ず new URL() で正規化してから検査
+function validateExternalUrl(userInput: string): URL {
+  const u = new URL(userInput);  // malformed URL は例外になる
+  if (u.protocol !== 'https:') throw new Error('https: only');
+  if (u.username || u.password) throw new Error('userinfo prohibited');
+  // さらに DNS 解決・リダイレクト先検証・egress 制御と組み合わせる
+  return u;
+}
+```
+
 **出典**:
 - [OWASP: DOM-based XSS](https://owasp.org/www-community/attacks/DOM_Based_XSS) (OWASP)
 - [React Docs: javascript: URL warning](https://react.dev/reference/react-dom/components/common#applying-css-styles) (React 公式)
 - [MDN: URL constructor](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) (MDN Web Docs)
+- [SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb) (Qiita、サーバーサイド SSRF への同パターンの適用とバイパス例) ※2026-05-25に実際にfetch成功
+
+> "URL を検査するときは、文字列の見た目だけで判断しない方が安全です。"
+> ([SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb), セクション "なぜ文字列検査だけでは不十分か") ※2026-05-25に実際にfetch成功
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-05-25
 
 ---
 

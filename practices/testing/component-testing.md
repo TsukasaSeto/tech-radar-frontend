@@ -115,6 +115,8 @@ describe('SearchInput', () => {
 - 非同期処理完了前にアサートすると「まだ表示されていない要素」を探してテストが落ちる
 - `findBy*` は内部で `waitFor` を使い要素が現れるまで待機する
 - `waitFor` で複数のアサーションをまとめると再試行が最小限になる
+- `act()` は React の state 更新・副作用が完了するまで待機するヘルパーで、`waitFor` とは目的が異なる：`act()` は同期的な React 更新を確定させる用途、`waitFor` は非同期でアサーションが通るまでリトライする用途
+- `fetch` リクエストやタイマー等の非 React API は `act()` だけでは待機できない。これらは mock と組み合わせて使う
 
 **コード例**:
 ```tsx
@@ -155,12 +157,36 @@ describe('UserList', () => {
 });
 ```
 
+**コード例（act vs waitFor）**:
+```tsx
+// act(): React の state 更新を確定させる（カスタムフックのテストで多用）
+it('should increment counter', async () => {
+  const { result } = renderHook(() => useCounter());
+  await act(async () => {
+    result.current.increment();
+  });
+  expect(result.current.count).toBe(1);
+});
+
+// waitFor(): 非同期処理後にアサーションが通るまでリトライ
+it('should display fetched message', async () => {
+  render(<MessageDisplay />);
+  await waitFor(() => {
+    expect(screen.getByText('Hello World!')).toBeInTheDocument();
+  }, { timeout: 3000 });
+});
+
+// NG: fetch などの非 React API は act() だけでは待機できない
+// → MSW や vi.mock でネットワーク層をモックした上で waitFor() と組み合わせる
+```
+
 **出典**:
 - [Testing Library: Async Utilities](https://testing-library.com/docs/dom-testing-library/api-async) (Testing Library公式)
+- [act vs waitFor](https://dev.to/hmcodes/act-vs-waitfor-5713) (dev.to、`act()` と `waitFor()` の目的の違いと使い分けルール) ※2026-05-25に実際にfetch成功
 
 **バージョン**: @testing-library/react 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-25
 
 ---
 
