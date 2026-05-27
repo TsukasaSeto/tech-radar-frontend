@@ -53,6 +53,48 @@ fetch('/api/data', { credentials: 'include' });
 // または same-origin なら credentials 指定不要
 ```
 
+**NextAuth.js での典型的なアンチパターン**:
+```ts
+// Bad: session() コールバックでアクセストークンをクライアントに露出
+// auth.ts
+callbacks: {
+  async session({ session, token }) {
+    session.accessToken = token.accessToken; // useSession()・/api/auth/session・DevTools で可視
+    return session;
+  }
+}
+// → XSS で session.accessToken が盗まれる。/api/auth/session のレスポンスにも含まれ誰でも確認可能
+
+// Good: jwt() のみにアクセストークンを保持し、server-only 経由で BFF からのみ利用
+// auth.ts
+callbacks: {
+  async jwt({ token, account }) {
+    if (account) token.accessToken = account.access_token; // サーバー側のみ
+    return token;
+  },
+  async session({ session }) {
+    return session; // accessToken を含めない — クライアントに露出しない
+  }
+}
+```
+
+```ts
+// app/api/data/route.ts — BFF からのみトークンを使用（サーバー側限定）
+import { getToken } from 'next-auth/jwt';
+import 'server-only';
+
+export async function GET(req: Request) {
+  const token = await getToken({ req }); // サーバー側のみアクセス可能
+  const res = await fetch('https://api.example.com/data', {
+    headers: { Authorization: `Bearer ${token?.accessToken}` },
+  });
+  return Response.json(await res.json());
+}
+```
+
+ブラウザ↔BFF 間は Cookie、BFF↔外部 API 間は Bearer Token の2層設計にする。
+XSS をゼロにできない以上、「漏れたら終わり」のトークンを可読領域に置くこと自体が設計上の妥協である。
+
 **例外（localStorage が必要なケース）**:
 - WebSocket 接続: Cookie が送れないなら短命のトークンを localStorage に置く許容（リスク受容）
 - マイクロフロントエンドでサブドメインまたぐ SSO: Cookie の Domain 設定で対応するのが第一選択
@@ -71,10 +113,11 @@ fetch('/api/data', { credentials: 'include' });
 - [OWASP: HTML5 Security Cheat Sheet - Local Storage](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html#local-storage) (OWASP)
 - [Auth0: Token Storage](https://auth0.com/docs/secure/security-guidance/data-security/token-storage) (Auth0)
 - [Next.js Docs: cookies()](https://nextjs.org/docs/app/api-reference/functions/cookies) (Next.js 公式)
+- [セッションとJWTとCookieの歴史と変遷から紐解く、認証トークン管理設計](https://zenn.dev/khale/articles/web-session-jwt-cookie-history) (Zenn) ※2026-05-27に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-05-27
 
 ---
 
