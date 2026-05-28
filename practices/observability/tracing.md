@@ -96,6 +96,7 @@ const products = await traced(
 - トレース ID が連結することで、UI の操作から DB クエリまでを1つのトレースで表示できる
 - 本番障害の根本原因分析（RCA）に不可欠
 - OpenTelemetry の `fetch` 計装を使えば、手動での `traceparent` 付与は不要
+- **CORS 設定に伝播ヘッダーを必ず許可する**。`traceparent` だけでなく `sentry-trace`, `baggage`, `tracestate` も許可しないとフロントエンドとバックエンドのトレースが断絶する（Sentry SDK は `sentry-trace` / `baggage` ヘッダーを使用する）
 
 **コード例**:
 ```ts
@@ -147,13 +148,27 @@ export async function POST(request: Request) {
 }
 ```
 
+**CORS 設定例（伝播ヘッダーの許可）**:
+```ts
+// Next.js middleware または CORS 設定（next.config.ts）
+const corsHeaders = {
+  'Access-Control-Allow-Headers': [
+    'traceparent',   // W3C Trace Context
+    'tracestate',    // W3C Trace Context
+    'baggage',       // W3C Baggage
+    'sentry-trace',  // Sentry トレース伝播
+  ].join(', '),
+};
+```
+
 **出典**:
 - [W3C: Trace Context](https://www.w3.org/TR/trace-context/) (W3C)
 - [OpenTelemetry: Context Propagation](https://opentelemetry.io/docs/concepts/context-propagation/) (OpenTelemetry公式)
+- [You don't need to pick one: how Sentry and OpenTelemetry work together](https://blog.sentry.io/sentry-opentelemetry-work-together/) (Sentry Blog、CORS伝播ヘッダー設定) ※2026-05-28 fetch
 
 **バージョン**: @opentelemetry/api 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-28
 
 ---
 
