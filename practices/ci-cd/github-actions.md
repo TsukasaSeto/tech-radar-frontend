@@ -681,3 +681,55 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 **バージョン**: actions/checkout v4+
 **確信度**: 高
 **最終更新**: 2026-05-25
+
+---
+
+### 9. GitHub Actions のアクション参照はコミット SHA にピン留めし、バージョンコメントを必ず追記する
+
+フローティングタグ（`@v4` 等）はリポジトリオーナーによって書き換え可能なため、サプライチェーン攻撃のベクターになる。
+アクションを 40 文字の完全コミット SHA で参照し、可読性のためバージョンコメントを必ず隣接追記する。
+`pinact` などのツールで既存ワークフローを一括ピン留めし、CI で SHA とコメントの整合性を自動検証する。
+
+**根拠**:
+- フローティングタグは書き換え可能。コミット SHA は不変であり、サードパーティアクションの改ざんを検知できる
+- バージョンコメントがないと fork リポジトリの不審なコミットと区別できない
+- SmartRound の供給チェーン監査基盤でも「アクションのコミット SHA 参照」を必須チェック項目として実装している
+- `pinact v4` の `--verify-comment` オプションで CI 上の SHA とバージョンコメントの整合性を自動検証できる
+
+**コード例**:
+```yaml
+# Good: 40文字 SHA + バージョンコメント（書き換え不可・可読性維持）
+steps:
+  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+    with:
+      persist-credentials: false
+  - uses: actions/setup-node@49933ea5288caeca5a7e7b5f82c67a9e37f3c69b  # v4.4.0
+    with:
+      node-version: '22'
+
+# Bad: フローティングタグ（タグ書き換えリスク）
+  - uses: actions/checkout@v4
+```
+
+**pinact 設定例（pinact.yaml）**:
+```yaml
+# 最低 7 日以上経過したコミットのみ許可（直後のマルウェア混入を防ぐ）
+min_age:
+  value: 7
+# 特定の条件下でスキップするルール（組織内アクション等）
+rules:
+  - ignore: true
+    conditions:
+      - expr: ActionRepoOwner == "your-org"
+```
+
+**出典引用**:
+> "require version comments alongside commit SHAs to prevent ambiguity about fork commits"
+> ([pinact v4 — GitHub Actions のバージョンピン留めツール](https://zenn.dev/shunsuke_suzuki/articles/pinact-v4-guide)) ※2026-05-26に実際にfetch成功
+
+> "Actions pinned to commit SHAs (40-character hex) rather than version tags like @v1"
+> ([サプライチェーン攻撃対策の「実効」を継続検証するGitHub監査基盤を内製した話](https://zenn.dev/smartround_dev/articles/478c195bf914b6), セクション "GitHub Actions Security") ※2026-05-26に実際にfetch成功
+
+**バージョン**: GitHub Actions 全バージョン
+**確信度**: 高
+**最終更新**: 2026-05-26
