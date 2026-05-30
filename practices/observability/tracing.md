@@ -295,6 +295,54 @@ tracer.startActiveSpan('user.action', (span) => {
 
 ---
 
+### 5. Sentry と OpenTelemetry を排他的でなく補完的に統合する
+
+「Sentry か OpenTelemetry か」という二択ではなく、**OpenTelemetry が既に機能している箇所はそのまま維持し、
+Sentry SDK をアプリケーションコンテキスト（エラー詳細・ユーザー情報・リプレイ）が必要な箇所に追加する**設計にする。
+OTLP エクスポートは現時点でログ・トレースのみサポートし、メトリクスは未対応（制限事項として把握しておく）。
+
+**根拠**:
+- OpenTelemetry はサービス間トレース伝播（W3C `traceparent`）に強く、ベンダー中立性がある
+- Sentry SDK はスタックトレース・セッションリプレイ・パフォーマンス詳細など**アプリケーションコンテキスト**の収集に強い
+- 2者は OTLP 経由で共存でき、`traceparent` / `baggage` ヘッダーを通じてトレースを連結できる
+- どちらか一方に統一しようとすると、相手の強みを失う
+
+**コード例**:
+```ts
+// sentry.client.config.ts — Sentry 初期化（OTel との共存設定）
+import * as Sentry from '@sentry/nextjs';
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  integrations: [Sentry.browserTracingIntegration()],
+  // OTel の traceparent ヘッダーを Sentry トレースに接続
+  propagateTraceparent: true,
+  // 対象ドメインのみヘッダーを付与（設定しないと全外部リクエストに付き CORS エラーになる）
+  tracePropagationTargets: [/^http:\/\/localhost:8000\/api\//],
+});
+```
+
+```python
+# バックエンド CORS 設定 — Sentry/OTel ヘッダーを許可（FastAPI / Django 等）
+allow_headers = ["sentry-trace", "baggage", "traceparent"]
+```
+
+**現時点の制限事項**:
+- Sentry の OTLP エクスポートはログ・トレースのみサポート（メトリクスは未対応）
+- メトリクスは OTel SDK 経由（Prometheus / Datadog 等）で別途エクスポートが必要
+
+**アンチパターン**:
+- OTel を全廃して Sentry SDK のみにする → ベンダーロックインとサービス間トレース連携の喪失
+- `tracePropagationTargets` を未設定にする → Sentry がすべての外部リクエストにヘッダーを付け、CORS エラーが発生する
+
+**出典**:
+- [Sentry Blog: How Sentry and OpenTelemetry Work Together](https://blog.sentry.io/sentry-opentelemetry-work-together/) (Sentry公式ブログ) ※2026-05-27に実際にfetch成功
+
+**確信度**: 高
+**最終更新**: 2026-05-27
+
+---
+
 ## 関連プラクティス
 
 - [`observability/logging.md`](./logging.md) - リクエスト ID とログの相関
