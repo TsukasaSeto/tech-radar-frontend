@@ -524,11 +524,46 @@ jobs:
 | Bot PR (Renovate/Dependabot) | secrets 露出しないよう `pull_request` のまま |
 | ラベル起動（trusted PR のみ） | `pull_request_target` + `if: github.actor == 'dependabot[bot]'` で制限可 |
 
+**Dependabot PR に Claude Code Action で AI レビューを行う場合の安全パターン**:
+
+`pull_request_target` + `github.actor == 'dependabot[bot]'` 条件で、外部コードの任意実行なしに Dependabot PR へのコメント権限を取得できる。AI エージェントには `--allowedTools` で権限を最小化し、任意シェルコマンド実行を防ぐ。
+
+```yaml
+# .github/workflows/dependabot-review.yml
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions: {}   # デフォルトで全権限を拒否
+
+jobs:
+  review:
+    # Dependabot PR のみに限定
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          # ツールを最小限に制限 — 任意シェル実行を禁止
+          allowed_tools: "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob,WebFetch"
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+キーポイント:
+- `permissions: {}` をワークフロー冒頭に置き、すべての権限をデフォルト拒否にする
+- `github.actor == 'dependabot[bot]'` で Dependabot 以外のトリガーを排除
+- `--allowedTools` の `:` 区切りサブコマンド制限で、任意 `bash` 実行を防ぐ（`Bash` だけ許可すると全シェルコマンドが実行可能になる）
+
 **チェックリスト**:
 - [ ] `pull_request_target` を使っている場合、フォーク checkout をしていないか確認
 - [ ] secrets を使う処理は `workflow_run` トリガーで artifact 経由にしているか
 - [ ] Renovate/Dependabot の PR ワークフローは `pull_request` トリガーか
 - [ ] `GITHUB_TOKEN` のデフォルト権限をリポジトリ設定で `read-only` に制限しているか
+- [ ] ワークフローのトップレベルに `permissions: {}` を置き、ジョブ単位で必要な権限のみ付与しているか
+- [ ] AI エージェント（Claude Code Action 等）に `--allowedTools` でツールを制限しているか
 - [ ] サードパーティ Action は `uses: actions/checkout@v4` のようなタグではなくコミット SHA にピン留めしているか（タグは改ざん可能）
 - [ ] 長期間有効な PAT を secrets に保存していない場合、GitHub Apps または OIDC に置き換えているか
 
@@ -539,9 +574,17 @@ jobs:
 > "攻撃者が狙うのが『コード本体』ではなく『コードに触れる権限を持ったトークン』"
 > ([たった1つのトークンだけでコードベースが丸ごと盗まれる - Grafana流出に学ぶGitHub Actionsのサプライチェーン防御](https://zenn.dev/okamyuji/articles/grafana-github-actions-token-supply-chain), セクション "Grafana Labs インシデントの教訓") ※2026-05-20に実際にfetch成功
 
+> "シークレットへのアクセスと read/write トークンが使えます" / "複数のセーフガードでマルウェア注入を防ぐ"
+> ([DependabotのPRをClaude Codeに自動レビューさせるGitHub Actions](https://zenn.dev/mandenaren/articles/dependabot_auto_review), セクション "セキュリティ上の考慮") ※2026-05-29に実際にfetch成功
+
+**出典**:
+- [GitHub Actions Cache Poisoning攻撃を理解する](https://zenn.dev/singularity/articles/2026-05-13-github-actions-cache-poisoning) (Zenn) ※2026-05-16 fetch
+- [たった1つのトークンだけでコードベースが丸ごと盗まれる](https://zenn.dev/okamyuji/articles/grafana-github-actions-token-supply-chain) (Zenn) ※2026-05-20 fetch
+- [DependabotのPRをClaude Codeに自動レビューさせるGitHub Actions](https://zenn.dev/mandenaren/articles/dependabot_auto_review) (Zenn、`permissions: {}` デフォルト拒否と `--allowedTools` 制限の実装例) ※2026-05-29に実際にfetch成功
+
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-20
+**最終更新**: 2026-05-29
 
 ---
 

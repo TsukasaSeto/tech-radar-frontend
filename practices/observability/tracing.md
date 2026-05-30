@@ -12,6 +12,7 @@
 - OTel に準拠すれば、バックエンドのログサービスを切り替えてもコード変更が不要
 - Next.js は OpenTelemetry の組み込みサポートを持ち、`@vercel/otel` で最小設定で導入できる
 - W3C Trace Context ヘッダー（`traceparent`）で異なるサービス間のトレースを連結できる
+- **Sentry SDK（フロントエンド） + OTel（バックエンド）のハイブリッド構成も有効** — フロントエンドでは Session Replay・source maps・ブラウザエラー追跡に優れた Sentry SDK を使い、バックエンドは既存の OTel 計装を維持する。Sentry の OTLP エンドポイントに OTLP スパンを送信することで単一の分散トレースに統合できる
 
 **コード例**:
 ```bash
@@ -76,13 +77,22 @@ const products = await traced(
 );
 ```
 
+**Sentry + OTel ハイブリッド構成の留意点**:
+- フロントエンド: `@sentry/nextjs` で ブラウザエラー・Session Replay・source maps を取得
+- バックエンド: 既存 OTel の OTLP スパンを `https://o<id>.ingest.sentry.io/api/<proj>/otlp/` へ Export（SDK 置き換え不要）
+- CORS 許可: `sentry-trace`, `baggage`, `traceparent` ヘッダーを許可し、cross-origin トレース断絶を防ぐ
+
 **出典**:
 - [Next.js Docs: OpenTelemetry](https://nextjs.org/docs/app/building-your-application/optimizing/open-telemetry) (Next.js公式)
 - [OpenTelemetry JS](https://opentelemetry.io/docs/languages/js/) (OpenTelemetry公式)
+- [You don't need to pick one: how Sentry and OpenTelemetry work together](https://blog.sentry.io/sentry-opentelemetry-work-together/) (Sentry公式ブログ、フロントエンド Sentry SDK + バックエンド OTel ハイブリッド構成) ※2026-05-29に実際にfetch成功
 
-**バージョン**: Next.js 13.4+, @opentelemetry/api 1.0+
+> "Fewer moving parts and a short path from service to Sentry"
+> ([You don't need to pick one: how Sentry and OpenTelemetry work together](https://blog.sentry.io/sentry-opentelemetry-work-together/), セクション "Direct OTLP vs Collector forwarding") ※2026-05-29に実際にfetch成功
+
+**バージョン**: Next.js 13.4+, @opentelemetry/api 1.0+, @sentry/nextjs 8+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-29
 
 ---
 
