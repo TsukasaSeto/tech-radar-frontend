@@ -133,6 +133,11 @@ app/
 ### 4. Server Actions で楽観的 UI 更新を実装する
 
 `useOptimistic` でサーバーの応答を待たずにUIを先行更新して体感速度を向上させる。
+**`useOptimistic` は Server Components + Server Actions + `revalidatePath` の組み合わせを前提に設計されている**——Client Component で手動 `setState` と併用すると二重カウントが発生する。
+
+**根拠**:
+- `useOptimistic` の pending エントリはトランジション完了後に base state で上書きされるが、Client Component 内で同じリストに `setState` で手動 append すると、pending 分と確定分が二重になる
+- offline-first（IndexedDB 等）の設計を採用する場合は `useOptimistic` 自体が不要になるケースがある
 
 **コード例**:
 ```tsx
@@ -165,12 +170,21 @@ export function LikeButton({ post }: { post: Post }) {
 }
 ```
 
+**アンチパターン**:
+- `useOptimistic` と `useState` で同一リストを二重管理する（pending と確定の二重カウントが起きる）
+- Client Component 内で Server Action の応答後に `setState` で再 append する
+
+**出典引用**:
+> "useOptimistic was designed assuming Server Components + Server Actions + revalidatePath, not Client Components with manual setState."
+> ([useOptimistic を導入して、結局外した話 — 手動 state 管理との二重カウント](https://zenn.dev/ysaya_dev/articles/useoptimistic2), Zenn, セクション "外した理由") ※2026-05-31に実際にfetch成功
+
 **出典**:
 - [React Docs: useOptimistic](https://react.dev/reference/react/useOptimistic) (React公式)
+- [useOptimistic を導入して、結局外した話](https://zenn.dev/ysaya_dev/articles/useoptimistic2) (Zenn、Client Component との非互換パターン解説) ※2026-05-31 fetch
 
 **バージョン**: Next.js 14+, React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-31
 
 ---
 

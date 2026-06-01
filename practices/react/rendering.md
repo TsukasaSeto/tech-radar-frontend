@@ -88,10 +88,13 @@ const sortedItems = useMemo(
 ### 3. リストには必ず安定した `key` を使う
 
 `key` には配列インデックスではなく、データの一意のIDを使う。
+レンダリング中に `Math.random()` や `crypto.randomUUID()` を呼ぶと、再レンダリングのたびに key が変わりコンポーネントが毎回マウントし直される。
 
 **根拠**:
 - React は `key` を使ってコンポーネントのidentityを判断する
 - インデックスが key だと並び替え時に誤ったコンポーネントを再利用する
+- `Math.random()` を key に使うとレンダリングのたびに全リストアイテムが再マウントされ、入力状態・フォーカス・アニメーションがリセットされる
+- UUID を使う場合はオブジェクト生成時に一度だけ払い出し、render 関数内では生成しない
 
 **コード例**:
 ```tsx
@@ -100,18 +103,31 @@ const sortedItems = useMemo(
   <TodoItem key={index} item={item} />
 ))}
 
+// Bad: renderごとにランダム生成 → 毎回再マウント
+{items.map(item => (
+  <TodoItem key={Math.random()} item={item} />
+))}
+
 // Good: 安定したIDをkeyに使用
 {items.map(item => (
   <TodoItem key={item.id} item={item} />
 ))}
+
+// Good: UUIDを使う場合は生成をrender外で行う
+const newItem = { id: crypto.randomUUID(), name: '...' }; // 追加時に一度だけ
 ```
+
+**出典引用**:
+> "The key is React's way to identify list items; without it, React cannot properly match previous items to current ones when reordering occurs."
+> ([なんとなく付けていたReactのkeyの役割を理解する](https://zenn.dev/uraaaa24/articles/bfeb6d3dcb01ba), Zenn, セクション "key がないと何が起きるか") ※2026-05-31に実際にfetch成功
 
 **出典**:
 - [React Docs: Rendering Lists](https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key) (React公式)
+- [なんとなく付けていたReactのkeyの役割を理解する](https://zenn.dev/uraaaa24/articles/bfeb6d3dcb01ba) (Zenn、Math.random anti-pattern と UUID 生成タイミング) ※2026-05-31 fetch
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-05-31
 
 ---
 

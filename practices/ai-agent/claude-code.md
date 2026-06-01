@@ -864,6 +864,30 @@ cp "$CLAUDE_SESSION_FILE" "$DEST" 2>/dev/null || true
 exit 0
 ```
 
+**Layer 0 強化: gitleaks + PII 検出の統合**:
+```bash
+# core.hooksPath に設定する共有 pre-commit フック
+# gitleaks でシークレットをスキャンし、PII パターンも検出する
+#!/bin/bash
+set -e
+
+# 1. gitleaks でシークレット検出（API キー・トークン等）
+gitleaks git --pre-commit --staged --redact --verbose . || {
+  echo "ERROR: gitleaks がシークレットを検出しました。コミットをブロックします。" >&2
+  exit 1
+}
+
+# 2. PII パターン検出（メールアドレス・クラウドパス・UUID）
+PII_REGEX='[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}|/Users/[a-zA-Z0-9_\-]+/|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+if git diff --cached | grep -qE "$PII_REGEX"; then
+  echo "WARNING: PII パターンが検出されました。意図的なコミットか確認してください。" >&2
+  exit 1
+fi
+exit 0
+```
+- Claude Code/Codex ともに `core.hooksPath` を共通フックディレクトリに向けることで、ツール間で一貫したセキュリティゲートを維持できる
+- PR/Issue の本文へのリーク防止はツール固有のフック（`PostToolUse`）で別途カバーする必要がある
+
 **出典引用**:
 > "指示する」から「設計する」に変わった瞬間、世界が変わった。指示は消耗する。設計は蓄積する。"
 > ([Claude Code hooksを47本実装した話：AIへの自動指示を設計するという仕事](https://zenn.dev/thinkyou0714/articles/claude-code-hooks-47), セクション "設計への転換") ※2026-05-17に実際にfetch成功
@@ -871,9 +895,17 @@ exit 0
 > "生ログを手元に残すほうが情報損失が少ない"
 > ([Claude Code hookをauto-recapより先に試すべき3パターン](https://zenn.dev/joemike/articles/claude-code-hooks-auto-recap-alternative-2026), セクション "PreCompact フック") ※2026-05-17に実際にfetch成功
 
+> "gitleaks git --pre-commit --staged --redact --verbose ."
+> ([Claude Code と Codex の両方に、機密情報と個人情報を漏らさせない hook を作った話](https://zenn.dev/todayama_r/articles/multi-agent-secret-pii-guard-hooks), Zenn, セクション "Layer 1 共有フック") ※2026-05-31に実際にfetch成功
+
+**出典**:
+- [Claude Code hooksを47本実装した話](https://zenn.dev/thinkyou0714/articles/claude-code-hooks-47) (Zenn) ※2026-05-17 fetch
+- [Claude Code hookをauto-recapより先に試すべき3パターン](https://zenn.dev/joemike/articles/claude-code-hooks-auto-recap-alternative-2026) (Zenn) ※2026-05-17 fetch
+- [Claude Code と Codex の両方に、機密情報と個人情報を漏らさせない hook を作った話](https://zenn.dev/todayama_r/articles/multi-agent-secret-pii-guard-hooks) (Zenn、gitleaks + PII pattern + multi-agent 対応) ※2026-05-31 fetch
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-05-17
+**最終更新**: 2026-05-31
 
 ---
 
