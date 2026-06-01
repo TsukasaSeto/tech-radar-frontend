@@ -1291,3 +1291,126 @@ then execute backend changes with test fixes.
 **最終更新**: 2026-05-30
 
 ---
+
+### 19. Claude Code の Hooks でツール実行前後に自動処理を挟む
+
+Claude Code の Hooks は `PreToolUse` / `PostToolUse` / `Stop` の3種類があり、ツール実行の前後や作業完了時に任意のシェルコマンドを自動実行できる。
+「Claudeに毎回同じ指示をしている」「コード変更後に手動フォーマットしている」「作業完了に気づかない」問題をHooksで解消できる。
+まず Stop（完了通知）から始め、動作確認後に PostToolUse（軽量後処理）を追加するのが安全な導入順序。
+
+**根拠**:
+- Stop Hookで「処理が終わったら通知」を設定するだけで、PCを離れながらClaude Codeを動かせる
+- PostToolUse で `Edit|Write` をトリガーにすると、ファイル変更のたびに自動フォーマットが走る
+- 全Hook共通で「3秒以内に終わる処理のみ」が実用的な目安（重い処理は別ツールへ）
+- PostToolUse は毎回実行されるため、設定ミスが深刻化しやすい → Stop から始める段階的導入が重要
+
+**コード例**:
+```json
+// .claude/settings.json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "osascript -e 'display notification \"Claudeの作業が終わりました\" with title \"Claude Code\"'"
+        }]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [{
+          "type": "command",
+          "command": "black . --quiet 2>/dev/null || true"
+        }]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "echo '[PreToolUse] $(date): Bash実行' >> /tmp/claude-audit.log"
+        }]
+      }
+    ]
+  }
+}
+```
+
+**アンチパターン**:
+- Stop を設定する前に PostToolUse から始める（毎回実行のため設定ミスが即影響する）
+- 3秒以上かかるコマンド（テストスイート全体など）をHookに入れる
+- `git add -A && git commit` を PostToolUse に設定する（Claudeが書きかけのコードをcommitする）
+
+**出典引用**:
+> "まず設定すべきはStopフック一択。複数同時設定は「事故る」リスクがあり、PostToolUseは「毎回」走るため設定ミスが深刻化します"
+> ([Hooksで自動化する——「毎回同じ指示」から卒業する【中級Ch4】](https://zenn.dev/shun_producer/articles/1c63765ff7524a), セクション "段階的導入の重要性") ※2026-06-01に実際にfetch成功
+
+> "Claudeの処理が終わったら音で通知！Stop Hookで作業効率を劇的に改善する"
+> ([Claude Codeの処理が終わったら音で通知！Stop Hookで作業効率を劇的に改善する](https://zenn.dev/lumichy/articles/claude-code-stop-hook-sound-2026), タイトル) ※2026-06-01に実際にfetch成功
+
+**バージョン**: Claude Code（Hooks 機能）
+**確信度**: 中
+**最終更新**: 2026-06-01
+
+---
+
+### 20. Path-scoped rules（.claude/rules/）でコンテキスト汚染を防ぎ、CLAUDE.md を軽量な地図として維持する
+
+`.claude/rules/` に Markdown ファイルを置き、frontmatter の `paths:` で適用スコープを指定すると、「該当ファイルを触ったときだけルールが読み込まれる」Path-scoped rules として機能する。
+CLAUDE.md には「常に読ませる最低限の情報（地図・優先度・セキュリティ定義）」だけを置き、言語・レイヤー別のルールは `.claude/rules/` に委譲する。
+`docs/` は都度参照する資料（仕様・計画・調査記録）を保持するディレクトリとして分離し、自動ロードと手動参照を明確に区別する。
+
+**根拠**:
+- CLAUDE.md に全情報を詰め込むとコンテキスト圧迫につながる
+- `@import` で別ファイルを分割しても「起動時に展開されてトークン消費は減らない」
+- Path-scoped rules は該当ファイルへの操作時のみ読み込まれるため、不要なコンテキスト消費を防げる
+- 「読んでほしい場面でだけ読まれる」設計により、ルールの精度と効率が両立する
+
+**コード例**:
+```
+プロジェクトルート/
+├── CLAUDE.md                       ← 地図・優先順位・セキュリティ定義（200行以下）
+├── .claude/
+│   └── rules/
+│       ├── react.md                ← paths: ["**/*.{tsx,jsx}"]
+│       ├── python.md               ← paths: ["**/*.py"]
+│       ├── backend.md              ← paths: ["src/api/**"]
+│       └── frontend.md             ← paths: ["src/components/**"]
+└── docs/
+    ├── specs/    ← アプリ仕様（正）
+    ├── records/  ← 調査結論
+    ├── plans/    ← 実装計画
+    ├── tasks/    ← 詳細手順・チェックリスト
+    ├── done/     ← 完了案件
+    └── ref/      ← 参考資料
+```
+
+```yaml
+# .claude/rules/react.md の frontmatter 例
+---
+paths:
+  - "**/*.tsx"
+  - "**/*.jsx"
+---
+# React 固有のルール
+- Server/Client Components の境界を意識する
+- `use client` は葉ノードに限定する
+```
+
+**アンチパターン**:
+- CLAUDE.md に全言語・全レイヤーのルールを書いてファイルが肥大化する
+- `@import` でファイルを分割しただけでコンテキスト節約できたと誤解する
+- `paths:` を付けずに `.claude/rules/` に置く（常時読み込みになる）
+
+**出典引用**:
+> "事前に読ませるルールが多いと、それだけでコンテキストを圧迫してしまう"
+> ([ClaudeCodeの仕様駆動開発のdocsフォルダ構成のベストプラクティスの模索](https://zenn.dev/mukuil_blog/articles/1796a8b0f3cd48), セクション "従来アプローチの限界") ※2026-06-01に実際にfetch成功
+
+**バージョン**: Claude Code（Path-scoped rules 機能）
+**確信度**: 中
+**最終更新**: 2026-06-01
+
+---
