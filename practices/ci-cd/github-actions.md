@@ -289,17 +289,7 @@ jobs:
       - run: pnpm test
 ```
 
-**シャーディング（並列実行）**:
-```yaml
-# Playwright shard で並列化
-strategy:
-  matrix:
-    shard: [1, 2, 3, 4]
-steps:
-  - run: pnpm exec playwright test --shard=${{ matrix.shard }}/4
-```
-
-これで E2E テストを 4 並列実行し、実行時間を 1/4 にできる。
+テストスイートの並列分割（シャーディング）による高速化は Rule #10 を参照。
 
 **コスト計算（公式 GitHub Actions）**:
 - Linux runner: 1 倍
@@ -316,7 +306,6 @@ steps:
 **出典**:
 - [GitHub: Using a matrix](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs) (GitHub Docs)
 - [GitHub Actions: Billing](https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions) (GitHub Docs)
-- [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式)
 
 **バージョン**: GitHub Actions
 **確信度**: 高
@@ -841,6 +830,10 @@ jobs:
 **出典引用**:
 > "shardingで並列数を増やすことでPlaywrightのテスト実行時間を効果的に短縮できます"
 > ([CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques), Zenn) ※2026-06-04に実際にfetch成功
+
+**出典**:
+- [CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques) (Zenn) ※2026-06-04 fetch
+- [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式、テスト並列分割)
 
 **バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v3
 **確信度**: 中（コミュニティ記事、実績多数）
