@@ -20,10 +20,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
    └── PR を 1 日に最大 3 種類起票:               ローカル Claude Code セッション
        ├── practice-update/YYYY-MM-DD              ├── PR を pair 単位で取り込み
        ├── seen-json-update/YYYY-MM-DD             ├── feedback を読んで改善案を抽出
-       └── changelog-only/...-fetch-failed (稀)    └── .memo/prompt-v11.5.md を編集
+       └── changelog-only/...-fetch-failed (稀)    └── .memo/prompt-v12.md を編集
 ```
 
-- **プロンプト本体**は cloud env 側が正本。ローカルの `.memo/prompt-v11.5.md` は編集用コピーで、変更しても cloud には自動同期されない（claude.ai の Routine UI から手動反映が必要）
+- **プロンプト本体**は cloud env 側が正本。ローカルの `.memo/prompt-v12.md` は編集用コピーで、変更しても cloud には自動同期されない（claude.ai の Routine UI から手動反映が必要）
 - **環境定義**（許可ドメイン・setup script）も同様に `.memo/env-tech-radar-curator.md` が編集用コピー
 
 ## メインの作業フロー: routine-followup スキル
@@ -39,7 +39,7 @@ PR 取り込みの全手順は `routine-followup` スキルが持つ。トリガ
 - **`_seen.json` の URL 削除禁止**。過去に PR #40 で `utility-types.html` を誤削除した事故あり。`_seen.json` を含む PR は merge 前に**必ず削除検知 diff を取る**（merge base からの sort 比較。手順は SKILL.md Step 2-3）
 - **`git push --force` ではなく `--force-with-lease`** を使う（rebase 後の再 push が頻発するため）
 - **changelog の `Rule #N` 表記とプラクティス本体の番号を同期させる**。rebase で番号衝突したら両方振り直す（`practices/ai-agent/claude-code.md` が常連）
-- **`.memo/prompt-v11.5.md` の編集は cloud env プロンプトに自動反映されない** — 反映時は「claude.ai の Routine UI から手動編集が必要」と明示する
+- **`.memo/prompt-v12.md` の編集は cloud env プロンプトに自動反映されない** — 反映時は「claude.ai の Routine UI から手動編集が必要」と明示する
 - **重複ルールに気づいたら新規ではなく既存ルールへの追加根拠化** or discard
 
 ## プラクティスファイルの書式（追加・編集時）
