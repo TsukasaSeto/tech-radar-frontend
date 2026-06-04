@@ -1,6 +1,6 @@
 ---
 name: routine-followup
-description: Use when the user wants to review and merge open PRs produced by the daily Frontend Practice Curator Routine (branches matching `practice-update/YYYY-MM-DD` and `seen-json-update/YYYY-MM-DD`). Also handles reading merged `feedback/YYYY-MM-DD.md` files and proposing prompt improvements to `.memo/prompt-v11.5.md`. Specific to the tech-radar-frontend repository. Trigger phrases include "Routine の PR を見て", "今日の Curator マージして", "feedback 反映して".
+description: Use when the user wants to review and merge open PRs produced by the daily Frontend Practice Curator Routine (branches matching `practice-update/YYYY-MM-DD` and `seen-json-update/YYYY-MM-DD`). Also handles reading merged `feedback/YYYY-MM-DD.md` files and proposing prompt improvements to `.memo/prompt-v12.md`. Specific to the tech-radar-frontend repository. Trigger phrases include "Routine の PR を見て", "今日の Curator マージして", "feedback 反映して".
 ---
 
 # Routine PR Follow-up Workflow
@@ -15,7 +15,7 @@ description: Use when the user wants to review and merge open PRs produced by th
   - `changelog-only/YYYY-MM-DD-fetch-failed` : 全取得失敗時のみ（稀）
 - いずれのケースでも `feedback/YYYY-MM-DD.md` がいずれかの PR に必ず含まれる（v11.5 以降）
 - マージ順序: **古い日付ペアから順に**、ペア内では **Practice Update → _seen.json** の順
-- 主プロンプト: `.memo/prompt-v11.5.md`（実行時の正本は cloud env 側、こちらは編集用の手元コピー）
+- 主プロンプト: `.memo/prompt-v12.md`（実行時の正本は cloud env 側、こちらは編集用の手元コピー）
 - 環境定義: `.memo/env-tech-radar-curator.md`
 
 ## 全体フロー
@@ -27,7 +27,7 @@ description: Use when the user wants to review and merge open PRs produced by th
    b. Practice Update PR を rebase → ルール採番修正 → push → merge
    c. _seen.json PR を rebase → URL dedup + 削除検知 → push → merge
 3. マージ済 feedback ファイルを読んで改善提案を抽出
-4. 改善提案をユーザーに提示、承認分を .memo/prompt-v11.5.md に反映
+4. 改善提案をユーザーに提示、承認分を .memo/prompt-v12.md に反映
 ```
 
 ## Step 1: PR 一覧化と分類
@@ -208,14 +208,14 @@ git log --name-only --pretty=format: -<マージ件数> main | grep '^feedback/'
 
 ### [中] ...
 
-どれを .memo/prompt-v11.5.md に反映しますか？（番号で指定、複数可）
+どれを .memo/prompt-v12.md に反映しますか？（番号で指定、複数可）
 ```
 
-ユーザーが選んだものを `Edit` ツールで `.memo/prompt-v11.5.md` に反映する。1 件適用ごとに以下を実行:
+ユーザーが選んだものを `Edit` ツールで `.memo/prompt-v12.md` に反映する。1 件適用ごとに以下を実行:
 
 - 元のテキストブロックと変更後テキストブロックを示してから Edit
 - 過去版マーカー（`(v11.5 追加)` 等）は付けない（実行時のノイズになるため）
-- `.memo/prompt-v11.5.md` の編集は手元コピーへの編集であり、cloud env への反映はユーザー手動（その旨を最後に明示）
+- `.memo/prompt-v12.md` の編集は手元コピーへの編集であり、cloud env への反映はユーザー手動（その旨を最後に明示）
 
 ## 共通の Don't / Caveat
 
@@ -229,7 +229,7 @@ git log --name-only --pretty=format: -<マージ件数> main | grep '^feedback/'
 
 ## 参考: ファイル位置
 
-- 主プロンプト編集用コピー: `.memo/prompt-v11.5.md`
+- 主プロンプト編集用コピー: `.memo/prompt-v12.md`
 - env 編集用コピー: `.memo/env-tech-radar-curator.md`
 - 過去 changelog: `changelog/YYYY-MM-DD.md`
 - feedback（v11.5 デプロイ後）: `feedback/YYYY-MM-DD.md`
