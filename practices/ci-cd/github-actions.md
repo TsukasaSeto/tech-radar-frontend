@@ -776,3 +776,72 @@ rules:
 **バージョン**: GitHub Actions 全バージョン
 **確信度**: 高
 **最終更新**: 2026-05-26
+
+---
+
+### 10. テストシャーディングと paths-filter で CI を高速化する
+
+`strategy.matrix.shard` でテストスイートを並列分割し、`dorny/paths-filter` で変更ファイルに関連するジョブのみを条件実行することで、CI の総実行時間を大幅に短縮する。
+
+**根拠**:
+- シャーディングにより Playwright / Vitest のテスト実行時間を最大 1/N に短縮できる
+- `dorny/paths-filter` により無関係のジョブをスキップし、不要なコンピュートコストを削減できる
+- 両者の組み合わせで「速さ × 無駄のなさ」を両立し、開発者体験を維持しながらコストを抑えられる
+
+**テストシャーディング**:
+```yaml
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1/4, 2/4, 3/4, 4/4]  # 4並列で実行時間を 1/4 に
+    steps:
+      - uses: actions/checkout@v4
+      - run: npx playwright test --shard=${{ matrix.shard }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+          retention-days: 1
+```
+
+**paths-filter で条件実行**:
+```yaml
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'src/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+            backend:
+              - 'api/**'
+
+  test-frontend:
+    needs: changes
+    if: ${{ needs.changes.outputs.frontend == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pnpm test
+```
+
+**アンチパターン**:
+- すべての PR で全テストを直列実行する → モノレポやテストが増えるにつれ CI が 10 分超になる
+- シャード数を一度設定したまま放置する → テスト増加に伴い 1 シャードが肥大化するため、定期的に実行時間を計測して調整する
+
+**出典引用**:
+> "shardingで並列数を増やすことでPlaywrightのテスト実行時間を効果的に短縮できます"
+> ([CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques), Zenn) ※2026-06-04に実際にfetch成功
+
+**バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v3
+**確信度**: 中（コミュニティ記事、実績多数）
+**最終更新**: 2026-06-04

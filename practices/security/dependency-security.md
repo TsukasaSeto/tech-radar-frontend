@@ -583,9 +583,36 @@ jobs:
           subject-path: sbom.cyclonedx.json
 ```
 
+**OWASP Dependency-Track による集中管理**:
+
+複数プロジェクトの SBOM を一元集約して継続的に脆弱性監視するには、OWASP Dependency-Track が有効。
+CI で生成した SBOM を API 経由でアップロードし、新規 CVE 発見時に自動アラートを受け取れる。
+
+```yaml
+# SBOM を Dependency-Track に送信（sbom.yml に追加）
+- name: Upload SBOM to Dependency-Track
+  run: |
+    curl -X PUT \
+      -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
+      -H "Content-Type: multipart/form-data" \
+      -F "autoCreate=true" \
+      -F "projectName=${{ github.repository }}" \
+      -F "projectVersion=${{ github.ref_name }}" \
+      -F "bom=@sbom.cyclonedx.json" \
+      https://dtrack.your-org.internal/api/v1/bom
+```
+
+**ソース vs コンテナの二重スキャン**:
+- **ソーススキャン**: ビルド時に生成した SBOM（`npm install` 後の依存ツリー）→ 開発依存も含めた全体把握
+- **コンテナスキャン**: デプロイ成果物（Docker イメージ）の依存関係 → ランタイムの実際のリスクを把握
+両方を CI に組み込むことで、ビルド環境とランタイム環境の両面からリスクを継続監視できる。
+
 **出典引用**:
 > "まずは `main` へのマージ時とリリース時の2点から始めるのがおすすめです"
 > ([GitHub EnterpriseでDependabotとSBOMを使ったサプライチェーンセキュリティ入門](https://zenn.dev/itsdaichi/articles/a11a58c15919da), Zenn, セクション "SBOM生成タイミング") ※2026-05-31に実際にfetch成功
+
+> "OWASP Dependency-Trackを使うことで、複数プロジェクトのSBOMを集中管理し、CVE発見時に即時アラートを受け取れる"
+> ([SBOMで始めるサプライチェーンセキュリティ実践](https://zenn.dev/geniee/articles/751e4305d6b97a), Zenn) ※2026-06-04に実際にfetch成功
 
 **出典**:
 - [CycloneDX Specification](https://cyclonedx.org/specification/overview/) (OWASP)
@@ -594,10 +621,11 @@ jobs:
 - [Anchore: SBOM Action](https://github.com/anchore/sbom-action) (Anchore)
 - [Grype](https://github.com/anchore/grype) (Anchore)
 - [GitHub EnterpriseでDependabotとSBOMを使ったサプライチェーンセキュリティ入門](https://zenn.dev/itsdaichi/articles/a11a58c15919da) (Zenn、GHE-native SBOM + CycloneDX/VEX フォーマット比較) ※2026-05-31 fetch
+- [SBOMで始めるサプライチェーンセキュリティ実践](https://zenn.dev/geniee/articles/751e4305d6b97a) (Zenn、OWASP Dependency-Track 集中管理・ソース/コンテナ二重スキャン) ※2026-06-04 fetch
 
-**バージョン**: CycloneDX 1.5+, SPDX 2.3+
+**バージョン**: CycloneDX 1.5+, SPDX 2.3+, OWASP Dependency-Track 4.x+
 **確信度**: 高
-**最終更新**: 2026-05-31
+**最終更新**: 2026-06-04
 
 ---
 
