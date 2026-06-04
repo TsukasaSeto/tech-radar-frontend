@@ -301,7 +301,7 @@ pnpm install --ignore-scripts
 ignore-scripts=true
 ```
 
-**pnpm v9+ の onlyBuiltDependencies**:
+**pnpm v9+ の onlyBuiltDependencies と trustPolicy**:
 ```json
 // package.json
 {
@@ -314,6 +314,27 @@ ignore-scripts=true
   }
 }
 // → このリスト以外の postinstall は実行されない
+```
+
+```yaml
+# .npmrc（pnpm）: 信頼スコアが以前より下がったバージョンをインストール拒否
+trustPolicy: no-downgrade
+
+# パッケージマネージャを固定し、AIエージェントや新メンバーの誤った npm install を防ぐ
+# package.json の devEngines フィールド（Node.js 22.12+）
+```
+
+```json
+// package.json
+{
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": ">=11.0.0 <12.0.0",
+      "onFail": "error"
+    }
+  }
+}
 ```
 
 **lockfile-lint で URL を制限**:
@@ -390,6 +411,13 @@ updates:
 - [Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/) (Snyk Blog、preinstall hook攻撃 + Claude Code session hooks永続化の新手口) ※2026-05-20に実際にfetch成功
 - [Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/) (Snyk Blog、Composerタグリダイレクション攻撃・信頼境界の原則) ※2026-05-23に実際にfetch成功
 - [GitHub サプライチェーン攻撃が怖すぎるので Socket.dev を試してみた](https://zenn.dev/tomodo_ysys/articles/socket-github-supply-chain-attack) (Zenn、Socket 行動解析・GitHub App 実践導入) ※2026-05-24に実際にfetch成功
+- [【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3) (Qiita、trustPolicy / devEngines / AI エージェント制限の実践設定例) ※2026-06-01に実際にfetch成功
+
+> "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
+> ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
+
+> "人間の確認なしに install が走ると、対策をすり抜ける入口になります"
+> ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "AIエージェント制限") ※2026-06-01に実際にfetch成功
 
 > "A package's trust boundary is not the source repository in your browser tab. It is the chain of systems that decides which commit becomes a published artifact."
 > ([Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/), Snyk Blog, セクション "Incident Analysis") ※2026-05-23に実際にfetch成功
@@ -402,7 +430,7 @@ updates:
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
 **確信度**: 高
-**最終更新**: 2026-05-24
+**最終更新**: 2026-06-01
 
 #### 追加根拠 (2026-05-16)
 
