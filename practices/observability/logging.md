@@ -292,6 +292,61 @@ export async function POST(request: Request) {
 
 ---
 
+### 5. エラー・トレース・ログ・メトリクスを用途別に使い分け、`trace_id` で相関させる
+
+観測性の4シグナルはそれぞれ異なる問いに答える。目的に合わないシグナルを選ぶと、計装が無駄になるか重要な証拠を失う。
+
+| シグナル | 答える問い | サンプリング方針 |
+|----------|-----------|----------------|
+| **エラー** | 「今何が壊れたか？」— 例外を Issue として記録・重複排除 | 全件（デフォルト） |
+| **トレース** | 「リクエストは設計通り流れたか？時間はどこへ？」— 横断ウォーターフォール | 10〜20%でサンプリング可 |
+| **ログ** | 「この分岐点でシステム状態は何だったか？」— コードが選んだ理由を記録 | **サンプリング禁止**（全件保存） |
+| **メトリクス** | 「これはトレンドとして変化しているか？」— カウンタ/分布を集約 | `before_send_metric` でフィルタ |
+
+**根拠**:
+- ログは「1件の問題リクエスト」を探す唯一のシグナルであるため、サンプリングすると必要な証拠が消える
+- スパン属性は「1リクエストのコンテキスト」、メトリクスは「全リクエストの集計傾向」という役割を明確に分担する
+- 全シグナルに同一の `trace_id` を付与することで「メトリクスのスパイク → 影響トレース → 決定ログ」へドリルダウンできる
+- オートインストルメンテーションで全スパンの 80% が自動取得されるため、カスタムスパンは「意味のある分岐点」にのみ配置する
+
+**コード例**:
+```typescript
+// スパン属性: リクエスト固有のコンテキスト（1リクエストの文脈）
+span.setAttribute("ranking_version", rankingVersion);
+
+// ログ: 決定点での状態（全件保存・サンプリング禁止）
+logger.info("recommendations lookup", {
+  user_id: userId,
+  outcome,         // なぜこの結果になったかを記録
+});
+
+// メトリクス: 集計傾向（before_send_metric でフィルタ可能）
+Sentry.metrics.count("recommendations.served", 1, {
+  tags: { outcome },
+});
+```
+
+**アンチパターン**:
+- ログをサンプリングして「まれなリクエスト」の証拠を失う
+- スパン（リクエスト固有）とメトリクス（全体傾向）を混同して計装が重複する
+- 各シグナルに `trace_id` を付与せず、シグナル間のドリルダウンができない
+
+**出典**:
+- [Errors, traces, logs, metrics: when to reach for what](https://blog.sentry.io/errors-traces-logs-metrics-when-to-reach-for-what/) (Sentry Blog) ※2026-06-05に実際にfetch成功
+
+**出典引用**:
+> "Each signal exists because it answers a different question, and feeds a different workflow once it lands."
+> ([Errors, traces, logs, metrics: when to reach for what](https://blog.sentry.io/errors-traces-logs-metrics-when-to-reach-for-what/), セクション "The short answer") ※2026-06-05に実際にfetch成功
+
+> "Logs are the opposite: you keep all of them, because the entire point is to find the one rare request that went sideways."
+> ([同上], セクション "Logs answer what was true at a decision point") ※2026-06-05に実際にfetch成功
+
+**バージョン**: Sentry SDK 8+、OpenTelemetry（言語非依存）
+**確信度**: 高（Sentry 公式ブログ由来）
+**最終更新**: 2026-06-05
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/logging.md`](../architecture/logging.md) - ロギングの基本ルール（構造化ログ採用・console.log 排除・PII 保護）
