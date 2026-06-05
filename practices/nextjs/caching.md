@@ -296,7 +296,12 @@ revalidateTag("posts"); // 将来削除予定
 **根拠**:
 - `"use cache"` 配下で `cookies()` / `headers()` を直接呼ぶとビルドエラー（Cache Components 環境）
 - 動的値を引数として渡せばその値がキャッシュキーになるため、ユーザー横断で共有可能なものは横断で再利用され、ユーザーごとに分かれるものはユーザーごとに分かれる
-- 保存先は 4 種類（`"use cache"`（インメモリ・デフォルト ◎）、`"use cache: remote"`（Redis 等・複数プロセス間共有 ○）、`"use cache: <name>"`（cacheHandler で定義 ○）、`"use cache: private"`（クライアント・ユーザー固有 △））
+- 保存先は 4 種類とそのレイテンシ目安（ストレージ選択の基準）:
+  - `"use cache"`（インメモリ・デフォルト）: ヒット時 **1〜2 ms**。単一インスタンスのみ。再起動で消失
+  - `"use cache: remote"`（Redis 等）: ヒット時 **15〜40 ms**（ネットワーク分）。**複数インスタンス間で共有、再起動でも保持**。レートリミット API やマルチサーバー構成で必須
+  - `"use cache: <name>"`（cacheHandler で定義）: カスタムバックエンド
+  - `"use cache: private"`（クライアント）: ユーザー固有 △。最終手段
+- フルルート ISR は「HTML ごとキャッシュ」するため最大 **20〜35 倍**の応答速度改善になる（レンダリング自体がボトルネックの重いページで特に有効）
 - `"use cache: private"` を選ぶ前に、引数渡しパターンが本当に成立しないかを必ず検討する。多くのケースは引数渡しで足りる
 
 **コード例**:
@@ -347,13 +352,18 @@ async function MyDashboard() {
 - `"use cache"` 配下で `cookies()` / `headers()` を直接呼ぶ
 - ユーザーごとの個別キャッシュを作って Edge Function 呼び出し回数を爆発させる（横断で集約可能なものは引数の正規化で集約する）
 
+**出典引用**:
+> "the cache is **shared by every instance** and survives restarts"
+> ([The Caching Playbook: SSR, use cache, Redis and ISR in Next.js 16](https://medium.com/@rezamoosavi.kntu/the-caching-playbook-ssr-use-cache-redis-and-isr-in-next-js-16-30ea8d540d13), セクション "use cache: remote — shared between instances") ※2026-06-05に実際にfetch成功
+
 **出典**:
 - [Next.jsの考え方 / 3.5 ユーザー固有データの扱いと保存先の使い分け](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [The Caching Playbook: SSR, use cache, Redis and ISR in Next.js 16](https://medium.com/@rezamoosavi.kntu/the-caching-playbook-ssr-use-cache-redis-and-isr-in-next-js-16-30ea8d540d13) (Medium、`use cache: remote` vs インメモリのレイテンシ比較・ISR の効果測定) ※2026-06-05fetch
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（Cache Components 前提）
 **確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-05
 
 ---
