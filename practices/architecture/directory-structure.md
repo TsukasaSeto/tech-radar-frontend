@@ -2,26 +2,32 @@
 
 ## ルール
 
-### 1. 機能（feature）単位でコードをグループ化する
+### 1. 機能（feature）単位でコードをグループ化し、`app/` はルーティング専用に保つ
 
 グローバルな `components/`・`hooks/`・`utils/` の代わりに、
 機能ごとのディレクトリにコードをまとめる（Feature-Sliced Design）。
+`app/` ディレクトリはルーティング定義のみに絞り、ビジネスロジック・UI コンポーネントは `features/` または `_components/` に置く。
 
 **根拠**:
 - 機能に関連するすべてのファイルが一箇所にあり、削除・変更が容易
 - 機能をまたぐ依存関係が明確になり、意図しない結合を防ぐ
 - 機能のオーナーシップが明確になりチームのスケーラビリティが向上する
+- `app/page.tsx` に `'use client'` を置くとサブツリー全体がクライアント化する。`'use client'` はステートを持つリーフコンポーネントまで押し下げる
+- `lib/data.ts` 等のDALファイル先頭に `import 'server-only'` を置くと、クライアント側への誤インポートをビルド時に検出できる
+- `index.ts` パブリック API は「承認済みシンボルのみを export」とし、クライアントフックが Server Component のバレルに混入しないよう管理する
 
 **コード例**:
 ```
 src/
-├── app/                    # Next.js App Router
+├── app/                    # ルーティング定義のみ（ビジネスロジック禁止）
 │   ├── (auth)/             # 認証ルートグループ
 │   │   ├── login/
+│   │   │   ├── page.tsx   # データ取得 + 組み立てのみ
+│   │   │   └── _components/  # このルート専用コンポーネント
 │   │   └── register/
 │   ├── dashboard/
 │   └── api/
-├── features/               # 機能単位のコード
+├── features/               # 機能単位のコード（ドメインロジック）
 │   ├── auth/               # 認証機能
 │   │   ├── components/     # auth専用コンポーネント
 │   │   │   ├── LoginForm.tsx
@@ -39,6 +45,8 @@ src/
 │       ├── components/
 │       ├── hooks/
 │       └── index.ts
+├── lib/
+│   └── data.ts             # 先頭に import 'server-only' でDAL保護
 ├── shared/                 # 複数機能で共有
 │   ├── components/         # Button, Modal, Input など汎用UI
 │   ├── hooks/              # useDebounce, useLocalStorage など汎用フック
@@ -52,10 +60,11 @@ src/
 **出典**:
 - [Feature-Sliced Design](https://feature-sliced.design/) (Feature-Sliced Design公式)
 - [Next.js Docs: Project Structure](https://nextjs.org/docs/app/getting-started/project-structure) (Next.js公式)
+- [Next.jsのディレクトリ構成：2026年版ベストプラクティス](https://zenn.dev/yutabeee/articles/nextjs-directory-structure-2026) (Zenn、`app/` routing-only・`use client` leaf push・`server-only` DAL 保護) ※2026-06-06 fetch
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（`import 'server-only'` は Next.js 13.4+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-06
 
 ---
 
