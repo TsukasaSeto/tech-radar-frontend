@@ -68,6 +68,8 @@
 - Anthropic が定義した5パターン（Generator-Verifier / Orchestrator-Subagent / Agent Teams / Message Bus / Shared State）は実装の多様性を網羅する
 - パターンを明示することでチーム内の設計議論が抽象論から具体的選択に変わる
 - マルチエージェントはシングルエージェント比 3〜10倍のトークンコストがかかるため、安易な採用は避ける
+- 複数エージェント運用が不安定になる主因は「誰が最終判断者か」の曖昧さ。役割を明示しないと重複作業・矛盾回答が発生する
+- 実装前の並列レビュー段階（PM視点・技術視点・リスク視点）で先に潰す方が、全体の所要時間が短くなる場面が多い
 
 **5パターンの選択基準**:
 
@@ -111,13 +113,29 @@ async function generatorVerifierLoop(
 本番システムは複数パターンの組み合わせが主流。典型例: Orchestrator でワークフロー全体を制御しながら、
 協調が重いサブタスクには Shared State を使う（`whiteboard.md` 経由で各エージェントが知見を共有）。
 
+**役割三分化の実装例（Claude + 専門 CLI の分業）**:
+```
+Claude（司令塔）:  企画・判断・統合・最終レビュー
+Codex CLI:        大規模コード実装・リファクタリング
+Gemini CLI:       情報収集・リサーチ・ドキュメント調査
+```
+並列レビューパイプラインの例:
+1. 計画分解 → 2. 「PM視点・技術視点・リスク視点」3並列レビュー → 3. 実装 → 4. 最終検証
+
 **出典引用**:
 > "Production systems often combine patterns. A common hybrid uses orchestrator-subagent for overall workflow with shared state for collaboration-heavy subtasks."
 > ([Anthropicの5パターンでClaude Codeエージェント設計を分類する](https://zenn.dev/motowo/articles/anthropic-multi-agent-coordination-patterns-guide), セクション "Hybrid Patterns (Production Reality)") ※2026-05-08に実際にfetch成功
 
+> 「複数エージェント運用が不安定になる原因は『誰が最終判断者か』が曖昧になることです」
+> ([Claude Code Workflowで複数エージェントを並列実行する設計](https://zenn.dev/tadkud/articles/claude-code-workflow-pipeline-parallel-agents), セクション "設計の核心") ※2026-06-05に実際にfetch成功
+
+**出典**:
+- [Anthropicの5パターンでClaude Codeエージェント設計を分類する](https://zenn.dev/motowo/articles/anthropic-multi-agent-coordination-patterns-guide)
+- [Claude Code Workflowで複数エージェントを並列実行する設計](https://zenn.dev/tadkud/articles/claude-code-workflow-pipeline-parallel-agents) (役割三分化・並列レビューパイプライン実装例) ※2026-06-05fetch
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-05-08
+**最終更新**: 2026-06-05
 
 ---
 
