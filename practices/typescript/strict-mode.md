@@ -134,24 +134,48 @@ const config: Config = { theme: 'dark' }; // OK
 
 ---
 
-### 4. `paths` エイリアスと `baseUrl` でインポートを整理する
+### 4. `paths` エイリアスで絶対インポートを整理し、`baseUrl` の非推奨化（TS 6.0）に対応する
 
-相対パスの深いインポート（`../../../components/Button`）を避けるため、
-`paths` でエイリアスを設定する。
+相対パスの深いインポート（`../../../components/Button`）を避けるため、`paths` でエイリアスを設定する。
+`baseUrl` は TypeScript 6.0 で非推奨化され TypeScript 7.0 で削除予定のため、`paths` 内にディレクトリを直接埋め込む方式へ移行する。
 
 **根拠**:
 - ファイル移動時のインポートパス修正が不要になる
 - コードの可読性が向上する
 - `@/` プレフィックスは Next.js や Vite の標準的な慣習
+- `baseUrl` は「`paths` プレフィックス」と「未マッチ bare specifier のフォールバック探索」の2役を暗黙に担っており、意図しない解決（例: node_modules にないモジュールを `./src` から探す）が発生していた。TypeScript 6.0 でこの副作用ごと非推奨化された
 
 **コード例**:
 ```json
+// Good: baseUrl なし — paths に ./src を直接埋め込む（TS 6.0 推奨移行先）
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@lib/*": ["./src/lib/*"]
     }
+  }
+}
+```
+
+```json
+// Bad: baseUrl 使用（TS 6.0 非推奨 / TS 7.0 削除予定）
+{
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["app/*"]
+    }
+  }
+}
+```
+
+```json
+// 移行猶予（TS 7.0 より前の一時的な警告抑制）
+{
+  "compilerOptions": {
+    "baseUrl": "./src",
+    "ignoreDeprecations": "6.0"
   }
 }
 ```
@@ -164,12 +188,18 @@ import { Button } from '../../../components/ui/Button';
 import { Button } from '@/components/ui/Button';
 ```
 
+**注意**: `paths` はあくまで TypeScript の型解決にしか効かない。実行時モジュール解決（Vite / webpack / Jest 等）は各ツール側にも同等のエイリアス設定が必要。
+
 **出典**:
 - [TypeScript tsconfig reference: paths](https://www.typescriptlang.org/tsconfig#paths) (TypeScript公式)
+- [TypeScriptのbaseUrlが非推奨になった！経緯と移行方法](https://zenn.dev/seekseep/articles/typescript-baseurl-deprecated-migration) (Zenn、TS 6.0 非推奨化の背景・移行パターン3種) ※2026-06-09に実際にfetch成功
 
-**バージョン**: TypeScript 2.0+
+> "pathsにマッチしないすべての bare specifier の探索ルートとしても働く副作用が問題でした"
+> ([TypeScriptのbaseUrlが非推奨になった！経緯と移行方法](https://zenn.dev/seekseep/articles/typescript-baseurl-deprecated-migration), セクション "非推奨の理由") ※2026-06-09に実際にfetch成功
+
+**バージョン**: TypeScript 6.0+（非推奨）/ 7.0 で削除予定
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-09
 
 ---
 

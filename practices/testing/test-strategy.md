@@ -11,6 +11,7 @@
 - ユニットテストは高速・低コスト・安定しているため大量に書ける
 - E2E テストは遅く・高コスト・不安定なため重要フローのみに絞る
 - テストピラミッドの逆転（アイスクリームコーン型）はCI時間の肥大化を招く
+- **AI 時代のコスト変化**: Playwright MCP や Claude Code などのAIツールにより「仕様からテスト観点・雛形を生成する初期コスト」が大幅に下がった。E2E 作成コストが低下した環境では、「最小化すべき」という前提を常に正しいと考えず、適切な量を運用ガードレール（flaky 率・実行時間の定期棚卸し）とセットで増やす判断が合理的になる
 
 **コード例**:
 ```
@@ -58,10 +59,14 @@ export default defineConfig({
 **出典**:
 - [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (Martin Fowler)
 - [Write tests. Not too many. Mostly integration.](https://kentcdodds.com/blog/write-tests) (Kent C. Dodds)
+- [「E2Eテストは最小化すべき」の常識を疑う。AI前提のIT/ST/E2Eの役割分担と実運用フローの再設計](https://zenn.dev/sompojapan_dx/articles/7a2de003e25e5f) (Zenn、AI時代のE2Eコスト構造変化・IT/ST/E2E役割分担・運用ガードレール設計) ※2026-06-09に実際にfetch成功
+
+> "AIにより『仕様＋デザインからテスト観点・雛形を生成』でき、失敗原因の切り分けもAIが提示できるようになりました"
+> ([「E2Eテストは最小化すべき」の常識を疑う](https://zenn.dev/sompojapan_dx/articles/7a2de003e25e5f), セクション "基本的なコスト構造の変化") ※2026-06-09に実際にfetch成功
 
 **バージョン**: Vitest 1+, Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-09
 
 ---
 
