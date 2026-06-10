@@ -550,9 +550,12 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 > "AGENTS.mdはAIへの『お願い』ではない。AI現場の安全帯・朝礼・作業指示書だ"
 > ([AIエージェントに仕事を任せるために、AGENTS.md を「就業規則」にした](https://zenn.dev/takayoshioyama/articles/d386faa8bbb57f), セクション "AGENTS.md = AI現場の就業規則") ※2026-06-06に実際にfetch成功
 
+> "AGENTS.md の効果は長さより役割分離で決まる。巨大な総合マニュアルより、エントリポイント＋差分ドキュメントとして機能させる方が運用しやすい"
+> ([AGENTS.mdに何を書くべきか](https://zenn.dev/tadkud/articles/codex-agents-md-best-practices), セクション "構造パターン") ※2026-06-09に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-06-06
+**最終更新**: 2026-06-09
 
 ---
 
@@ -1350,15 +1353,20 @@ curl https://cli.sentry.dev/install -fsS | bash
 3. 修正案を **draft PR** として出力（自動マージは行わない）
 4. 人間がレビュー・承認後にマージ
 
+**バリエーション: バグ再現スキル（`repro`）**:
+SDK やライブラリのバグ修正フローでは、修正前に「最小再現環境の構築」をエージェントに任せることで診断効率が向上する。
+Sentry が社内実装している `repro` スキルの設計原則: issue URL からSDK言語・バージョンを解析し、言語ネイティブツール（uv / npm / bundle）で隔離ディレクトリ・ブランチを生成して再現手順を文書化する。複雑な再現に詰まった場合はエラーを説明して中断する（無理に進ませない）。
+
 **アンチパターン**:
 - エラーログへのアクセスなしにエージェントにバグ修正を依頼する（「何が壊れているか」を伝えずに依頼）
 - エージェントの修正 PR を自動マージする（人間レビューなしの本番デプロイ）
 
 **出典**:
 - [Sentry Blog: Agents Need Production Context](https://blog.sentry.io/agents-need-production-context/) (Sentry公式ブログ) ※2026-05-27に実際にfetch成功
+- [Works on my machine: how we use AI to reproduce reported bugs](https://blog.sentry.io/ai-bug-reproduction/) (Sentry公式ブログ、バグ再現スキルの設計) ※2026-06-08に実際にfetch成功
 
 **確信度**: 高
-**最終更新**: 2026-05-27
+**最終更新**: 2026-06-09
 
 ---
 
@@ -1419,5 +1427,66 @@ then execute backend changes with test fixes.
 **バージョン**: Claude Code（Dynamic Workflows 機能、2026年以降）
 **確信度**: 中
 **最終更新**: 2026-05-30
+
+---
+
+### 19. `dontAsk` モードとリスク分類で無人 Claude Code セッションを多層防御する
+
+無人自律実行（ヒューマン監視なし）では `ask`（パーミッション確認）が機能しないため、
+`--dangerously-skip-permissions` ではなく `dontAsk` モードに切り替えて「確認を自動拒否」に変換し、
+Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界を静的に設計する。
+
+**根拠**:
+- `dontAsk` は確認プロンプトを「拒否」に変換し、許可済みコマンドはそのまま通過させる。`skip-permissions` はすべての安全装置をバイパスするため運用NG
+- 脅威を6カテゴリに分けることで「どの層で止めるか」が明確になり、単一機構への依存を排除できる
+- エージェント設計の核心は「信頼」ではなく「どこまで自律して何を人間に戻すか」の境界設計
+- MCP は接続を広げるだけでなく「エージェントが見える世界を意図的に狭める」ツールとして活用できる
+- Hook (PreToolUse) だけに頼ると `env VAR=val cmd` 形式でラップされた際に文字列検査をすり抜けるため、サンドボックスと組み合わせる
+
+**6カテゴリのリスク分類と対策**:
+
+| カテゴリ | リスク | 対策層 |
+|---|---|---|
+| ① 不可逆な外部操作（外部API・DBへの書き込み） | 自動拒否 + サンドボックス分離 | Hook (deny) + Sandbox |
+| ② 機密情報漏洩（.env・認証トークン参照） | 読み取りを PreToolUse で拒否 | Hook (deny) |
+| ③ git 管理外データ破壊（DB・ログ・ファイルシステム） | バックアップ＋リカバリ機構 | Backup |
+| ④ git 履歴破壊（force push 等） | deny ルールで静的ブロック | Hook (deny) |
+| ⑤ ローカルの可逆変更 | 自動許可（git で復元可） | Auto-allow |
+| ⑥ 任意コード実行 | サンドボックス封じ込め | Sandbox |
+
+**コード例**:
+```json
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "deny": [
+      "Bash(curl *)",
+      "Bash(git push --force *)",
+      "Read(.env)",
+      "Read(.env.local)"
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false
+  }
+}
+```
+
+**アンチパターン**:
+- `--dangerously-skip-permissions` の使用（すべての安全装置を無効化するため運用NG。代わりに `dontAsk` モードを使う）
+- 単一の Hook (PreToolUse) のみに依存する（ラッパーコマンドによる迂回を防げない）
+
+**出典引用**:
+> "単一の機構で守れる前提を捨てるのがこの記事の背骨です"
+> ([Claude Code 無人自律編 — ask が無力な世界で機構で守る](https://zenn.dev/kojisumiyoshi/articles/ai-agent-unattended-autonomy), セクション "設計の前提") ※2026-06-09に実際にfetch成功
+
+> "AIエージェントに仕事を任せるとは、AIを信頼することではない。AIが間違えてもチームが回収できる形に仕事を切ることだ"
+> ([AIエージェント時代、開発者の仕事は「許可する環境」を設計することになる](https://zenn.dev/heftykoo/articles/1c647688784214)) ※2026-06-08に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン共通）
+**確信度**: 中
+**最終更新**: 2026-06-09
 
 ---
