@@ -113,6 +113,7 @@ export const env = createEnv({
 - `process.env.X` をクライアントコードで参照していると、`X` が `NEXT_PUBLIC_` でなくても `process.env.X` のリテラル文字列がバンドルに残ることがある（ビルド時置換されないため undefined になるが、コード自体は残る）
 - 開発者が `console.log(process.env.SECRET)` のような debug コードを残したまま push する事故
 - TruffleHog / gitleaks 等のツールがクライアントバンドルから secret パターンを発見できる
+- **betterleaks**（gitleaks 作者による後継ツール）は BPE トークナイザーで自然言語とシークレットを区別し、Shannon エントロピー方式（gitleaks）より高精度（CredData 評価: 98.6% vs 70.4%）
 - `secret_lint` や `actionlint` も合わせて運用
 
 **CI 設定例**:
@@ -145,6 +146,8 @@ jobs:
           extra_args: --only-verified
 
       # 3. リポジトリ全体にも secret scanner（コミット時の漏洩）
+      # betterleaks（gitleaks 作者による後継ツール）を使うと BPE トークナイザーで
+      # 検出率 98.6% vs gitleaks 70.4%（CredData 評価）を達成できる
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -194,10 +197,12 @@ process.exit(leaked ? 1 : 0);
 - [TruffleHog](https://github.com/trufflesecurity/trufflehog) (Truffle Security)
 - [Gitleaks](https://github.com/gitleaks/gitleaks)
 - [GitHub: secret scanning](https://docs.github.com/en/code-security/secret-scanning) (GitHub Docs)
+- [gitleaksの作者が一から作り直したbetterleaks](https://zenn.dev/shuymn/articles/600779b488d6d3) (Zenn shuymn、BPE トークナイザーによる検出率改善) ※2026-06-08に実際にfetch成功
+- [GitLeaksからBetterLeaksに乗り換えた話](https://zenn.dev/mohhh_ok/articles/gitleaks-to-betterleaks) (Zenn mohhh_ok、実際の移行事例) ※2026-06-09に実際にfetch成功
 
 **バージョン**: Next.js 13+, GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-09
 
 #### 追加根拠 (2026-05-16)
 
@@ -326,10 +331,10 @@ pre-commit:
 
 **出典引用**:
 > "AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます。"
-> ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本質") ※2026-05-17に実際にfetch成功
+> ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本責") ※2026-05-17に実際にfetch成功
 
 **事故った時の対応**:
-1. シークレットを **即座に rotate**（git history から消しても、すでに漏れた値は永久に流出している前提）
+1. シークレットを **即座に rotate**ﾈgit history から消しても、すでに漏れた値は永久に流出している前提）
 2. git history からの削除は `git filter-repo` または BFG Repo-Cleaner で
 3. force push 後、リポジトリの他クローンから再取り込みされないよう全員に伝達
 4. Vercel / Cloudflare 等の deployment 履歴のログも確認（過去のビルドログに残っていないか）
@@ -367,27 +372,27 @@ production 環境では Vercel Environment Variables / AWS Secrets Manager / Dop
 **根拠**:
 - 平文 `.env.production` は EC2 / VM に置くと OS レベルでアクセスできる人が広がる
 - Secret Manager は IAM で「誰が」「いつ」「何の値を」読んだかを監査ログ化できる
-- ローテーション（key rotation）が手動でなく自動化できる
-- Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供（OS の環境変数として渡される）
+- ローテーションﾈkey rotation）が手動でなく自動化できる
+- Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供ﾈOS の環境変数として渡される）
 
 **主要な選択肢**:
 
 | サービス | 強み | 弱み |
 |---|---|---|
 | **Vercel Environment Variables** | Vercel デプロイなら無料・自動連携 | Vercel ロックイン |
-| **AWS Secrets Manager** | IAM 完全統合、ローテーション自動化、KMS 暗号化 | コスト高め（$0.40/secret/month） |
-| **Doppler** | マルチクラウド、UI 良好、無料枠あり | サードパーティ依存 |
-| **Infisical** | OSS（self-host 可）、E2E 暗号化 | 運用負荷 |
+| **AWS Secrets Manager** | IAM 完全統合、ローテーション自動化、KMS 暗号化 | コスト高めﾈ0.40/secret/month） |
+| **Doppler** | マルチクラウド、UI 良好、無料枚あり | サードパーティ依存 |
+| **Infisical** | OSSﾈself-host 可）、E2E 暗号化 | 運用負荷 |
 | **HashiCorp Vault** | 大企業向け、機能豊富 | 学習コスト高、オーバースペック |
 
 **Vercel での例**:
 ```bash
 # CLI で環境変数を設定
 vercel env add DATABASE_URL production
-# プロンプトで値を入力（CLI 履歴に残らない）
+# プロンプトで値を入力ﾈCLI 履歴に残らない）
 
 # プロジェクト設定 → Environment Variables → Sensitive にチェック
-# → ダッシュボードでも値が見えなくなる（最低限の権限分離）
+# → ダッシュボードでも値が見えなくなるﾈ最低限の権限分離）
 
 # プレビュー・開発用にも個別に設定可能
 vercel env add DATABASE_URL preview
@@ -419,13 +424,13 @@ const dbUrl = await getSecret('prod/database/url');
 **ローテーション戦略**:
 - 自動ローテーション: AWS Secrets Manager は Lambda でローテーション関数を実行可能
 - 半自動: 月次で手動ローテーション + Slack 通知でリマインド
-- 即時: 漏洩疑いがあれば即時ローテーション + 全環境再デプロイ
+- 即時: 漏洩疊いがあれば即時ローテーション + 全環境再デプロイ
 
-**緊急時のチェックリスト**:
-- [ ] 漏洩した key を **即座に invalidate**（API 提供元のダッシュボードで revoke）
+**紧急時のチェックリスト**:
+- [ ] 漏洩した key を **即座に invalidate**ﾈAPI 提供元のダッシュボードで revoke）
 - [ ] 新しい key を Secret Manager に登録
-- [ ] 全環境を再デプロイ（ビルド時に環境変数が確定するため）
-- [ ] アクセスログを確認（漏洩した key で異常なアクセスがあったか）
+- [ ] 全環境を再デプロイﾈビルド時に環境変数が確定するため）
+- [ ] アクセスログを確認ﾈ漏洩した key で異常なアクセスがあったか）
 - [ ] post-mortem を書き、再発防止策を導入
 
 **出典**:
@@ -434,6 +439,6 @@ const dbUrl = await getSecret('prod/database/url');
 - [Doppler](https://www.doppler.com/) (Doppler)
 - [Infisical](https://infisical.com/) (Infisical)
 
-**バージョン**: パターン（実装依存）
+**バージョン**: パターンﾈ実装依存）
 **確信度**: 高
 **最終更新**: 2026-05-16
