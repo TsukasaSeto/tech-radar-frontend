@@ -301,6 +301,36 @@ pnpm install --ignore-scripts
 ignore-scripts=true
 ```
 
+**pnpm v11 のデフォルト有効セキュリティ設定（移行時の注意点）**:
+
+pnpm v11 では下記3設定がデフォルト ON になったため、`ERR_PNPM_IGNORED_BUILDS` 等のエラーで初めて存在を知るケースが多い。事前に把握して CI/Docker ワークフローを調整する。
+
+```bash
+# pnpm v11 で新たにデフォルト有効になった主要設定
+# 1. allowBuilds: ビルドスクリプト許可リスト制（実行 = 明示的に承認したものだけ）
+pnpm approve-builds   # 対話形式で許可パッケージを選択（CI では CI=true 設定が必要）
+
+# 2. blockExoticSubdeps: git URL / tarball 指定経由の推移依存をブロック
+# 3. verifyDepsBeforeRun: install 後に lockfile 整合確認
+
+# Lockfile integrity エラー（v11.4+ でハードエラーに変更）
+pnpm install --update-checksums  # 正当な更新時のみ使用
+```
+
+```dockerfile
+# Docker での pnpm v11 対応パターン
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+ENV CI=true   # approve-builds の対話プロンプトをスキップするために必須
+RUN pnpm install --frozen-lockfile
+```
+
+| 設定 | v10 デフォルト | v11 デフォルト |
+|---|---|---|
+| minimumReleaseAge | 無効 | 1440分（24h） |
+| blockExoticSubdeps | false | **true** |
+| verifyDepsBeforeRun | false | install |
+| allowBuilds | 全許可 | **要明示承認** |
+
 **pnpm v9+ の onlyBuiltDependencies と trustPolicy**:
 ```json
 // package.json
@@ -416,6 +446,7 @@ updates:
 - [Malicious node-ipc versions published to npm in suspected maintainer account compromise](https://snyk.io/blog/malicious-node-ipc-versions-published-npm/) (Snyk Blog、即時対応手順・IDE残存マルウェア) ※2026-05-16に実際にfetch成功
 - [Shai Hulud攻撃から身を守る：npm脆弱性と対策ガイド](https://zenn.dev/7788/articles/93ff5ceaba0576) (Zenn、侵害時の即時対応・パッケージ削除後のIDE残存) ※2026-05-16に実際にfetch成功
 - [Miasma supply chain attack: malicious code found in @redhat-cloud-services npm packages](https://snyk.io/blog/miasma-supply-chain-attack-malicious-code-redhat-cloud-services-npm-packages/) (Snyk Blog、OIDC token hijacking・SLSA provenance bypass・自己増殖ワーム) ※2026-06-02に実際にfetch成功
+- [pnpm v11 移行メモ — サプライチェーン攻撃対策を中心に](https://zenn.dev/esta_dev/articles/bc7a8dfef21d7b) (Zenn、v11 新デフォルト allowBuilds/blockExoticSubdeps/lockfile integrity・Docker CI 対応パターン) ※2026-06-09に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -448,9 +479,9 @@ snyk test
 - MFA 強制化だけでなく、メンテナの **期限切れメールドメイン**の再取得でも乗っ取り可能
 - OIDC token compromise は `--ignore-scripts` で防げない—CI パイプラインのクレデンシャル管理とアカウント即時 revoke が第一防衛線
 
-**バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 10.16+
+**バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-06-02
+**最終更新**: 2026-06-09
 
 ---
 
