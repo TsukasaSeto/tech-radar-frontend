@@ -254,6 +254,7 @@ UIの意図しない見た目の変化を自動的に検出する。
 - CSSの変更やサードパーティライブラリのアップデートによる意図しないUI崩れを自動検出できる
 - スクリーンショットは CI のアーティファクトとして保存でき、差分を視覚的にレビューできる
 - `maxDiffPixelRatio` で許容誤差を設定でき、アンチエイリアスや描画差異によるフレーキーを軽減できる
+- Sentry をすでに使用するチームは Sentry Snapshots（beta）で CI 統合型スクリーンショット差分を追加できる。PR ごとに差分を検出して自動ブロックし、メタデータをエージェントのコンテキストとして渡せる点が特徴
 
 **コード例**:
 ```ts
@@ -303,10 +304,11 @@ test.describe('視覚的回帰テスト', () => {
 **出典**:
 - [Playwright Docs: Visual Comparisons](https://playwright.dev/docs/test-snapshots) (Playwright公式)
 - [Playwright API: toHaveScreenshot](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1) (Playwright公式)
+- [Catch visual regressions with Snapshots, now in beta](https://blog.sentry.io/snapshots-available-beta/) (Sentry Blog、CI 統合型スクリーンショット差分 + エージェントコンテキスト対応) ※2026-06-11 fetch
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-06-11
 
 ---
 
