@@ -1584,7 +1584,7 @@ claude agents
 ```
 
 ```json
-// auto mode 有効化前に hard deny を設定する（.claude/settings.json）
+// プロジェクト設定（.claude/settings.json）: 決定論的な deny ルールを先に確定する
 {
   "permissions": {
     "deny": [
@@ -1592,9 +1592,20 @@ claude agents
       "Bash(rm -rf *)",
       "Write(.env*)"
     ]
-  },
+  }
+}
+```
+```json
+// ユーザー設定（~/.claude/settings.json）: auto mode はプロジェクト設定からは無視されるためここに置く
+// クラシファイアの無条件ブロックは hard_deny に自然文で記述する（enabled フラグは存在しない）
+{
   "autoMode": {
-    "enabled": true
+    "environment": ["信頼するインフラ・デプロイ先の説明"],
+    "hard_deny": [
+      "force-push to any branch",
+      "delete files outside the working tree",
+      "write to .env or other secret files"
+    ]
   }
 }
 ```
