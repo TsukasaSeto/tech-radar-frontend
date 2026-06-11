@@ -287,8 +287,11 @@ function ProductCard() {
 
 **根拠**:
 - Chrome 112+、Firefox 117+、Safari 17.2+ でサポート済み（2024年時点でモダンブラウザは全対応）
+- **2026年6月11日に Baseline Widely Available に到達**。すべてのモダンブラウザで「広く安定して使える」と公式認定されたため、プロジェクトへの採用判断が容易になった
 - Sass のネスト記法と互換性が高く、移行コストが低い
 - ビルドステップなしでネスト構造が使え、コンポーネントスタイルの見通しが良くなる
+- **`&` の省略ルール**: 子セレクタ（`>`/`+`/`~`）や型セレクタは `&` なしで書ける。修飾子（`.card.-subtle`）・擬似クラス（`:hover`）・属性セレクタは `&` が必須。文字列連結（`&__title` のような BEM 構文）は不可——フラットなクラス名（`.card__title`）で代替する
+- **Sass との共存**: ネスト目的のみで Sass を使っていた場合、ネイティブ CSS への移行で Sass のプリプロセスが不要になる。ただし Sass の変数・ミックスイン・ロジック機能は引き続き価値があるため「脱 Sass」は目的ではなく「脱ネスト用途 Sass」が正確
 
 **コード例**:
 ```css
@@ -330,10 +333,14 @@ function ProductCard() {
 **出典**:
 - [CSS Nesting - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_nesting) (MDN Web Docs)
 - [CSS Nesting Module Level 1](https://www.w3.org/TR/css-nesting-1/) (W3C Spec)
+- [CSS Nesting が Baseline WA に到達](https://zenn.dev/shunei/articles/css-nesting-baseline-scss) (Zenn、Baseline WA 到達・`&` 省略ルール・Sass 移行判断) ※2026-06-10 fetch
 
-**バージョン**: Chrome 112+, Firefox 117+, Safari 17.2+
+> "ネスト目的だけで Sass を使っていたなら、要らなくなりつつあります。ただし Sass の真価は、ネストではありません。"
+> ([CSS Nesting が Baseline WA に到達](https://zenn.dev/shunei/articles/css-nesting-baseline-scss), セクション "脱 Sass の判断基準") ※2026-06-10に実際にfetch成功
+
+**バージョン**: Chrome 112+, Firefox 117+, Safari 17.2+（Baseline Widely Available: 2026-06-11）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-06-10
 
 ---
 

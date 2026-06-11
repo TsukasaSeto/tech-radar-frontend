@@ -719,16 +719,19 @@ fi
 
 ---
 
-### 10. Git Worktree で Claude Code タスクを並列実行し、編集境界を厳格に固定する
+### 10. Git Worktree で Claude Code タスクを並列実行し、編集境界と隔離境界を厳格に固定する
 
 `git worktree add` で複数のワーキングツリーを作成し、独立した Claude Code セッションを並走させる。
 ただし worktree はブランチを分けても**共通ファイルの競合を自動解決しない**ため、各エージェントの編集対象を明示的に固定し、共通スタイルファイル等はシリアル処理に倒す前提で組む。
+また、`isolation: "worktree"` オプションは「デフォルトの作業ディレクトリを worktree 内に向ける補助機能」にすぎず、**完全な隔離ではない**。絶対パス指定や cwd 継承でサブエージェントが主リポジトリを操作できてしまうため、`PreToolUse` フックで物理的な境界を強制する。
 
 **根拠**:
 - 各 worktree は独立したブランチ・ファイルシステムを持つため、Claude Code セッション間で「同じワーキングディレクトリのファイル」を奪い合うことは起きない
 - 1つのリポジトリを複数クローンするより効率的（`.git` を共有するためディスク使用量が少ない）
 - レビュー中 PR へのコメント対応・バグ修正・機能開発を同時並行できる
 - 反面、`_common.scss` / `style.scss` / `main.scss` のような共通ファイルは別ブランチでも内容衝突する。エージェントごとに「このファイルのみ編集」と明示しないとコンフリクトが集中する
+- **`isolation: "worktree"` の限界**: 絶対パス経由でのアクセス・サブエージェント完了後の cwd 継承など、worktree 境界を踏み越える事象が現実に発生する（1週間13件のインシデント報告あり）。エージェントへの指示では隔離を担保できず、`PreToolUse` フックによる決定論的なブロックが必要
+- **3段階の判定ロジック**: ①リードエージェントは無条件通過、②サブエージェントの worktree ルートを `git rev-parse --show-toplevel` で検証、③サブエージェントの worktree が主リポジトリと一致する場合はブロック
 
 **コード例**:
 ```bash
@@ -759,7 +762,49 @@ vibe clean                  # 完了した worktree を削除
 2. **コンポーネント単位の閉じた構造を採用する**: Vue SFC や CSS Modules など「1 ファイルに HTML / JS / CSS が閉じている構造」はそもそもコンフリクトが起きにくい
 3. **並列作業をやめる**: 認知負荷（コンフリクト対応）を考えると「順次実行 + 人間は要件定義・交通整理に注力」の方が結果的に速いケースがある
 
+**worktree 境界を強制する PreToolUse フック（追加パターン）**:
+```json
+// .claude/settings.json — サブエージェント用 worktree ガード
+{
+  "hooks": {
+    "PreToolUse": [{
+      "matcher": "Bash|Edit|Write|NotebookEdit",
+      "hooks": [{
+        "type": "command",
+        "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/worktree-isolation-guard.sh"
+      }]
+    }]
+  }
+}
+```
+```bash
+#!/bin/bash
+# .claude/hooks/worktree-isolation-guard.sh
+# サブエージェントが主リポジトリを操作しようとした場合にブロック
+INPUT=$(cat)
+AGENT_TYPE=$(echo "$INPUT" | jq -r '.agent_type // "lead"')
+
+# リードエージェントは無条件通過
+[[ "$AGENT_TYPE" == "lead" ]] && exit 0
+
+# サブエージェント: 現在の worktree ルートを検証
+CURRENT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+MAIN_ROOT=$(git -C "$CLAUDE_PROJECT_DIR" rev-parse --show-toplevel 2>/dev/null)
+
+if [[ "$CURRENT_ROOT" == "$MAIN_ROOT" ]]; then
+  echo "ERROR: サブエージェントが主リポジトリへの操作を試みました。worktree 内で実行してください。" >&2
+  exit 2
+fi
+exit 0
+```
+
 **出典引用**:
+> "エージェントの隔離は、エージェントへの指示では担保できません。"
+> ([Claude Code の worktree 隔離は信用するな — 1週間13件のインシデントと PreToolUse フックによる解決](https://zenn.dev/penne_inc/articles/claude-code-worktree-isolation-bug), セクション "根本原因の特定") ※2026-06-10に実際にfetch成功
+
+> "プロンプトを補完するもの、と捉えるとちょうどいい。エージェントに任せたい領域はプロンプトで、確実に守りたい領域はフックで"
+> ([Claude Code の PreToolUse フックで AI エージェントの行動を物理的に制御する](https://zenn.dev/penne_inc/articles/claude-code-pretooluse-hook-permission-control), セクション "エージェントの善意を信じつつ、構造で守る") ※2026-06-10に実際にfetch成功
+
 > "4-6 parallel issues are the sweet spot to maintain readability"
 > ([Break It Small, Ship It Right – Skills for Coding Agents](https://developers.cyberagent.co.jp/blog/archives/63674/), セクション "Enable Parallel Development on Independent Issues") ※2026-05-14に実際にfetch成功
 
@@ -771,7 +816,7 @@ vibe clean                  # 完了した worktree を削除
 
 **バージョン**: Claude Code + Git（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-10
 
 ---
 
@@ -979,8 +1024,29 @@ exit 0
 ```
 - Claude Code/Codex ともに `core.hooksPath` を共通フックディレクトリに向けることで、ツール間で一貫したセキュリティゲートを維持できる
 - PR/Issue の本文へのリーク防止はツール固有のフック（`PostToolUse`）で別途カバーする必要がある
+- **Stop フック: leaked tool call 検出**：Claude が XML 形式のツール呼び出しを実行せずにプレーンテキストとして漏洩させるリグレッション（few-shot 自己汚染または1ターン複数呼び出し時の解析崩壊）を `Stop`/`SubagentStop` フックで検出し、再発行を促す。**漏洩マークアップを自分でパースして実行することは厳禁**（プロンプトインジェクション脆弱性になる）
+
+```python
+# Layer 2（補強）: leaked XML tool call 検出 Stop フック
+import sys, re, json
+
+data = json.load(sys.stdin)
+last_text = data.get("stop_reason", {}).get("response", {}).get("text", "")
+
+# XML 形式のツール呼び出しが残っている場合は再発行を要求
+if re.search(r'<(invoke|function_calls|tool_call)\b', last_text):
+    print(json.dumps({
+        "continue": True,
+        "reason": "leaked tool call detected: re-issue as structured tool calls"
+    }))
+else:
+    print(json.dumps({"continue": False}))
+```
 
 **出典引用**:
+> 「このサイレント変種が複数回発生しました。発生したのはいずれも1つの応答に複数のEdit呼び出しをまとめたときで、1編集ずつに分けるとそのまま通りました。」
+> ([Claude Codeでツール呼び出しが実行されず生テキストとして表示されるときの対策](https://zenn.dev/ultimatile/articles/claude-code-leaked-tool-call-stop-hook), セクション "サイレント変種") ※2026-06-10に実際にfetch成功
+
 > "指示する」から「設計する」に変わった瞬間、世界が変わった。指示は消耗する。設計は蓄積する。"
 > ([Claude Code hooksを47本実装した話：AIへの自動指示を設計するという仕事](https://zenn.dev/thinkyou0714/articles/claude-code-hooks-47), セクション "設計への転換") ※2026-05-17に実際にfetch成功
 
@@ -999,10 +1065,11 @@ exit 0
 - [Claudeが暴走してトークンを溶かした話 — 「同一行反復」を止める二段防御](https://zenn.dev/fixu/articles/claude-loop-guard-token-burn) (Zenn、Stop フック ループガード実装・failsafe 設計・THRESHOLD=8 スクリプト) ※2026-06-02に実際にfetch成功
 - [Claude Code を「補完」ではなく「運用」する — .claude/ 設計と実プロジェクトの落とし穴](https://zenn.dev/agotoh/articles/7cf2239a76b5e7) (Zenn、`PreToolUse` フックで禁止操作を物理ブロック・「口頭の禁止は破られる」) ※2026-06-03 fetch
 - [Claude Codeをチームで運用するためのCLAUDE.md設計とカスタムエージェント分担](https://zenn.dev/siromiya/articles/2026-06-03-01-claudecode-team-agents) (Zenn、MCP vs Hooks 判断フレームワーク) ※2026-06-03 fetch
+- [Claude Codeでツール呼び出しが実行されず生テキストとして表示されるときの対策](https://zenn.dev/ultimatile/articles/claude-code-leaked-tool-call-stop-hook) (Zenn、Stop フックによる leaked XML tool call 検出) ※2026-06-10 fetch
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-06-03
+**最終更新**: 2026-06-10
 
 ---
 
@@ -1488,5 +1555,75 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
 **最終更新**: 2026-06-09
+
+---
+
+### 20. `/goal`・agents ビュー・auto mode を段階的に組み合わせて並列作業の完了条件と承認を自動化する
+
+Claude Code の自律度を安全に高めるには「agents → /goal → hard deny → auto mode → Routines」の順で機能を積み上げる。
+`claude agents` で並列セッションの状態を一画面で把握し、`/goal` で**機械的に判定できる完了条件**を宣言し、auto mode で日常承認をクラシファイアに委ねる。
+auto mode は「全部手動承認」と `--dangerously-skip-permissions` の中間を埋める位置づけで、危険操作はブロックしつつルーティン承認を自動化できる。
+
+**根拠**:
+- `claude agents` コマンドはすべてのアクティブセッションを1ダッシュボードに表示し、「人間の承認待ち」になっているタスクを明示する。並列数を増やすほど「どのタスクがブロックされているか」の把握コストが上がるため、統合ビューが必須
+- `/goal` は完了条件を機械的に判定できる形で記述する（「`npm test` が exit 0」「指定ファイルに関数が存在する」など）。曖昧な完了条件（「きれいにリファクタして」）は auto mode 下で無限ループの原因になる
+- auto mode（2026年3月 research preview）はクラシファイアがルーティン承認を処理し、危険操作のみブロックする。有効化前に hard deny ルールを確定させる順序が重要
+- **導入推奨順序**: agents ビューで状況把握 → /goal で完了条件を定義 → hard deny で安全境界を確定 → auto mode を有効化 → Routines で完全自動化
+
+**コード例**:
+```bash
+# agents ビューで並列セッションを確認
+claude agents
+# → 「承認待ち: 3件」のようにブロック中タスクが表示される
+
+# /goal で機械的に判定できる完了条件を宣言
+/goal
+> npm test が exit 0 になること
+> src/auth/token.ts に refreshToken 関数が存在すること
+> git diff --staged でコード削除が 5 行以下であること
+```
+
+```json
+// プロジェクト設定（.claude/settings.json）: 決定論的な deny ルールを先に確定する
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(rm -rf *)",
+      "Write(.env*)"
+    ]
+  }
+}
+```
+```json
+// ユーザー設定（~/.claude/settings.json）: auto mode はプロジェクト設定からは無視されるためここに置く
+// クラシファイアの無条件ブロックは hard_deny に自然文で記述する（enabled フラグは存在しない）
+{
+  "autoMode": {
+    "environment": ["信頼するインフラ・デプロイ先の説明"],
+    "hard_deny": [
+      "force-push to any branch",
+      "delete files outside the working tree",
+      "write to .env or other secret files"
+    ]
+  }
+}
+```
+
+**アンチパターン**:
+- hard deny を設定せずに auto mode を有効化する（危険な操作も自動承認されるリスク）
+- `/goal` を「きれいにして」「最適化して」などの定性的な条件で書く（auto mode 下で無限ループの原因）
+- `--dangerously-skip-permissions` を auto mode の代替として使う（すべての安全装置をバイパスする）
+
+**出典引用**:
+> 「完了条件を**機械的に判定できる形**で書くのがコツです」
+> ([Claude Codeを「貼り付いて見守る」運用から卒業する：/goal・agentsビュー・auto mode実務導入ガイド](https://zenn.dev/yushiyamamoto/articles/claude-code-goal-agents-autonomy), セクション "2. /goal") ※2026-06-10に実際にfetch成功
+
+> 「全部手動承認」と `--dangerously-skip-permissions` の中間を埋める位置づけです
+> ([Claude Codeを「貼り付いて見守る」運用から卒業する：/goal・agentsビュー・auto mode実務導入ガイド](https://zenn.dev/yushiyamamoto/articles/claude-code-goal-agents-autonomy), セクション "3. auto mode") ※2026-06-10に実際にfetch成功
+
+**バージョン**: Claude Code（2026年3月以降）
+**確信度**: 中
+**最終更新**: 2026-06-10
 
 ---
