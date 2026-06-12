@@ -359,3 +359,54 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 **最終更新**: 2026-05-07
 
 ---
+
+### 9. `loading.tsx` があると `notFound()` の HTTP ステータスが 200 になるケースを把握する
+
+`loading.tsx` がルートに存在すると Next.js はページを Suspense でラップし、レスポンスヘッダー（HTTP 200）をストリーミング開始時点で送信する。
+その後のレンダリングフェーズで `notFound()` を呼んでも、**ヘッダーは既に送信済みのため HTTP 404 に変えられない**。
+SEO クローラー・BFF・監視ツールが HTTP ステータスコードに依存している場合に影響が出る。
+
+**根拠**:
+- ストリーミングレスポンスは HTTP ヘッダーを最初のチャンク送信時に確定させる仕様（HTTP/1.1 標準）
+- Next.js は `loading.tsx` の存在をもって Suspense 境界を自動挿入し、ローディング UI のチャンクを先行送信する
+- 親ディレクトリの `loading.tsx` も子ルートを Suspense でラップするため、直接配置した覚えがなくても発生する
+
+**コード例**:
+```tsx
+// Bad: loading.tsx が存在するセグメントで notFound() を呼ぶと 200 が返る
+// app/blog/[slug]/loading.tsx が存在する状態で:
+export default async function BlogPost({ params }: { params: { slug: string } }) {
+  const post = await fetchPost(params.slug);
+  if (!post) notFound(); // ← HTTP は 200 のまま（ヘッダー送信済み）
+  return <article>{post.content}</article>;
+}
+
+// Good パターン1: loading.tsx を削除し Suspense 境界を手動制御する
+// app/blog/[slug]/loading.tsx を削除 → notFound() が正しく 404 を返す
+
+// Good パターン2: middleware でリソース存在確認を先行させる
+// middleware.ts:
+export async function middleware(request: NextRequest) {
+  const slug = request.nextUrl.pathname.split('/').pop()!;
+  const exists = await checkPostExists(slug);
+  if (!exists) return NextResponse.rewrite(new URL('/not-found', request.url));
+  return NextResponse.next();
+}
+```
+
+**アンチパターン**:
+- `loading.tsx` を使いつつ同セグメントで `notFound()` によるエラーハンドリングをしている（HTTP ステータスが 200 になる）
+- 親ディレクトリに `loading.tsx` があることに気づかず `notFound()` が効いていると思い込む
+
+**出典引用**:
+> "ストリーミング時は200が返る。`redirect` や `notFound` によるエラーはストリームのコンテンツ内で伝達される。レスポンスヘッダーはすでに送信されているため、ステータスコードを更新することはできない。"
+> ([Next.js: loading.tsx があると notFound() が 200 を返すことがある（仕様です）](https://zenn.dev/av_shiritai/articles/66f9bcaa7df414), セクション "原因") ※2026-06-12に実際にfetch成功
+
+**出典**:
+- [Next.js: loading.tsx があると notFound() が 200 を返すことがある（仕様です）](https://zenn.dev/av_shiritai/articles/66f9bcaa7df414) (Zenn、streaming + notFound() の挙動解説と3つの対策) ※2026-06-12に実際にfetch成功
+
+**バージョン**: Next.js 13+ (App Router)
+**確信度**: 高
+**最終更新**: 2026-06-12
+
+---
