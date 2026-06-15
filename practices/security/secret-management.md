@@ -93,14 +93,38 @@ export const env = createEnv({
 // 使用: env.DATABASE_URL は server-only かつ型安全
 ```
 
+**公開値は「隠さず縛る」**:
+`NEXT_PUBLIC_GOOGLE_API_KEY` のようにブラウザが必要とするキーは `NEXT_PUBLIC_` でバンドルに焼き込まれることが前提。これを「サーバー側で隠す」設計にしても、SPA のビルド成果物に必ず入るため無意味。代わりに Google Console / Stripe Dashboard 等で「縛る（制限する）」:
+
+| 公開値の種類 | 保護方法 |
+|---|---|
+| Google Maps API Key | HTTP referrer 制限（自ドメインのみ許可） |
+| Stripe Publishable Key `pk_` | 用途スコープ制限（決済のみ） |
+| Analytics ID | クォータ・予算アラートで不正消費を検知 |
+
+```bash
+# 公開値の .env.local
+NEXT_PUBLIC_GOOGLE_MAPS_KEY=AIzaSy...   # Google Console で referrer 制限必須
+NEXT_PUBLIC_STRIPE_PK=pk_live_...       # スコープ制限済み
+
+# シークレット（絶対に NEXT_PUBLIC_ にしない）
+STRIPE_SK=sk_live_...
+DATABASE_URL=postgres://...
+```
+
 **出典**:
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables) (Next.js 公式)
 - [Next.js Docs: server-only](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#keeping-server-only-code-out-of-the-client-environment) (Next.js 公式)
 - [t3-oss/env-nextjs](https://env.t3.gg/) (t3-oss)
+- [「API キーは全部隠せ」は勘違いだった — ブラウザに出る"公開値"とサーバだけの"秘密"の見分け方](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571) (Qiita Kazy_engineer、「隠す」ではなく「縛る」の原則と公開値別の保護方法) ※2026-06-15 fetch
+
+**出典引用**:
+> "「隠す」のではなく「縛る」ことで守るからだ"
+> ([「API キーは全部隠せ」は勘違いだった](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571), セクション "公開値は縛る") ※2026-06-15に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-15
 
 ---
 
