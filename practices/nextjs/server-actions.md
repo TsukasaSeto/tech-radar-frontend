@@ -188,14 +188,15 @@ export function LikeButton({ post }: { post: Post }) {
 
 ---
 
-### 5. Server Actions を公開エンドポイントとして扱い、認証・認可・入力検証を必ず実装する
+### 5. Server Actions を公開エンドポイントとして扱い、requireAuth + Zod + RLS の3段防御を必ず実装する
 
-`'use server'` はコードをサーバーで実行するディレクティブであり、エンドポイントを非公開にしない。すべての Server Action でセッション確認・権限チェック・入力バリデーションを実装する。
+`'use server'` はコードをサーバーで実行するディレクティブであり、エンドポイントを非公開にしない。すべての Server Action で **① 認証（requireAuth）・② 入力検証（Zod）・③ DB の Row Level Security（RLS）** の3層防御を実装する。コード側の認証・バリデーションが万一突破されても DB レベルで不正アクセスをブロックする設計にする。
 
 **根拠**:
 - Server Action はビルド時にハッシュ化された POST エンドポイントとしてコンパイルされ、クライアントバンドルに含まれる
 - Next.js は CSRF 保護を提供するが、認証（セッション確認）・認可（権限チェック）・入力バリデーションは開発者の責任
 - UI で管理者ボタンを非表示にしても、エンドポイント自体はインターネット上の誰もが直接 POST 呼び出しできる
+- RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認証チェックが漏れても DB が行単位でアクセスを制御できる（多層防御の最終ライン）
 
 **コード例**:
 ```tsx
@@ -205,25 +206,18 @@ export async function deleteUser(userId: string) {
   await db.users.delete(userId);
 }
 
-// Good: 認証・認可・バリデーションを必ず実装
+// Good: requireAuth + Zod + RLS の3段防御
 'use server';
 import { z } from 'zod';
-import { getServerSession } from '@/lib/auth';
+import { requireAuth } from '@/lib/auth'; // 認証失敗時に unauthorized() をスロー
 
 const DeleteUserInput = z.object({ userId: z.string().uuid() });
 
-export async function deleteUser(raw: unknown) {
-  // 1. 認証チェック
-  const session = await getServerSession();
-  if (!session?.user) throw new Error('Unauthorized');
-
-  // 2. 認可チェック
-  if (session.user.role !== 'admin') throw new Error('Forbidden');
-
-  // 3. 入力バリデーション
-  const { userId } = DeleteUserInput.parse(raw);
-
-  await db.users.delete(userId);
+export async function deleteUser(raw: unknown): Promise<void> {
+  const user = await requireAuth();                   // ① 認証（未認証で即スロー）
+  const { userId } = DeleteUserInput.parse(raw);      // ② Zod バリデーション
+  // ③ DB の RLS ポリシーが user.id を参照し行レベルで制御
+  await db.users.delete({ where: { id: userId } });   // RLS が最終ガード
   revalidatePath('/users');
 }
 ```
@@ -232,9 +226,16 @@ export async function deleteUser(raw: unknown) {
 > "A Server Action is a public API route wearing a function signature. Anyone on the internet can invoke it."
 > (['use server' Doesn't Mean Private](https://medium.com/@raselhasan11/use-server-doesn-t-mean-private-fbffbca20ea3), セクション "The Hidden Security Risk") ※2026-05-14に実際にfetch成功
 
+> "Server Action は公開エンドポイント。requireAuth + Zod + RLS の3段防御を全 Action で"
+> ([「内部API Routeを作らない」Next.js 16 — DALとServer Actionsで読み書きを分離する](https://zenn.dev/shippai/articles/d3b146e960e3b2), セクション "Server Actions（src/app/actions/）") ※2026-06-14に実際にfetch成功
+
+**出典**:
+- ['use server' Doesn't Mean Private](https://medium.com/@raselhasan11/use-server-doesn-t-mean-private-fbffbca20ea3) (Medium) ※2026-05-14 fetch
+- [「内部API Routeを作らない」Next.js 16 — DALとServer Actionsで読み書きを分離する](https://zenn.dev/shippai/articles/d3b146e960e3b2) (Zenn、requireAuth + Zod + RLS 3段防御パターン・DAL との責務分離) ※2026-06-14 fetch
+
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-14
+**最終更新**: 2026-06-14
 
 ---
 
