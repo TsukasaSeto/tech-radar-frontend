@@ -316,3 +316,66 @@ export async function createPostAction(formData: FormData) {
 **バージョン**: Next.js 16+（未使用 Server Action の自動削除は v15+）
 **確信度**: 高（v16 公式相当の知見）
 **最終更新**: 2026-05-16
+
+---
+
+### 7. `redirect()` を try/catch 内で呼ばない — NEXT_REDIRECT は再 throw が必要
+
+`redirect()` は即座にリダイレクトを実行する関数ではなく、`NEXT_REDIRECT` digest を持つ特殊なエラーをスロー する関数。Next.js フレームワーク層がこのエラーをキャッチしてリダイレクトを実行するため、try/catch ブロックで握り潰すとリダイレクトが無効になる。
+
+> "redirect() は『その場でリダイレクトを実行する関数』ではなく、『特殊なエラーをスローする関数』"
+> ([Next.jsのredirect()をtry/catchの中で呼ぶと動かない理由と対処法3つ](https://zenn.dev/sato_frontend/articles/d9e458e947503d), セクション "redirect()が動かない理由") ※2026-06-16に実際にfetch成功
+
+**根拠**:
+- `redirect()` が throw するエラーオブジェクトは `error.digest === 'NEXT_REDIRECT'` で識別される
+- try/catch がこのエラーを捕捉して値を return すると、フレームワーク層にエラーが届かずリダイレクトが発火しない
+- Server Actions 内の try/catch でよく発生する落とし穴で、認証チェックの `redirect('/login')` が静かに無視される
+
+**コード例**:
+```typescript
+// Bad: try 内で呼ぶとリダイレクトが無効になる
+export async function updateAction(id: string, data: Input) {
+  try {
+    await requireAuth(); // ← redirect() がここでスローされても catch が握り潰す
+    const result = await updateService(id, data);
+    return { success: true, data: result };
+  } catch (error) {
+    return { success: false, error: 'INTERNAL_ERROR' }; // NEXT_REDIRECT も catch される
+  }
+}
+
+// Good: redirect() は try の外で呼ぶ
+export async function updateAction(id: string, data: Input) {
+  await requireAuth(); // ← try の外で呼ぶ。NEXT_REDIRECT が Next.js に届く
+
+  try {
+    const result = await updateService(id, data);
+    return { success: true, data: result };
+  } catch (error) {
+    return { success: false, error: 'INTERNAL_ERROR' };
+  }
+}
+
+// Alternative: catch 内で NEXT_REDIRECT を再 throw する
+export async function updateAction(id: string, data: Input) {
+  try {
+    await requireAuth();
+    const result = await updateService(id, data);
+    return { success: true, data: result };
+  } catch (error) {
+    if (error instanceof Error && error.message === 'NEXT_REDIRECT') throw error; // 再 throw
+    return { success: false, error: 'INTERNAL_ERROR' };
+  }
+}
+```
+
+**アンチパターン**:
+- 認証チェック (`requireAuth()`, `notFound()`) を try 内に置き、エラーハンドリングと混在させる
+- `isRedirectError()` ユーティリティ（`next/dist/client/components/redirect`）を使わずに手動で `NEXT_REDIRECT` を判定する
+
+**出典**:
+- [Next.jsのredirect()をtry/catchの中で呼ぶと動かない理由と対処法3つ](https://zenn.dev/sato_frontend/articles/d9e458e947503d) (Zenn sato_frontend) ※2026-06-16に実際にfetch成功
+
+**バージョン**: Next.js 13+ (App Router)
+**確信度**: 高
+**最終更新**: 2026-06-16
