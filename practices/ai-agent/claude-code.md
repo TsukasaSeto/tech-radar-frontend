@@ -1208,12 +1208,32 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 > "gitコマンド経由で同じ情報にアクセスできてしまう"
 > ([Claude Codeのdenyはgitコマンドをすり抜ける——hooksで塞いだ話](https://zenn.dev/makkyemmanuel/articles/zenn-article-claude-code-hooks-git-guard), セクション "問題の発見") ※2026-06-12に実際にfetch成功
 
+**在席/無人セッションでパーミッション戦略を切り替える（個人・開発者視点）**:
+
+組織の Managed Settings に加え、**セッションに人間がいるか否か**でパーミッション設定を切り替えると、安全網を外さずに確認疲れを減らせる:
+
+| 状況 | モード | 考え方 |
+|------|--------|--------|
+| 在席（開発者が見ている） | `auto`（デフォルト） | 機械的に安全な操作は自動承認。残った重要操作だけ人間が判断 |
+| 無人（Routine / CI / 夜間実行） | `dontAsk` + hooks で代替 | 確認プロンプトが出てもロボットは答えられない。Deny/Allow ルールで完全に機械化する |
+
+- 在席時: 「確認疲れ研究で93%のプロンプトは精査なく承認される」→ 問いかけ回数を減らし、残った問いを真剣に判断する
+- 無人時: エージェントが拒否されると自己修正ループに入れないため、`dontAsk` + PreToolUse hooks で安全境界を構造的に定義する
+- **両モード共通の基盤**: フック → Deny → Ask → Allow の評価順序、シークレット2層保護（`server-only` + 命名規約）、sandbox 封じ込め
+
+> "安全で許可済み → 走る / それ以外 → プロンプトでなく即 deny"
+> ([Claude Code の許可プロンプトを安全網を外さず減らす — 在席と無人で最適解は違う](https://zenn.dev/kojisumiyoshi/articles/claude-code-permission-prompts-guide), セクション "在席/無人の分岐") ※2026-06-16に実際にfetch成功
+
 **出典**:
+- [Claude Codeを社内に安全に導入する：システムエンジニアのためのセキュリティ実践ガイド](https://zenn.dev/nocodesolutions/articles/f71479fa5711fe) (Zenn、元出典) ※2026-05-18に実際にfetch成功
+- [AIエージェントは最小権限で使う｜Claude Code・MCP・VS Code拡張の安全な設定](https://zenn.dev/takibilab/articles/ai-agent-least-privilege) (Zenn、信頼できないソースの扱い) ※2026-05-18に実際にfetch成功
+- [.claudeignore の正しい書き方：Deny ルールとの使い分けと「読ませない」設計思想](https://zenn.dev/siromiya/articles/claudeignore-design-guide) (Zenn、.claudeignore 設計思想) ※2026-05-20に実際にfetch成功
 - [Claude Codeのdenyはgitコマンドをすり抜ける——hooksで塞いだ話](https://zenn.dev/makkyemmanuel/articles/zenn-article-claude-code-hooks-git-guard) (Zenn、deny の Read ツール限定問題と PreToolUse git-guard フックによる解決) ※2026-06-12 fetch
+- [Claude Code の許可プロンプトを安全網を外さず減らす — 在席と無人で最適解は違う](https://zenn.dev/kojisumiyoshi/articles/claude-code-permission-prompts-guide) (Zenn kojisumiyoshi、在席/無人モード切替) ※2026-06-16 fetch
 
 **バージョン**: Claude Code（全バージョン）、Enterprise Managed Settings 対応環境
 **確信度**: 中
-**最終更新**: 2026-06-12
+**最終更新**: 2026-06-16
 
 ---
 

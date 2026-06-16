@@ -112,11 +112,41 @@ STRIPE_SK=sk_live_...
 DATABASE_URL=postgres://...
 ```
 
+**LLM API キーには「三層ロック」を適用する（AI 統合時の強化パターン）**:
+
+Gemini・OpenAI 等の LLM API キーは漏洩したときのコスト爆発リスクが大きい。命名規約（`NEXT_PUBLIC_` なし）＋ビルド時強制（`import 'server-only'`）に加え、**Server Action を唯一のゲートウェイ**にすることで三層防御になる:
+
+```typescript
+// Layer 1: lib/ai/gemini.ts — server-only で build 時に import を封鎖
+import 'server-only';
+import { GoogleGenAI } from '@google/genai';
+
+export async function generateContent(prompt: string) {
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+  // ...
+}
+
+// Layer 2: app/actions/ai.ts — Server Action が唯一のゲートウェイ
+'use server';
+import { generateContent } from '@/lib/ai/gemini';
+
+export async function generateAction(input: string) {
+  if (!input.trim()) return { ok: false, error: 'Input required.' };
+  const result = await generateContent(input);
+  return { ok: true, result };
+}
+
+// Layer 3: クライアントは Server Action 経由のみ（直接 API キーにアクセス不可）
+```
+
+> "「気をつける」はスケールしませんが、「そもそもビルドが通らない」は絶対にスケールします。"
+> ([AIのAPIキーがクライアントに混入したら「ビルドエラー」にする — server-onlyで作る安全なGemini統合](https://zenn.dev/shippai/articles/f1625c5587629a), セクション "設計の要点") ※2026-06-16に実際にfetch成功
 **出典**:
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables) (Next.js 公式)
 - [Next.js Docs: server-only](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#keeping-server-only-code-out-of-the-client-environment) (Next.js 公式)
 - [t3-oss/env-nextjs](https://env.t3.gg/) (t3-oss)
 - [「API キーは全部隠せ」は勘違いだった — ブラウザに出る"公開値"とサーバだけの"秘密"の見分け方](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571) (Qiita Kazy_engineer、「隠す」ではなく「縛る」の原則と公開値別の保護方法) ※2026-06-15 fetch
+- [AIのAPIキーがクライアントに混入したら「ビルドエラー」にする — server-onlyで作る安全なGemini統合](https://zenn.dev/shippai/articles/f1625c5587629a) (Zenn shippai、LLM API キーの三層ロックパターン) ※2026-06-16 fetch
 
 **出典引用**:
 > "「隠す」のではなく「縛る」ことで守るからだ"
@@ -124,7 +154,7 @@ DATABASE_URL=postgres://...
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-06-15
+**最終更新**: 2026-06-16
 
 ---
 
