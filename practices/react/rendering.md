@@ -13,7 +13,7 @@
 **根拠**:
 - `memo` 自体も props の比較コストがかかる
 - 無駄な最適化はコードを複雑にする
-- React Compiler (React 19+) が自動的に最適化する方向に向かっている
+- React Compiler 1.0（2025年10月 stable リリース）が `memo` の最適化を自動化するため、Compiler 有効プロジェクトでは手動 `memo` はほぼ不要になった
 
 **コード例**:
 ```tsx
@@ -47,10 +47,11 @@ function Parent() {
 
 **出典**:
 - [React Docs: memo](https://react.dev/reference/react/memo) (React公式)
+- [React Compiler 1.0 Is Here — And It Changes Everything You Know About Performance](https://medium.com/@Ardhendu_init_/react-compiler-1-0-is-here-and-it-changes-everything-you-know-about-performance-59a0f5554a36) (Medium、Compiler 1.0 stable と自動 memo 化) ※2026-06-17 fetch
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-17
 
 ---
 
@@ -60,6 +61,7 @@ function Parent() {
 - メモ化は「記憶する」コストがかかる（メモリ使用量増加）
 - 依存配列の比較もコストがかかる
 - プリミティブ値の計算ならメモ化は不要
+- React Compiler 1.0（2025年10月 stable）有効環境では `useMemo` / `useCallback` の手動記述はほぼ不要。「新しいコードはコンパイラに任せ、詳細な制御が必要な場合にのみ使用することが推奨」（Qiita, 2026-06-17）
 
 **コード例**:
 ```tsx
@@ -78,10 +80,11 @@ const sortedItems = useMemo(
 
 **出典**:
 - [React Docs: useMemo](https://react.dev/reference/react/useMemo) (React公式)
+- [【React Compiler v1.0】useMemo・useCallback はもう書かなくていい？導入手順と実測結果まで解説](https://qiita.com/yuuue/items/c8a395c17ea3ccd995ec) (Qiita、Compiler で手動 memo 化が不要になる根拠と実測) ※2026-06-17 fetch
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-17
 
 ---
 
@@ -276,7 +279,8 @@ const HeavyResultList = memo(function HeavyResultList({ query }: { query: string
 7,000 ファイル超の大規模プロジェクトへ React Compiler を全ファイル一括適用するのではなく、`compilationMode: "annotation"` でファイル単位のオプトインに限定し、Oxlint のデュアルルールと組み合わせてリスクを抑えながら段階的に導入する。
 
 **根拠**:
-- React Compiler の公式ドキュメントでは `compilationMode: "annotation"` が段階的導入に推奨されている
+- React Compiler 1.0 は 2025年10月に stable リリース。実測で**総レンダリング時間 17.2%、平均レンダリング時間 17.2%、最大 12.4%** の削減（既存の手動 memo と共存した状態でも改善）
+- 新規プロジェクトでは `next.config.ts` に `reactCompiler: true` のワンライン設定のみで十分。大規模レガシーコードベースでは `compilationMode: "annotation"` での段階導入が安全
 - 全ファイル一括（`compilationMode: "all"`）は TanStack Table v8・react-hook-form 等の非互換ライブラリが混在する場合に高リスク
 - Oxlint の `react-hooks-js/*` ルール（eslint-plugin-react-hooks v7 経由）でコンパイラ非互換パターンをデプロイ前に静的検出できる
 - `"use no memo";` ディレクティブで非互換ファイルを明示的にオプトアウトでき、互換性の問題範囲を局所化できる
@@ -322,8 +326,14 @@ import { useForm } from 'react-hook-form'; // Compiler 非互換
 > "全ファイル一括は早々に諦め、**`compilationMode: "annotation"`**（annotationモード）でファイル単位のオプトインに切り替えることにしました。"
 > ([React CompilerをannotationモードとOxlintで漸進的に導入する](https://zenn.dev/dress_code/articles/92dfb9206f50f3), セクション "annotationモードの採用") ※2026-05-20に実際にfetch成功
 
-**バージョン**: React 19+, React Compiler (beta), Oxlint 0.x
-**確信度**: 中
-**最終更新**: 2026-05-20
+> "新しいコードにおいてはメモ化をコンパイラに任せ、詳細な制御が必要な場合にのみ使用することが推奨されています"
+> ([【React Compiler v1.0】useMemo・useCallback はもう書かなくていい？導入手順と実測結果まで解説](https://qiita.com/yuuue/items/c8a395c17ea3ccd995ec), セクション "これからの useMemo・useCallback との付き合い方") ※2026-06-17に実際にfetch成功
+
+**追加出典**:
+- [React Compiler 1.0 Is Here — And It Changes Everything You Know About Performance](https://medium.com/@Ardhendu_init_/react-compiler-1-0-is-here-and-it-changes-everything-you-know-about-performance-59a0f5554a36) (Medium、v1.0 stable と新規プロジェクト setup) ※2026-06-17 fetch
+
+**バージョン**: React 19+, React Compiler 1.0 (stable), Oxlint 0.x
+**確信度**: 高
+**最終更新**: 2026-06-17
 
 ---
