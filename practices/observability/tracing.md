@@ -106,6 +106,8 @@ const products = await traced(
 - トレース ID が連結することで、UI の操作から DB クエリまでを1つのトレースで表示できる
 - 本番障害の根本原因分析（RCA）に不可欠
 - OpenTelemetry の `fetch` 計装を使えば、手動での `traceparent` 付与は不要
+- **Next.js の Edge/Node.js 二重ランタイムでは自動伝播が壊れる**: Middleware（Edge Runtime）→ Server Component（Node.js Runtime）の境界でデフォルト設定のままだとトレースが無音で分断される。`CompositePropagator` に `W3CTraceContextPropagator` + `W3CBaggagePropagator` を明示設定し、Middleware で `traceparent`・`tracestate` ヘッダーを手動フォワードする必要がある
+- **Server Actions はトレースコンテキストを自動伝播しない**: OTel の観点では Server Action は新規 HTTP リクエストとして扱われるため、スパンを手動で作成してコンテキストを継続させる必要がある
 
 **コード例**:
 ```ts
@@ -157,13 +159,51 @@ export async function POST(request: Request) {
 }
 ```
 
+**Next.js Edge/Node.js 境界の設定例**:
+```ts
+// instrumentation.ts — Edge/Node.js 境界を超えるための明示的 Propagator 設定
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { CompositePropagator, W3CTraceContextPropagator, W3CBaggagePropagator } from '@opentelemetry/core';
+
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const sdk = new NodeSDK({
+      textMapPropagator: new CompositePropagator({
+        propagators: [
+          new W3CTraceContextPropagator(),
+          new W3CBaggagePropagator(),
+        ],
+      }),
+    });
+    sdk.start();
+  }
+}
+```
+
+```ts
+// middleware.ts — Edge Runtime では NodeSDK が使えないため手動フォワード
+export function middleware(request: NextRequest) {
+  const traceparent = request.headers.get('traceparent');
+  const tracestate = request.headers.get('tracestate');
+  const requestHeaders = new Headers(request.headers);
+  if (traceparent) requestHeaders.set('traceparent', traceparent);
+  if (tracestate) requestHeaders.set('tracestate', tracestate);
+  return NextResponse.next({ request: { headers: requestHeaders } });
+}
+```
+
+**出典引用**:
+> "OpenTelemetry in Next.js works, but it requires explicit propagator configuration. The default silently breaks the trace at the edge/node boundary."
+> ([OpenTelemetry in Next.js: traces that survive the edge/server boundary without losing context](https://dev.to/jtorchia/opentelemetry-in-nextjs-traces-that-survive-the-edgeserver-boundary-without-losing-context-3d09), セクション "The Core Problem") ※2026-06-17に実際にfetch成功
+
 **出典**:
 - [W3C: Trace Context](https://www.w3.org/TR/trace-context/) (W3C)
 - [OpenTelemetry: Context Propagation](https://opentelemetry.io/docs/concepts/context-propagation/) (OpenTelemetry公式)
+- [OpenTelemetry in Next.js: traces that survive the edge/server boundary without losing context](https://dev.to/jtorchia/opentelemetry-in-nextjs-traces-that-survive-the-edgeserver-boundary-without-losing-context-3d09) (dev.to、Next.js Edge/Node.js ランタイム境界のトレース設定) ※2026-06-17 fetch
 
-**バージョン**: @opentelemetry/api 1.0+
+**バージョン**: @opentelemetry/api 1.0+, Next.js 15+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-17
 
 ---
 
