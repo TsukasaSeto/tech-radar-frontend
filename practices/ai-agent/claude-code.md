@@ -2004,3 +2004,116 @@ pnpm lint
 **最終更新**: 2026-06-13
 
 ---
+
+### 25. AI エージェント実行は「外部送信・公開クラス」を承認ゲートで構造的に分離する
+
+エージェントの実行結果を `autoExecuted` / `requiresApproval` / `skipped` の3分類に構造化し、
+「外部への送信・公開・デプロイ」をコードレベルで承認なしに実行できない設計にする。
+プロンプト指示や設定フラグではなく、**権限そのものを持たない設計**が承認ゲートの核心。
+
+**根拠**:
+- 「プロンプトが変わると承認ロジックも変わってしまう。承認はコントローラ層（外部）に書く」— プロンプトの禁止は破られる
+- 「コードレベルで『この操作は承認なしに実行できない』という制約を持たせるのが、承認ゲートの役割」
+- GitHub Actions × Claude の半自動 PR レビューも同パターン: 下書き生成（書き込みなし）→ ラベル承認 → 公開。「対象リポジトリに書き込まない」段階を設けることで誤指摘の流出を防ぐ
+- ソフトウェア設計原則: エージェントに権限を与えないことが最も確実な制御手段（最小権限原則の適用）
+
+**コード例（承認ゲートの型設計と実行フロー）**:
+```typescript
+type AgentOutput = {
+  autoExecuted: ExecutedAction[];
+  requiresApproval: ApprovalItem[];
+  skipped: SkippedAction[];
+};
+
+type ApprovalItem = {
+  id: string;
+  action: "send_email" | "post_sns" | "deploy" | "publish";
+  summary: string;
+  draftPath?: string;
+  approved?: boolean;
+};
+
+// 事前許可リスト（空 = 全件要承認）で承認不要な操作のみ自動実行
+async function runWithApprovalGate(
+  agent: Agent,
+  task: TaskSpec,
+  autoApprove: string[] = [],
+): Promise<AgentOutput> {
+  const output = await agent.run(task);
+  const approved: ApprovalItem[] = [];
+  const blocked: ApprovalItem[] = [];
+
+  for (const item of output.requiresApproval) {
+    if (autoApprove.includes(item.id) || autoApprove.includes(item.action)) {
+      approved.push({ ...item, approved: true });
+    } else {
+      blocked.push({ ...item, approved: false }); // 人間に返す
+    }
+  }
+  for (const item of approved) {
+    await executeApprovedAction(item);
+  }
+  return { ...output, requiresApproval: blocked };
+}
+```
+
+**CI/CD 実装パターン（GitHub Actions × Claude 半自動 PR レビュー）**:
+```yaml
+# Step 1: 下書き生成（対象リポジトリへの書き込みなし）
+# auto-review.yml — 30分ごとに未レビュー PR を取得し private Issue に下書きを保存
+name: 自動レビュー(下書き生成)
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - run: bash scripts/auto-review.sh
+```
+
+```yaml
+# Step 2: レビュアーがラベルを付けると自動公開（approve / request-changes / comment）
+# publish-review.yml — ラベルトリガーで PR にインラインコメントとして反映
+on:
+  issues:
+    types: [labeled]
+jobs:
+  publish:
+    if: |
+      github.event.label.name == 'approve' ||
+      github.event.label.name == 'request-changes' ||
+      github.event.label.name == 'comment'
+    steps:
+      - run: bash scripts/publish-review.sh
+```
+
+**操作分類の基準**:
+| 分類 | 具体例 | 承認要否 |
+|---|---|---|
+| 外部送信・公開 | メール送信・SNS 投稿・PR コメント・デプロイ | **要承認** |
+| 不可逆削除 | ファイル削除・DB レコード削除 | **要承認** |
+| 外部参照（読み取り） | API 取得・コード読み込み | 自動実行 OK |
+| 内部生成 | 下書き作成・ローカルファイル書き込み | 自動実行 OK |
+
+**アンチパターン**:
+- プロンプトに「外部送信の前に必ず確認する」と書く → プロンプト変更で迂回される
+- フラグ変数（`let approved = false`）で制御 → エージェントが同一コンテキスト内で上書きできる
+- 「エージェントに権限を与えて、使わないよう指示する」設計
+
+**出典引用**:
+> 「コードレベルで「この操作は承認なしに実行できない」という制約を持たせるのが、承認ゲートの役割」
+> ([AIエージェントの承認ゲート設計——外部送信・公開クラスを権限設計で分離する](https://zenn.dev/yushiyamamoto/articles/claude-agent-approval-gate-design-2026-06), セクション "承認ゲートが必要な理由") ※2026-06-21に実際にfetch成功
+
+> 「レビュアーは **ラベルを1つ付けるだけ** で、該当行にインラインコメントとして公開される」
+> ([GitHub Actions × Claude で下書きは AI・承認は人間な半自動 PR レビューを作った](https://zenn.dev/prof_nyanko1124/articles/917c89c91a1248), セクション "完成イメージ") ※2026-06-21に実際にfetch成功
+
+**出典**:
+- [AIエージェントの承認ゲート設計——外部送信・公開クラスを権限設計で分離する](https://zenn.dev/yushiyamamoto/articles/claude-agent-approval-gate-design-2026-06) (Zenn) ※2026-06-21 fetch
+- [GitHub Actions × Claude で下書きは AI・承認は人間な半自動 PR レビューを作った](https://zenn.dev/prof_nyanko1124/articles/917c89c91a1248) (Zenn) ※2026-06-21 fetch
+
+**バージョン**: Claude Code・GitHub Actions（全バージョン共通）
+**確信度**: 中
+**最終更新**: 2026-06-21
+
+---
