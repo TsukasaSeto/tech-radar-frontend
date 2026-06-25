@@ -410,3 +410,75 @@ export async function middleware(request: NextRequest) {
 **最終更新**: 2026-06-12
 
 ---
+
+### 10. `cacheComponents` + `partialPrefetching` でインスタントナビゲーション（SPA並み応答）を実現する
+
+Next.js 16.3 Preview で導入された「Instant Navigations」を使うと、サーバー駆動モデルを維持しながら SPA と同等のクリック即応性を得られる。
+ルートが `<Suspense>` でストリームするか `"use cache"` でキャッシュしていれば、クリック後にサーバーレスポンスを待たずにシェルが即座に表示される。
+`partialPrefetching: true` を有効化すると、ビューポート内の全リンクに対して個別プリフェッチする代わりに、**ルートごとに再利用可能なシェルを 1 回だけプリフェッチ**するため、プリフェッチリクエスト数が大幅に削減される。
+
+**根拠**:
+- サーバー駆動アプリのナビゲーションが「遅く感じる」根本原因は、クリック後のネットワーク往復とサーバー処理の 2 つ。`<Suspense>`（ストリーム）か `"use cache"`（キャッシュ）でサーバー処理ブロックを排除し、シェルプリフェッチでネットワーク往復を隠蔽することで両方を解消する
+- 旧来の per-link プリフェッチは同一ルートに 20 個のリンクがあれば 20 リクエストを発行していた。`partialPrefetching` は同じルートを 1 リクエスト（シェル）で済ませ、キャッシュされたシェルをすべてのリンクで再利用する
+- `export const instant = false` を page.tsx / layout.tsx に書くことで、特定ルートをサーバーバウンド（クリック後にサーバー完了を待つ従来動作）に戻せる。ブログ記事など「ローディング UI を見せたくない」ルートに用いる
+- `instant()` Playwright テストヘルパーでナビゲーション後に「何が即座に表示されるか」を Assertion できる。CI でインスタントナビゲーションのリグレッションを防止できる
+
+**コード例**:
+```ts
+// next.config.ts — 両フラグを有効化（将来のメジャーバージョンでデフォルト化予定）
+import type { NextConfig } from 'next';
+const nextConfig: NextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+};
+export default nextConfig;
+```
+
+```tsx
+// Good: Suspense でストリーム → ナビゲーションが即座（シェル表示 → データ流入）
+export default async function ProductPage({ params }) {
+  return (
+    <Suspense fallback={<ProductSkeleton />}>
+      <ProductDetails slug={params.slug} />
+    </Suspense>
+  );
+}
+
+// Good: 特定ルートをブロック（ローディング UI なしでサーバー完了を待つ）
+// app/blog/[slug]/page.tsx
+export const instant = false; // このルートはサーバーバウンドで動作
+```
+
+```ts
+// Playwright: instant() ヘルパーでナビゲーション直後の即時表示を Assertion
+import { expect, test } from '@playwright/test';
+import { instant } from '@next/playwright';
+
+test('product title is immediately visible', async ({ page }) => {
+  await page.goto('/products/shoes');
+  await instant(page, async () => {
+    await page.click('a[href="/products/hats"]');
+    await expect(page.locator('h1')).toContainText('Baseball Cap');
+    await expect(page.getByText('Checking inventory...')).toBeVisible(); // ローディング中
+  });
+  await expect(page.getByText('12 in stock')).toBeVisible(); // データ流入後
+});
+```
+
+**アンチパターン**:
+- `cacheComponents: true` だけ有効化して `partialPrefetching` を忘れる（プリフェッチの最適化が効かない）
+- ローディング UI を絶対に見せたくないルートで `export const instant = false` を書き忘れ、スケルトンが意図せず表示される
+- `instant()` テストを書かずにインスタント性をリリース後に壊す
+
+**出典引用**:
+> "You get the full benefits of a server, but navigations are instant like in a single-page app."
+> ([Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations), セクション "We're fixing this") ※2026-06-25に実際にfetch成功
+
+> "Instead of prefetching a page *per link*, Next.js will now prefetch a reusable shell *per route*."
+> ([Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations), セクション "Rethinking prefetching") ※2026-06-25に実際にfetch成功
+
+**バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-06-25
+
+---

@@ -31,6 +31,17 @@
 2. **昇格**: 同一パターンが3回以上発生したら `/failure-promote` スキルで `.claude/rules/{project}/` へのPRを自動作成
 3. **振り返り**: `/retro` スキルがコミット履歴・PRコメント・手動編集を5カテゴリ・3優先度に分類して学習を整理
 
+**アプローチ3: 失敗台帳（ledger）+ patch/process 判定**
+
+「同じ指摘を繰り返させない」を自動化する。セッションログ（`.jsonl`）から人間の修正指摘を抽出し、**行動レベルで正規化したキーで再発回数を追跡**する。
+
+- 正規化キーは「表層の言い回し」ではなく「何を間違えたか（行動レベル）」で付ける（「揃えて」「統一感」は同一エントリ）
+- **初回（再発1回）**: 注意書き追加（patch）で許容
+- **再発2回以上**: 注意書きの追加を禁止し、**構造修正（process）** を起案する（CLAUDE.md / スキル / CI の変更）
+- 反映先の決定・書き込みは **人間ゲートを通す**（diff を提示して承認を得てから書き込む）
+
+この設計により「注意書きを足すだけ」という安易な対応を意図的に塞ぐ。ルールの所在と内容は人間が把握し続けるべきという原則に基づく。
+
 **コード例**:
 ```sh
 # FAILURES.md (gitignore 対象 — 個人蓄積フェーズ)
@@ -46,16 +57,21 @@
 - auto-sort-imports は無効化する（ESLint 設定を優先）
 ```
 
-**出典引用**:
-> "ルールを適用しただけではClaudeにルール" — 組織全体への適用には extract/merge/apply の3段階が必要
-> ([Claude Codeにオレたち流のコードを書かせる（中編）— 組織のルールを共有する](https://zenn.dev/sonicgarden/articles/claude-code-custom-rules-part2), セクション "merge-rules") ※2026-05-08に実際にfetch成功
+**出典**:
+- [Claude Codeにオレたち流のコードを書かせる（中編）— 組織のルールを共有する](https://zenn.dev/sonicgarden/articles/claude-code-custom-rules-part2) (Zenn) ※2026-05-08 fetch
+- [Claude Codeの失敗をチームルールに昇格させる仕組み](https://zenn.dev/dely_jp/articles/5bc3e9cf62d776) (Zenn) ※2026-05-08 fetch
+- [Claude Code に「同じ指摘を二度させない」仕組みを作る — 失敗台帳と patch/process 判定の自己改善ループ](https://zenn.dev/ruri/articles/claude-code-feedback-ledger) (Zenn、失敗台帳・patch/process 閾値・人間ゲートの設計) ※2026-06-25 fetch
 
+**出典引用**:
 > "失敗は『起きた瞬間に直す』だけでは不十分で、『次のセッションのエージェントが参照できる形』に残さないと"
 > ([Claude Codeの失敗をチームルールに昇格させる仕組み](https://zenn.dev/dely_jp/articles/5bc3e9cf62d776), セクション "設計の考え方") ※2026-05-08に実際にfetch成功
 
+> "ルール（ガードレール）は成果物より重要で、その所在と中身は人間が把握し続けるべき"
+> ([Claude Code に「同じ指摘を二度させない」仕組みを作る — 失敗台帳と patch/process 判定の自己改善ループ](https://zenn.dev/ruri/articles/claude-code-feedback-ledger), セクション "反映フロー") ※2026-06-25に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-05-08
+**最終更新**: 2026-06-25
 
 ---
 
@@ -454,6 +470,18 @@ jq -n --arg ctx "$(cat "$rule_file")" \
 
 使い分けの原則: `paths` = ファイル種別で自動注入 / `hooks` = コマンド条件で瞬間注入 / `skills` = 明示呼び出しで都度注入。3経路を組み合わせると「常駐は判断骨格のみ・必要な瞬間に必要なルールだけ届く」設計になる。
 
+**ルール配置の「保証強度」フレームワーク**:
+
+ルールをどの層に置くかは「踏まれたときのコスト」で決める:
+
+| 層 | 例 | 保証強度 | 備考 |
+|---|---|---|---|
+| **CLAUDE.md** | アーキテクチャ方針・禁止操作 | 弱（コンテキスト） | セッション開始時に読み込まれるが強制力はない |
+| **`.claude/rules/` (`paths` フロントマター)** | 翻訳スタイル・設計規約 | 中（条件付き読み込み） | 対象ファイル編集時のみ注入 |
+| **Hook / CI** | `git push --force` ブロック・必須チェック | 強（決定論的強制） | 踏んだら止まる仕組み |
+
+「踏んだら高くつく一線」（本番ミス・セキュリティ違反・データ削除）は文章（CLAUDE.md）ではなく、**hook や CI で止まる仕組み**に置く。CLAUDE.md はコンテキストであり、モデルが読んでいても遵守を保証しない。
+
 > "正しい場所に置くだけじゃ足りない。**正しい瞬間に読ませろ。**"
 > ([CLAUDE.mdを太らせるな——ルールは必要な瞬間に読ませろ](https://zenn.dev/generald/articles/claude-rules-context-diet), セクション "最終形") ※2026-06-14に実際にfetch成功
 
@@ -472,10 +500,15 @@ jq -n --arg ctx "$(cat "$rule_file")" \
 - [CLAUDE.mdを整理したら、めちゃくちゃトークン消費が増えていた話](https://zenn.dev/penguingymlinux/articles/5335e74359b3d9) (Zenn) ※2026-05-11 fetch
 - [コンテキストエンジニアリング実践ガイド — Claude Codeで学ぶ4つの戦略](https://zenn.dev/miyan/articles/claude-code-context-engineering-guide-2026) (Zenn) ※2026-05-21 fetch
 - [CLAUDE.mdを太らせるな——ルールは必要な瞬間に読ませろ](https://zenn.dev/generald/articles/claude-rules-context-diet) (Zenn、hook による瞬間注入・paths/hooks/skills 3経路の使い分け) ※2026-06-14 fetch
+- [CLAUDE.md に書いたことが「効く」とは限らない。context・rule・enforcement の三層で設計する](https://zenn.dev/rapls/articles/93694be629c80b) (Zenn、保証強度フレームワーク・hook/CI で止まる仕組みの設計原則) ※2026-06-25 fetch
+
+**出典引用**（追加）:
+> "CLAUDE.md はコンテキスト（前提情報）として扱われるのであって、強制される設定ではない"
+> ([CLAUDE.md に書いたことが「効く」とは限らない。context・rule・enforcement の三層で設計する](https://zenn.dev/rapls/articles/93694be629c80b), セクション "三層の構造と役割") ※2026-06-25に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-06-14
+**最終更新**: 2026-06-25
 
 ---
 
