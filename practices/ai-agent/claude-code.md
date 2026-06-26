@@ -2345,3 +2345,65 @@ jq -rs '
 **最終更新**: 2026-06-22
 
 ---
+
+### 27. Next.js 16.3 の `next dev` AGENTS.md 自動更新・first-party Skills・MCP コンパイル診断ツールでエージェント開発ループを完結させる
+
+Next.js 16.3 以降、`next dev` 起動時に AGENTS.md へのポインタが自動書き込み・更新されるため、プロジェクト内のルーティング・API 情報を常にエージェントが参照できる状態になる。加えて公式 Skills（`next-dev-loop` / `next-cache-components-adoption` / `next-cache-components-optimizer`）と MCP ツール（`get_compilation_issues` / `compile_route`）が提供され、エージェントが開発・診断ループを自律完結できる。
+
+**根拠**:
+- `next dev` が AGENTS.md を自動管理することで、チームが手動でポインタを更新し続けるコストがゼロになる（既存プロジェクトはコードモッドで移行）
+- first-party Skills は「キャッシュコンポーネントへの段階的移行」「開発ループの継続」など具体的タスクをエージェントに委譲できる粒度で設計されており、汎用プロンプトより再現性が高い
+- `compile_route` MCP ツールで単一ルートを即時コンパイルし型エラー・バンドル警告を取得できるため、ファイル保存 → CI 待ちのサイクルを省略できる
+- `/docs/llms.txt` と任意の `/docs/...` URL への `.md` サフィックスにより、公式ドキュメントをエージェントがそのまま取り込める（HTML パース不要）
+- `agentRules: false` でオプトアウト可能なため、カスタム AGENTS.md を持つプロジェクトに干渉しない
+
+**コード例**:
+```bash
+# 既存プロジェクトを AGENTS.md 自動更新に移行するコードモッド
+npx @next/codemod@canary agents-md
+
+# first-party Skills のインストール（claude code CLI 前提）
+npx skills add vercel/next.js --skill next-dev-loop
+npx skills add vercel/next.js --skill next-cache-components-adoption
+npx skills add vercel/next.js --skill next-cache-components-optimizer
+```
+
+```typescript
+// next.config.ts — AGENTS.md 自動更新をオプトアウトする場合
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  agentRules: false, // 独自 AGENTS.md を維持したいプロジェクト向け
+};
+
+export default nextConfig;
+```
+
+```bash
+# MCP ツール経由でコンパイルエラーをエージェントが取得する例
+# get_compilation_issues: プロジェクト全体の型・バンドルエラー一覧
+# compile_route: 単一ルートをコンパイルして警告を即時返却
+
+# 公式ドキュメントを Markdown で取得（HTML パース不要）
+curl https://nextjs.org/docs/app/api-reference/config/next-config-js.md
+# または /docs/llms.txt で全ドキュメント目次を取得
+curl https://nextjs.org/docs/llms.txt
+```
+
+**アンチパターン**:
+- `next dev` の AGENTS.md 自動更新を知らずに手動でポインタを保守し続ける → 更新漏れや競合が頻発する
+- `agentRules: false` を設定しないまま既存のカスタム AGENTS.md を持つ → 自動上書きによる意図しない情報消失
+- `compile_route` を使わず「ファイル保存 → PR → CI」のサイクルでエラーを検知する → フィードバックループが長くなり開発効率を損なう
+
+**出典引用**:
+> "In 16.3, `next dev` writes and updates that pointer automatically, so existing projects stay current as you upgrade."
+> ([Next.js 16.3: AI Improvements](https://nextjs.org/blog/next-16-3-ai-improvements), セクション "Automatic AGENTS.md Updates") ※2026-06-26T15:00:00Z 公式ブログ
+
+**出典**:
+- [Next.js 16.3: AI Improvements](https://nextjs.org/blog/next-16-3-ai-improvements) (Next.js 公式ブログ、2026-06-26)
+
+**バージョン**: Next.js 16.3+
+**確信度**: 高（公式ブログ一次情報）
+**最終更新**: 2026-06-26
+
+---
