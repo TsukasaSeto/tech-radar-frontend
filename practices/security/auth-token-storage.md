@@ -283,7 +283,33 @@ export async function POST() {
 
 **バージョン**: パターン（実装依存）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-21
+
+#### 追加根拠 (2026-06-21) — hashToken() の実装: HMAC-SHA256 推奨
+
+Rule #3 のコード例が参照している `hashToken()` の実装を明示する。plain SHA-256 より HMAC-SHA256 を推奨する理由:
+
+- SHA-256 単体でも 256 bit CSPRNG 生成のリフレッシュトークンには十分な強度があるが、HMAC を使う場合は「ハッシュ値 + secret」の両方がなければトークンを逆算できない
+- 最大の利点: **secret を変更するだけで、それまで発行したリフレッシュトークンを即時全失効できる**（侵害検知後の全セッション無効化に有効）
+- DB に `HMAC-SHA256(refreshToken, secret)` を格納し、検索時も同じ計算で照合する
+
+```typescript
+import { createHmac } from 'node:crypto';
+
+function hashToken(token: string): string {
+  const secret = process.env.REFRESH_TOKEN_SECRET;
+  if (!secret) throw new Error('REFRESH_TOKEN_SECRET is not set');
+  return createHmac('sha256', secret).update(token).digest('hex');
+}
+```
+
+環境変数 `REFRESH_TOKEN_SECRET` は 32 バイト以上のランダム値にする。JWT 署名鍵など他の鍵と共用しない。
+
+**出典引用**:
+> 「HMAC を使う場合は、さらに `secret` を見つけなければいけない」「secret を変更するだけで、それまで発行した token を即時全失効できる」
+> ([リフレッシュトークンをDBに保存するとき何をやれば安全なんだろうか](https://zenn.dev/natsubate/articles/20db3ce3f7ae88), セクション "HMAC-SHA256") ※2026-06-21に実際にfetch成功
+
+**確信度**: 既存（高）→ 高（実装詳細補完）
 
 ---
 
