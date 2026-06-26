@@ -367,3 +367,65 @@ async function MyDashboard() {
 **最終更新**: 2026-06-05
 
 ---
+
+### 9. `cacheComponents: true` と Instant Navigations の3択（Stream / Cache / Block）で SPA と同等のナビゲーション体験を実現する
+
+Next.js 16.3 の `cacheComponents: true` + `partialPrefetching: true` を有効化すると、`<Suspense>` でストリーミングするルートまたは `'use cache'` でキャッシュするルートへのナビゲーションが即時（Instant）になる。残り少数の「ブロック型」ルートには `export const instant = false` を page.tsx に記述してオプトアウトし、`@next/playwright` の `instant()` ヘルパーで E2E 検証する。
+
+**根拠**:
+- `cacheComponents: true` によりコンポーネントツリーをサーバー側でシリアル化・プリレンダリングし、ナビゲーション時はブラウザが差分のみを適用することで遷移をゼロレイテンシに近づける
+- ストリーミング（`<Suspense>`）またはキャッシュ（`'use cache'`）を採用していないルートは自動的に Block 扱い（従来の挙動）になるため、全ページに対応を強制しない段階的移行が可能
+- `partialPrefetching: true` との組み合わせで、ビューポート内のリンク先を事前に部分プリフェッチし体験をさらに向上させる
+- 公式提供の `instant()` テストヘルパーを使うことで「このナビゲーションが本当に instant か」を CI で定量保証できる
+
+**コード例**:
+```typescript
+// next.config.ts
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+};
+
+export default nextConfig;
+```
+
+```typescript
+// app/products/[id]/page.tsx — Block: データがユーザー固有 or 機密で Instant 非対応
+export const instant = false;
+
+export default async function ProductPage() { ... }
+```
+
+```typescript
+// e2e/navigation.spec.ts — Playwright で Instant ナビゲーションを CI 保証
+import { instant } from '@next/playwright';
+import { test, expect } from '@playwright/test';
+
+test('hat PDP is instant', async ({ page }) => {
+  await page.goto('/');
+  await instant(page, async () => {
+    await page.click('a[href="/products/hats"]');
+    await expect(page.locator('h1')).toContainText('Baseball Cap');
+  });
+});
+```
+
+**アンチパターン**:
+- `cacheComponents: true` のみ設定し `'use cache'` も `<Suspense>` も追加しない → すべてのルートが Block のまま Instant にならない
+- `export const instant = false` を安易に多用する → 移行の恩恵を失い、SPA 比較の優位性が消える
+- `instant()` ヘルパーなしで「たぶん速い」と目視判断する → レグレッションを検知できない
+
+**出典引用**:
+> "If you Stream with `<Suspense>` or Cache with `'use cache'`, navigations to your route will be instant."
+> ([Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations), セクション "Three Choices") ※2026-06-25T20:00:00Z 公式ブログ
+
+**出典**:
+- [Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations) (Next.js 公式ブログ、2026-06-25)
+
+**バージョン**: Next.js 16.3+
+**確信度**: 高（公式ブログ一次情報）
+**最終更新**: 2026-06-26
+
+---
