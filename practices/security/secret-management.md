@@ -383,6 +383,29 @@ pre-commit:
   severity = "ERROR"
 ```
 
+**AI コーディングエージェントによるデプロイ時の流出防止**:
+
+AI エージェントが `netlify deploy --dir=.` のようにプロジェクトルートをそのまま指定すると、`.gitignore` 対象外のファイル（`config.py`・`credentials.json` 等）に混入した認証情報が公開される。「消したから大丈夫」は通用しない——インターネットに出た瞬間から永久に流出している前提で対応する:
+
+```bash
+# Bad: ルートをそのまま指定（.gitignore 対象外の設定ファイルも公開される）
+netlify deploy --dir=.
+
+# Good: ビルド成果物ディレクトリを明示する
+netlify deploy --dir=dist
+```
+
+```
+# .netlifyignore — .gitignore と独立したデプロイ除外リスト
+config.py
+credentials*
+*.key
+*.pem
+.env*
+```
+
+PreToolUse フックで `deploy` コマンドの引数を実行前に検査し、`--dir=.` が指定されていたら即座にブロックする（フックの書き方は `ai-agent/claude-code.md` Rule #9 参照）。
+
 **出典引用**:
 > "AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます。"
 > ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本責") ※2026-05-17に実際にfetch成功
@@ -411,10 +434,14 @@ pre-commit:
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables#test-environment-variables) (Next.js 公式)
 - [GitHub: Removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) (GitHub Docs)
 - [AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer) (Zenn takna, gitleaks+lefthook+GitHub Push Protection+Claude Hooks による4層防御) ※2026-05-17 fetch
+- [AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686) (Qiita yurukusa、AI deploy での --dir=. 流出事故・.netlifyignore・PreToolUse 防御) ※2026-06-28に実際にfetch成功
+
+> "「消したから大丈夫」は、ここでは通用しない"
+> ([AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686), Qiita yurukusa, セクション "事後対応") ※2026-06-28に実際にfetch成功
 
 **バージョン**: 一般原則
 **確信度**: 高
-**最終更新**: 2026-05-17
+**最終更新**: 2026-06-28
 
 ---
 
