@@ -749,6 +749,37 @@ if echo "$CMD" | grep -qE \
 fi
 ```
 
+```bash
+# push 先リポジトリ所有者を allowlist で検証（誤 push・フォーク外流出を防ぐ）
+# PostToolUse（Bash）または pre-push hook で実行
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+
+# git push コマンド以外は早期リターン（パフォーマンス）
+echo "$CMD" | grep -qE '^git push' || exit 0
+
+# push 先リモートの URL を取得
+REMOTE=$(echo "$CMD" | grep -oE 'origin|upstream|[a-z0-9_-]+' | head -1)
+REMOTE=${REMOTE:-origin}
+REMOTE_URL=$(git remote get-url "$REMOTE" 2>/dev/null || true)
+
+# 許可リスト（自分の GitHub ユーザー名 / 組織名）
+ALLOWED_OWNERS=("myorg" "myusername")
+
+owner_allowed=false
+for owner in "${ALLOWED_OWNERS[@]}"; do
+  if echo "$REMOTE_URL" | grep -qiE "github\.com[/:]${owner}/"; then
+    owner_allowed=true
+    break
+  fi
+done
+
+if ! $owner_allowed; then
+  echo "ERROR: push 先 '$REMOTE_URL' は許可されたリポジトリ所有者に含まれていません。" >&2
+  echo "意図する場合は手動で git push を実行してください。" >&2
+  exit 2
+fi
+```
+
 **出典**:
 - [Claude Codeのhookの仕組み:JSONとexitコードで作る最小の安全装置](https://zenn.dev/yurukusa/articles/be79dbe97e34bb) (Zenn) ※2026-05-14に実際にfetch成功
 - [Claude Code hook で AI coding assistant の規律を補強する — 個人運用での設計パターン参考](https://zenn.dev/shogaku/articles/claude-code-hook-discipline) (Zenn、&&/;/|| チェーンブロック・1MB超ファイルブロックのパターン追加) ※2026-05-22に実際にfetch成功
@@ -756,6 +787,7 @@ fi
 - [Claude Code と Codex の両方に、機密情報と個人情報を漏らさせない hook を作った話](https://zenn.dev/todayama_r/articles/multi-agent-secret-pii-guard-hooks) (Zenn、machine-wide core.hooksPath・--no-verify ブロック・PII 検出パターン・escape hatch 防止) ※2026-05-30に実際にfetch成功
 - [Claude Codeのハーネス設計 -- 「禁止事項だけを決め、hooksで強制する」ブラックリスト戦略](https://zenn.dev/awesome_kou/articles/claude-code-harness-deny-hooks) (Zenn、deny-list vs allow-list 設計・Lost in the Middle 問題・4層防御モデル) ※2026-06-09に実際にfetch成功
 - [`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d) (Qiita、フレームワーク固有 DB 破壊コマンドが shell レベルブロックをすり抜ける問題と対策パターン) ※2026-06-17に実際にfetch成功
+- [Claude Codeのpush事故を機械で止める ― APIキー流出と誤push先ガード](https://qiita.com/bokuwalily/items/31b3b4f3a447b6c5d68e) (Qiita、push 先 owner allowlist・ステージ差分のみスキャン・hook bypass フラグ禁止) ※2026-06-22に実際にfetch成功
 
 > "Laravel: migrate:fresh / migrate:reset / db:wipe; Rails: db:drop / db:reset; Django: manage.py flush; Prisma: migrate reset / db push --force-reset — これらは shell 固有の危険コマンドのパターンマッチをすり抜けます"
 > ([`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d), セクション "なぜ既存の防御策が効かないのか") ※2026-06-17に実際にfetch成功
@@ -772,9 +804,12 @@ fi
 > "すべての入口を一本化する関門で、コミットは必ずそこを通る"
 > ([Claude Code と Codex の両方に、機密情報と個人情報を漏らさせない hook を作った話](https://zenn.dev/todayama_r/articles/multi-agent-secret-pii-guard-hooks), セクション "Layer 1: Unified Git Gateway") ※2026-05-30に実際にfetch成功
 
+> "hook bypass フラグが含まれています。明示依頼が無い限り使用禁止"
+> ([Claude Codeのpush事故を機械で止める](https://qiita.com/bokuwalily/items/31b3b4f3a447b6c5d68e), セクション "Hook Bypass Prevention") ※2026-06-22に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-06-17
+**最終更新**: 2026-06-22
 
 ---
 
@@ -2169,5 +2204,80 @@ jobs:
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
 **最終更新**: 2026-06-21
+
+---
+
+### 26. Claude Code hookのレイテンシを `$EPOCHREALTIME` + p95 で計測し、同期フックの遅延を特定する
+
+hookのラッパースクリプトで実行時間を JSONL ログに記録し、p95（100回中95回がこの時間以内）で日常的な遅延を把握する。
+同期フックの p95 が高い場合のみボトルネックとして対処し、`async: true` フックの所要時間は問わない。
+
+**根拠**:
+- 同期フックは完了するまで Claude Code をブロックする。`async: true` フックはバックグラウンド実行のためユーザー体験に影響しない
+- 平均値（mean）はゾンビプロセスや sleep 状態の外れ値で歪む。p95 が「日常的に体験する遅延」を正直に示す
+- どのフックが遅いか特定できなければ最適化対象を絞れない。ラッパーで全フックを一律計測するのが最も低コスト
+
+**コード例（ラッパースクリプト）**:
+```bash
+#!/bin/bash
+# ~/.claude/hooks/hook-latency-wrap.sh
+# 使い方: settings.json で "command": "~/.claude/hooks/hook-latency-wrap.sh my-hook.sh"
+
+HOOK_NAME="${1:-unknown}"
+HOOK_SCRIPT="$HOME/.claude/hooks/$HOOK_NAME"
+LOG_FILE="$HOME/.claude/hook-latency.jsonl"
+
+# $EPOCHREALTIME はマイクロ秒精度の POSIX epoch（bash 5+）
+START=$EPOCHREALTIME
+
+"$HOOK_SCRIPT" "${@:2}"
+exit_code=$?
+
+END=$EPOCHREALTIME
+elapsed_ms=$(awk "BEGIN { printf \"%.0f\", ($END - $START) * 1000 }")
+
+printf '{"hook":"%s","elapsed_ms":%s,"exit_code":%s,"ts":"%s"}\n' \
+  "$HOOK_NAME" "$elapsed_ms" "$exit_code" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  >> "$LOG_FILE"
+
+# exit code を保持することが必須（省略するとエラー検出が壊れる）
+exit "$exit_code"
+```
+
+```bash
+# p95 集計（フック名ごと）
+jq -rs '
+  group_by(.hook)[] |
+  sort_by(.elapsed_ms) |
+  {
+    hook: .[0].hook,
+    count: length,
+    p50_ms: .[floor(length*0.50)].elapsed_ms,
+    p95_ms: .[floor(length*0.95)].elapsed_ms
+  }
+' ~/.claude/hook-latency.jsonl
+```
+
+**判断軸**:
+| フック種別 | 計測対象か | 改善優先度 |
+|---|---|---|
+| 同期（async: true なし） | ✅ p95 > 500ms を閾値 | 高 — ユーザー操作をブロック |
+| 非同期（async: true） | 不要 | なし — バックグラウンド実行 |
+| Stop フック | ✅ 参考値 | セッション終了時のみ影響 |
+
+**アンチパターン**:
+- ラッパーで `exit "$exit_code"` を省略する（フックのエラー戻り値を Claude Code が受け取れなくなる）
+- 平均値だけを見て「速い」と判断する（外れ値が平均を引き下げ、日常的な遅延を隠す）
+
+**出典引用**:
+> "hookが同期実行の場合、完了するまでClaude Codeはブロックします"
+> ([Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling), セクション "問題の本質") ※2026-06-22に実際にfetch成功
+
+> "p95は『100回に95回がこの時間以内』なので、日常の遅さを正直に示します"
+> ([Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling), セクション "なぜ p95 か") ※2026-06-22に実際にfetch成功
+
+**バージョン**: Claude Code（全バージョン）、bash 5+
+**確信度**: 中
+**最終更新**: 2026-06-22
 
 ---

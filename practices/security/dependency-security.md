@@ -401,7 +401,7 @@ trustPolicy: no-downgrade
 - `--ignore-scripts`（このルール）
 - `socket-security` / `snyk` / `Aikido` 等の OSS supply chain スキャナーを CI に追加（Socket は install script の実行可否・ネットワーク接続要求・ファイルシステム操作を行動解析し、既知 CVE 外の新種マルウェアも検知; GitHub App 連携で PR ごとに差分スキャンできる）
 - Renovate の `:disablePeerDependencies` などで不要な依存追加を制限
-- **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）
+- **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）。7日間（10080分）への引き上げで悪意のあるバージョン検出の機会をさらに増やせる。除外が必要なパッケージは承認期限・CVE根拠・責任者を CI スクリプトで自動チェックする
 
 ```bash
 # npm 11.10+: プロジェクト単位で最低公開 24h 経過を要求
@@ -410,8 +410,27 @@ npm config set min-release-age=1 --location=project
 # yarn 4.10+: 1440分（24h）
 yarn config set npmMinimalAgeGate 1d
 
-# pnpm 10.16+: 1440分（24h）
-pnpm config set --location=project minimumReleaseAge 1440
+# pnpm 10.16+: デフォルト 1440分（24h）→ 7日間推奨
+pnpm config set --location=project minimumReleaseAge 10080
+```
+
+```yaml
+# .npmrc（pnpm）: 除外リストの例（CI でコメントを自動検証）
+minimumReleaseAge: 10080
+
+# minimumReleaseAgeExclude:
+#   - "@swc/core"       # ネイティブバイナリ。承認: CTO, 期限: 2026-09-30, 理由: RC 対応
+#   - "esbuild"         # ネイティブバイナリ。承認: Tech Lead, 期限: 永続, 理由: 公式リリース
+```
+
+```bash
+# CI: 除外エントリの承認期限チェック（期限切れで PR ブロック）
+#!/bin/bash
+TODAY=$(date +%Y-%m-%d)
+EXPIRED=$(grep -E '期限:' .npmrc | grep -v "永続" | awk '{print $NF}' | while read d; do
+  [[ "$d" < "$TODAY" ]] && echo "$d is expired"
+done)
+[[ -n "$EXPIRED" ]] && { echo "ERROR: expired minimumReleaseAge exclusions: $EXPIRED"; exit 1; }
 ```
 
 ```yaml
@@ -447,6 +466,7 @@ updates:
 - [Shai Hulud攻撃から身を守る：npm脆弱性と対策ガイド](https://zenn.dev/7788/articles/93ff5ceaba0576) (Zenn、侵害時の即時対応・パッケージ削除後のIDE残存) ※2026-05-16に実際にfetch成功
 - [Miasma supply chain attack: malicious code found in @redhat-cloud-services npm packages](https://snyk.io/blog/miasma-supply-chain-attack-malicious-code-redhat-cloud-services-npm-packages/) (Snyk Blog、OIDC token hijacking・SLSA provenance bypass・自己増殖ワーム) ※2026-06-02に実際にfetch成功
 - [pnpm v11 移行メモ — サプライチェーン攻撃対策を中心に](https://zenn.dev/esta_dev/articles/bc7a8dfef21d7b) (Zenn、v11 新デフォルト allowBuilds/blockExoticSubdeps/lockfile integrity・Docker CI 対応パターン) ※2026-06-09に実際にfetch成功
+- [npm サプライチェーン攻撃対策として pnpm v11 を導入した話](https://zenn.dev/onthebakery/articles/8060f23d1f948c) (Zenn、minimumReleaseAge 7日間延長・除外リスト承認期限 CI チェックの実践) ※2026-06-22に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -481,7 +501,7 @@ snyk test
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-06-09
+**最終更新**: 2026-06-22
 
 ---
 
