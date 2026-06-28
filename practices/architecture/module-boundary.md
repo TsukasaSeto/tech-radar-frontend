@@ -195,6 +195,7 @@ const appUrl = clientEnv.NEXT_PUBLIC_APP_URL;
 - `import/no-cycle` ルールが循環依存を早期に検出し、バンドルサイズの肥大化を防ぐ
 - `no-restricted-imports` でプロジェクト固有のレイヤー規則を Lint ルールとして明文化できる
 - ESLint の AST 解析が届かない「依存グラフ全体の検査」には dependency-cruiser を追加する。feature 間クロス依存の防止にはパスの後方参照（`$1`）を使うルールが有効で、例外はベースライン allowlist に明示させることで audit trail をコードに残せる。"アーキテクチャ規約は書いた瞬間から腐り始める——レビューの目視だけでは守りきれない"
+- 循環依存検出（reactive）と依存方向ルール（proactive）の2層で守る。Stable Dependencies Principle（SDP）では不安定度 `I = Fan-Out / (Fan-In + Fan-Out)` を指標とし、依存は常に I が小さい（安定した）モジュールへ向かうべきとされる。utils/types（I≈0）← features（I≈0.5）← pages（I≈1.0）の方向を強制することで、変更が波及しにくい構造になる
 
 **コード例**:
 ```jsonc
@@ -283,13 +284,17 @@ module.exports = {
 - [eslint-plugin-import](https://github.com/import-js/eslint-plugin-import) (import-js / GitHub)
 - [Feature-Sliced Design: Linting](https://feature-sliced.design/docs/guides/linting) (Feature-Sliced Design公式 / 2023)
 - [アーキテクチャを"規約"ではなく"CI"で守る — 依存方向を機械強制するフロントエンドテンプレートの設計](https://zenn.dev/hacobu/articles/5717458ca99f9b) (Zenn hacobu、dependency-cruiser と check-structure.mjs の2層CI設計) ※2026-06-18 fetch
+- [Stop circular dependencies before they stop you — dependency-cruiser & the Stable Dependencies Principle](https://dev.to/wojciech_kot_b82f5d7cbfc6/stop-circular-dependencies-before-they-stop-you-dependency-cruiser-the-stable-dependencies-34ho) (dev.to、SDP 不安定度公式・2層防御・3ティア設計) ※2026-06-23 fetch
 
 **出典引用**:
 > "アーキテクチャ規約は書いた瞬間から腐りはじめる。レビューの目視だけでは守りきれない。"
 > ([アーキテクチャを"規約"ではなく"CI"で守る](https://zenn.dev/hacobu/articles/5717458ca99f9b), セクション "① 依存グラフを検査する：dependency-cruiser") ※2026-06-18に実際にfetch成功
 
+> "Circular dependencies aren't a tooling problem; they are a structural failure. A cycle is simply what happens when dependency arrows point the wrong way for long enough."
+> ([Stop circular dependencies before they stop you](https://dev.to/wojciech_kot_b82f5d7cbfc6/stop-circular-dependencies-before-they-stop-you-dependency-cruiser-the-stable-dependencies-34ho), セクション "Core Principle") ※2026-06-23に実際にfetch成功
+
 **バージョン**: eslint-plugin-import 2.29+, ESLint 8+, dependency-cruiser 16+
 **確信度**: 高
-**最終更新**: 2026-06-18
+**最終更新**: 2026-06-23
 
 ---

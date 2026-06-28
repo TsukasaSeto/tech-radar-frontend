@@ -284,6 +284,7 @@ const HeavyResultList = memo(function HeavyResultList({ query }: { query: string
 - 全ファイル一括（`compilationMode: "all"`）は TanStack Table v8・react-hook-form 等の非互換ライブラリが混在する場合に高リスク
 - Oxlint の `react-hooks-js/*` ルール（eslint-plugin-react-hooks v7 経由）でコンパイラ非互換パターンをデプロイ前に静的検出できる
 - `"use no memo";` ディレクティブで非互換ファイルを明示的にオプトアウトでき、互換性の問題範囲を局所化できる
+- **Interior Mutability 問題**: TanStack Table など「参照は安定しているが内部状態を変更する」ライブラリのオブジェクトを子コンポーネントに props として渡すと、Compiler が参照変化を検出できず再レンダリングをスキップする。修正はオブジェクト自体を渡すのをやめ `table.getHeaderGroups()` のような**派生値（新しい参照が生まれる）を props に渡す**こと。`"use no memo"` はこの問題の根本解決にならない
 
 **コード例**:
 ```ts
@@ -317,10 +318,28 @@ import { useForm } from 'react-hook-form'; // Compiler 非互換
 }
 ```
 
+**コード例（Interior Mutability の修正パターン）**:
+```tsx
+// Bad: ミュータブルオブジェクトをそのまま渡す → Compiler が変化を検出できない
+<TableHeader table={table} />
+
+// Good: 派生値を渡す → 列変更時に新しい配列参照が生まれ Compiler が再レンダリングできる
+<TableHeader headerGroups={table.getHeaderGroups()} />
+
+// Bad: ステート値をオブジェクト経由で読み取る
+export function Panel({ table }) {
+  const { columnVisibility } = table.getState(); // stale になる
+}
+
+// Good: tracked な値を親から明示的に props に渡す
+<Panel table={table} columnVisibility={columnVisibility} columnOrder={columnOrder} />
+```
+
 **アンチパターン**:
 - 非互換ライブラリの確認なしに `compilationMode: "all"` で全ファイルを一括最適化する
 - Compiler 非互換ライブラリを使うファイルに `"use memo";` を付けてビルドエラーを発生させる
 - `oxlint-disable` をファイル単位で無効化して非互換を長期放置する
+- Interior Mutability 問題に対して `"use no memo"` で回避する → 最適化を全オフにするだけで根本原因（不安定な参照渡し）が残る
 
 **出典引用**:
 > "全ファイル一括は早々に諦め、**`compilationMode: "annotation"`**（annotationモード）でファイル単位のオプトインに切り替えることにしました。"
@@ -331,9 +350,13 @@ import { useForm } from 'react-hook-form'; // Compiler 非互換
 
 **追加出典**:
 - [React Compiler 1.0 Is Here — And It Changes Everything You Know About Performance](https://medium.com/@Ardhendu_init_/react-compiler-1-0-is-here-and-it-changes-everything-you-know-about-performance-59a0f5554a36) (Medium、v1.0 stable と新規プロジェクト setup) ※2026-06-17 fetch
+- [React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79) (Medium kshahbaghi、Interior Mutability 問題・派生値を渡すパターン・TanStack Table / react-hook-form 事例) ※2026-06-23 fetch
+
+> "if a library returns a mutable object with a stable reference, do not pass that object as a prop to a child component"
+> ([React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79), セクション "Key Rule") ※2026-06-23に実際にfetch成功
 
 **バージョン**: React 19+, React Compiler 1.0 (stable), Oxlint 0.x
 **確信度**: 高
-**最終更新**: 2026-06-17
+**最終更新**: 2026-06-23
 
 ---
