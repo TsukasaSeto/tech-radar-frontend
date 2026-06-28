@@ -133,13 +133,36 @@ function TeamPage() {
 }
 ```
 
+**Data Masking（Apollo 3.12+ / Relay）**:
+
+Fragment Colocation をさらに強制するのが Data Masking。有効化すると、**コンポーネントは自分のフラグメントで宣言したフィールドにしかアクセスできない**。ネットワークレスポンスに他のコンポーネントが要求した `avatarUrl` が含まれていても、そのフィールドを宣言していないコンポーネントには `undefined` が返る。これにより「フラグメントを書き忘れても動く」という穴を型安全で塞ぐ。
+
+```tsx
+// Apollo Client 3.12+: @unmask ディレクティブで親からフラグメントにアクセス
+// 子コンポーネントのフラグメントを親クエリに展開
+const TeamPageQuery = graphql(`
+  query TeamPage {
+    team {
+      members {
+        ...UserCard_User @unmask  # データマスキングを解除して型アクセス
+      }
+    }
+  }
+`);
+```
+
 **出典**:
 - [Apollo Docs: Fragments](https://www.apollographql.com/docs/react/data/fragments/) (Apollo公式)
 - [urql Docs: Fragments](https://commerce.nearform.com/open-source/urql/docs/basics/core-logic/) (urql公式)
+- [GraphQL Fragments: Let Each Component Own Its Data](https://dev.to/grimicorn/graphql-fragments-let-each-component-own-its-data-5359) (dev.to、Data Masking の解説と導入タイミングの判断基準) ※2026-06-25 fetch
 
-**バージョン**: Apollo Client 3+, urql 4+, GraphQL 16+
+**出典引用**（追加）:
+> "a component can only access fields it explicitly requested in its own fragment. Even if the network response contains avatarUrl because another component requested it, your component gets undefined unless it declared the field itself."
+> ([GraphQL Fragments: Let Each Component Own Its Data](https://dev.to/grimicorn/graphql-fragments-let-each-component-own-its-data-5359), セクション "Data Masking for Type Safety") ※2026-06-25に実際にfetch成功
+
+**バージョン**: Apollo Client 3.12+（Data Masking）, urql 4+, GraphQL 16+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-06-25
 
 ---
 
