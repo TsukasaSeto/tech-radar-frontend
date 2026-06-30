@@ -728,7 +728,7 @@ ls ~/Library/LaunchAgents/com.user.kitty-monitor.plist 2>/dev/null && echo "INFE
 > "VS Code extensions run as Node.js processes with developer permissions from the moment of installation, allowing access to sensitive information."
 > ([VS Code 拡張機能のインストールだけで開発環境が侵害されるリスク — デモと対策](https://zenn.dev/hisa_tech_2973/articles/51b62bd8c3bd11), セクション "VS Code 拡張機能の仕組みとリスクの構造") ※2026-05-22に実際にfetch成功
 
-> 「攻撃者はこのリリースに悪意のあるコードを仕込み、Marketplace 上に公開しました」「『有名なツールだから大丈夫』という常識が、一瞬で覆された瞬間です」
+> "攻撃者はこのリリースに悪意のあるコードを仕込み、Marketplace 上に公開しました」「『有名なツールだから大丈夫』という常識が、一瞬で覆された瞬間です"
 > ([たった11分で3,800リポジトリが流出——GitHubを陥落させたVS Code拡張機能サプライチェーン攻撃](https://zenn.dev/esta_dev/articles/fa0269c791ced3), セクション "侵入経路：「毒入りVS Code拡張機能」が仕掛けた罠") ※2026-05-22に実際にfetch成功
 
 **アンチパターン**:
@@ -765,6 +765,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 - [ ] `.mcp.json` や `.claude/settings.json` をプロジェクトに含める場合はコードレビューと同じ基準で内容を審査する
 - [ ] 外部リポジトリの clone 時は `.mcp.json` の内容を確認してから Claude Code / Cursor を起動する
 - [ ] `allowedTools` / `permissions` は Managed Settings で組織統制する（Rule #13 参照）
+- [ ] ツール定義のメタデータを正規化 JSON 化して SHA-256 でフィンガープリント化し、承認時に保存・実行前に再検証する（承認後のツール定義差し替え＝rug-pull / MCPoison 型攻撃の検知）
 
 **5つの主要攻撃パターン**:
 
@@ -797,12 +798,40 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 /.mcp.json                @security-team
 ```
 
+**ツール定義フィンガープリンティング（rug-pull / 承認バイパス検知）**:
+
+承認後にツール定義（説明文・パラメータスキーマ）が差し替えられる rug-pull 攻撃（CVE-2025-54136 MCPoison 系）は、
+ツール名ベースの承認だけでは検知できない。ツール定義のメタデータを正規化した上でハッシュ化し、
+承認時点のフィンガープリントを保存・実行のたびに再検証することで、サイレントな差し替えを検出できる。
+
+```python
+import hashlib
+import json
+
+def tool_fingerprint(tool: dict) -> str:
+    # 正規化（key順序を固定）してハッシュ化 — 差し替え検知の基準値にする
+    canonical = json.dumps(tool, sort_keys=True)
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+class ToolPinStore:
+    def __init__(self):
+        self.pinned: dict[str, str] = {}
+
+    def approve(self, tool_id: str, tool_def: dict) -> None:
+        self.pinned[tool_id] = tool_fingerprint(tool_def)
+
+    def verify(self, tool_id: str, tool_def: dict) -> bool:
+        # 実行前に再検証 — 承認時と異なるフィンガープリントなら拒否
+        return self.pinned.get(tool_id) == tool_fingerprint(tool_def)
+```
+
 **アンチパターン**:
 - 知人作の MCP サーバーだからと内容を確認せずにインストールする（rug-pull: 承認後に悪意あるコードへ差し替えられる可能性）
 - 承認ダイアログを習慣的に「常に許可」でクリアする
 - `.mcp.json` が含まれるリポジトリをそのまま Claude Code で開く
 - テスト出力・ビルドログをそのまま AI エージェントのコンテキストに流し込み、破壊的操作（ファイル削除等）を自動実行させる
 - Web ブラウジング機能を持つ AI エージェントと、認証なしで動く localhost MCP サービスを同じネットワーク境界で動作させる（AutoJack 攻撃が成立する状態）
+- ツール名だけで承認状態を管理し、定義の中身（説明文・スキーマ）が変わっても再承認を求めない
 
 **出典引用**:
 > ".claude/settings.json はアプリコーディングと同等のセキュリティレビュー対象にすべき"
@@ -824,6 +853,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 - [localhostを信頼するAIエージェントをWebページ1枚で乗っ取るAutoJack](https://zenn.dev/okssusucha/articles/20260620-autojack-autogen-studio-localhost-rce) (Zenn okssusucha、Localhost 信頼境界バイパス・プロセス分離・MCP 実行ファイル許可リスト) ※2026-06-20 fetch
 - [What nearly 10,000 developer environments reveal about agentic development risk](https://snyk.io/blog/agentic-development-security-ai-coding-risk/) (Snyk公式ブログ、実測統計・ツール定義への392件プロンプトインジェクション・13.4% critical skills) ※2026-06-23 fetch
 - [MCPツールポイズニング (CVE-2025-54136 / MCPoison) の実証と対策](https://zenn.dev/kta1kri/articles/mcp-tool-poisoning) (Zenn kta1kri、承認バイパス型ポイズニング・名前紐づけ承認の脆弱性・スキーマピニング防御) ※2026-06-27に実際にfetch成功
+- [MCPのツールポイズニングを実演し、クライアント側で防ぐ](https://zenn.dev/libercraft/articles/20260630-mcp-security-tool-poisoning) (Zenn libercraft、ツール定義フィンガープリンティングによる rug-pull 検知の実装例) ※2026-06-30に実際にfetch成功
 
 > "エージェントがオープンなWebをブラウズしつつ、特権を持つローカルサービスとも通信できるようになった時点で、localhostは信頼境界ではなくなる"
 > ([localhostを信頼するAIエージェントをWebページ1枚で乗っ取るAutoJack](https://zenn.dev/okssusucha/articles/20260620-autojack-autogen-studio-localhost-rce), セクション "なぜ「localhostは安全」が崩れるのか") ※2026-06-20に実際にfetch成功
@@ -836,7 +866,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 
 **バージョン**: Claude Code / Cursor / MCP Protocol 全バージョン
 **確信度**: 高
-**最終更新**: 2026-06-28
+**最終更新**: 2026-06-30
 
 ---
 
