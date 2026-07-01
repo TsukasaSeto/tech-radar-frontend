@@ -979,5 +979,8 @@
   "https://zenn.dev/hinapupil/articles/claude-code-harness-engineering-in-practice",
   "https://github.com/OWASP/CheatSheetSeries/commit/fd8d87b8cde1a15148512ced24348c7e525a1b47",
   "https://zenn.dev/nakayama_acari/articles/claude-code-agents-design",
-  "https://qiita.com/yurukusa/items/f75c17c3b37759c0009b"
+  "https://qiita.com/yurukusa/items/f75c17c3b37759c0009b",
+  "https://blog.sentry.io/spot-checking-ai-agents/",
+  "https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent",
+  "https://vercel.com/blog/dockerfile-on-vercel"
 ]
