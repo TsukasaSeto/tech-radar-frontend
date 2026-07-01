@@ -1218,5 +1218,8 @@
   "https://qiita.com/teppei19980914/items/2a6dc9cc5b418ca901c9",
   "https://dev.to/marcin_brzozka_ff45b1ccb6/how-to-review-ai-generated-code-before-merging-a-practical-checklist-4o65",
   "https://zenn.dev/microsoft/articles/password-new-standard-2025",
-  "https://zenn.dev/philomagi/articles/tech_for_safely_multi-agent_parallel_dev"
+  "https://zenn.dev/philomagi/articles/tech_for_safely_multi-agent_parallel_dev",
+  "https://blog.sentry.io/spot-checking-ai-agents/",
+  "https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent",
+  "https://vercel.com/blog/dockerfile-on-vercel"
 ]
