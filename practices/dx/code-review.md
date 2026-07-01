@@ -440,3 +440,35 @@ if (hasSourceChanges && !danger.git.modified_files.some((f) => f.includes('chang
 **バージョン**: reviewdog v0.20+, Danger.js v12+
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 5. TypeScript/ESLint が拾えない構造的規約は `konsistent` で静的に強制する
+
+「このパターンに一致するファイルは関数 X と Y を export する」のような、コード生成AIエージェントと人間の両方が守るべき構造的規約は、型システムや ESLint だけでは検出できない。プロジェクトルートの設定ファイルで規約を宣言し、CLI リンタで全ファイルを機械的にチェックすることで、AIエージェントが生成したコードも人間が書いたコードも同じ構造的一貫性を保てるようにする。
+
+**根拠**:
+- 型やESLintルールでは表現しづらい「ファイルパターンごとの必須export」のような規約を、プロジェクト固有ルールとして宣言的に定義できる
+- エージェント生成コードのレビューで毎回同じ構造的指摘をする手間を機械化できる（Rule #4 の「同じ指摘を3回以上したら自動化」の一種）
+- Vercel 自身の AI SDK / Chat SDK プロジェクトで実運用されている
+
+**コード例**:
+```jsonc
+// konsistent.json: ファイルパターンごとの規約を宣言
+{
+  "rules": [
+    {
+      "pattern": "src/tools/*.ts",
+      "mustExport": ["execute", "inputSchema"]
+    }
+  ]
+}
+```
+
+**出典引用**:
+> "`konsistent` is a CLI linter for TypeScript codebases that enforces structural conventions, giving agents and humans the consistent context they need to implement features correctly."
+> ([Enforce consistent code for agents and humans with konsistent](https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent), セクション "Announcement") ※2026-07-01に実際にfetch成功
+
+**バージョン**: konsistent（Vercel OSS CLI、2026-07-01 公開）
+**確信度**: 高
+**最終更新**: 2026-07-01
