@@ -393,6 +393,54 @@ allow_headers = ["sentry-trace", "baggage", "traceparent"]
 
 ---
 
+### 6. eval に頼りきらず、AIエージェントのトレースを人間が定期的に読む
+
+自動 eval は「既知の劣化」を検知できるが、「まだ気づいていない失敗パターン」は教えてくれない。エージェントの入出力・ツール呼び出しを安定した `conversation_id` 付きでトレースに記録し、エラー・パフォーマンス・ログと同じ場所（同一トレース基盤）に紐づけることで、モデル選定・ルーティング・プロンプト変更の判断材料を人間が直接確認できるようにする。
+
+**根拠**:
+- eval は既知のリグレッション検知には有効だが、想定していなかった失敗モードは検出できない
+- トレースがエラー・パフォーマンスデータ・ログと同じ基盤に載っていると、障害調査の導線が短くなる
+- コスト/品質のトレードオフ判断は自動化しきれず、人間が実際のやり取りを読んで意思決定する必要がある
+
+**コード例**:
+```ts
+// AI SDK: telemetry でエージェントの入出力とツール結果を記録
+experimental_telemetry: {
+  isEnabled: true,
+  functionId: "conference-scheduler.schedule",
+  recordInputs: true,
+  recordOutputs: true,
+  metadata: {
+    agent: "schedule",
+    model_id: config.id,
+    conversation_id: context.conversationId,
+  },
+},
+```
+
+```ts
+// Sentry: 会話開始時に conversation_id 付きでログを記録し、後から検索できるようにする
+Sentry.logger.info("agent conversation started", {
+  conversation_id: conversationId,
+  first_message: messages[0].content,
+  user_tier: identity.tier,
+  conversation_url: `https://your-app.com/admin/conversations/${conversationId}`,
+});
+```
+
+**出典引用**:
+> "My agent records inputs and outputs in its telemetry, so the whole exchange and every tool result land in Sentry with a stable `conversation_id` attached"
+> ([Reading the agent traces is how you make the call your eval can't](https://blog.sentry.io/spot-checking-ai-agents/), セクション "Make the traces easy to find") ※2026-07-01に実際にfetch成功
+
+> "An eval will tell you when a known thing regresses. It will not tell you what you haven't thought to check yet."
+> ([Reading the agent traces is how you make the call your eval can't](https://blog.sentry.io/spot-checking-ai-agents/), セクション "Read the agent traces before you reach for the fix") ※2026-07-01に実際にfetch成功
+
+**バージョン**: Sentry SDK（`Sentry.logger`）, Vercel AI SDK（`experimental_telemetry`）
+**確信度**: 高
+**最終更新**: 2026-07-01
+
+---
+
 ## 関連プラクティス
 
 - [`observability/logging.md`](./logging.md) - リクエスト ID とログの相関
