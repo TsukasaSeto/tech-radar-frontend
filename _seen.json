@@ -1221,5 +1221,11 @@
   "https://zenn.dev/philomagi/articles/tech_for_safely_multi-agent_parallel_dev",
   "https://blog.sentry.io/spot-checking-ai-agents/",
   "https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent",
-  "https://vercel.com/blog/dockerfile-on-vercel"
+  "https://vercel.com/blog/dockerfile-on-vercel",
+  "https://zenn.dev/numarn/articles/claude-md-memory-hierarchy-handson",
+  "https://zenn.dev/stockdev_sho/articles/48483005d272fa",
+  "https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5",
+  "https://zenn.dev/veripsa/articles/worktrees-not-enough-parallel-agents",
+  "https://zenn.dev/veripsa/articles/use-veripsa-with-claude-md",
+  "https://github.com/OWASP/CheatSheetSeries/commit/c2ead462da91b9d74bddaedacc5804d861930694"
 ]
