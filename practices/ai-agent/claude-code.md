@@ -864,6 +864,7 @@ fi
 - 反面、`_common.scss` / `style.scss` / `main.scss` のような共通ファイルは別ブランチでも内容衝突する。エージェントごとに「このファイルのみ編集」と明示しないとコンフリクトが集中する
 - **`isolation: "worktree"` の限界**: 絶対パス経由でのアクセス・サブエージェント完了後の cwd 継承など、worktree 境界を踏み越える事象が現実に発生する（1週間13件のインシデント報告あり）。エージェントへの指示では隔離を担保できず、`PreToolUse` フックによる決定論的なブロックが必要
 - **3段階の判定ロジック**: ①リードエージェントは無条件通過、②サブエージェントの worktree ルートを `git rev-parse --show-toplevel` で検証、③サブエージェントの worktree が主リポジトリと一致する場合はブロック
+- **worktree が守るのは「実行」であって「着地（マージ）」ではない**: 物理的なファイル競合が起きなくても、エージェントA がヘルパー関数のシグネチャを変更し、エージェントB が別の worktree でその呼び出し側を書き換えていた場合、両方の PR は個別に CI を通過し git 上のコンフリクトも起きない。しかし順番にマージすると意味的に噛み合わなくなり、実行時に初めて壊れる。対策は worktree 隔離だけでは不十分で、共有 API・関数シグネチャに触れる変更は PR 説明に明記させ、マージ前に呼び出し側への影響を人間または統合テストでレビューするステップを挟む
 
 **コード例**:
 ```bash
@@ -946,9 +947,15 @@ exit 0
 > 「ブランチは切った時点の状態を元に作業するので、別ブランチにしてワークツリーを立てたとて同じファイルを別々に編集すれば当然衝突する。」「『他ファイル編集禁止』くらいまで指定した方が安全そうである。」
 > ([【初心者】ワークツリーを切ってイキりまくり、エージェント並行開発をしていたらコンフリクトを連発した話と対策。](https://zenn.dev/wahe/articles/eda7fb1a7a2848), Zenn wahe) ※2026-05-16に実際にfetch成功
 
+> "worktree が分離しているのは実行（execution）であって、着地（merge）ではない。" / "マージした時に初めて噛み合わなくなるコードを書くこと。"
+> ([worktrees でエージェントを分けたのに、結局 main でぶつかった話](https://zenn.dev/veripsa/articles/worktrees-not-enough-parallel-agents), セクション "worktree が守ってくれる範囲") ※2026-07-03に実際にfetch成功
+
+**出典**（追加）:
+- [worktrees でエージェントを分けたのに、結局 main でぶつかった話](https://zenn.dev/veripsa/articles/worktrees-not-enough-parallel-agents) (Zenn veripsa、意味的マージコンフリクト・worktree 隔離では防げない実行時の噛み合わせ崩れ) ※2026-07-03 fetch
+
 **バージョン**: Claude Code + Git（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-06-10
+**最終更新**: 2026-07-03
 
 ---
 
@@ -1557,7 +1564,7 @@ Claude Code のサブエージェントはメイン会話のコンテキスト�
 }
 ```
 
-CLAUDE.md は**スコープ別に複数配置できる**: `~/.claude/CLAUDE.md`（個人グローバル：ロール・ツール選択）→ `{repo}/CLAUDE.md`（プロジェクト共通：アーキテクチャ方針・禁止操作）→ `{repo}/{subdir}/CLAUDE.md`（サブディレクトリ局所制約）。チーム共有すべきルールはリポジトリルートに、個人スタイルはグローバルに分離することで、ファイルの肥大化と個人情報の混入を防ぐ。サブディレクトリ CLAUDE.md は「そのディレクトリ以下でのみ有効」な制約を書く場所として、モジュール別の独立したルール管理を実現する。
+CLAUDE.md は**スコープ別に複数配置できる**: `~/.claude/CLAUDE.md`（個人グローバル：ロール・ツール選択）→ `{repo}/CLAUDE.md`（プロジェクト共通：アーキテクチャ方針・禁止操作）→ `{repo}/{subdir}/CLAUDE.md`（サブディレクトリ局所制約）→ `{repo}/CLAUDE.local.md`（個人用サンドボックス設定：テストURL・ダミーデータパス等、`.gitignore` 対象）。チーム共有すべきルールはリポジトリルートに、個人スタイルはグローバルに分離することで、ファイルの肥大化と個人情報の混入を防ぐ。サブディレクトリ CLAUDE.md は「そのディレクトリ以下でのみ有効」な制約を書く場所として、モジュール別の独立したルール管理を実現する。**読み込み順は広いスコープ→狭いスコープの順で、後に読まれた指示ほど「直近の文脈」として強く効く**ため、優先させたいプロジェクト固有ルールほど狭いスコープに書く。
 
 **CLAUDE.md に含めるべきもの**:
 - ディレクトリ構成・エントリポイント
@@ -1654,6 +1661,8 @@ MEMORY.md
 - CLAUDE.md に API キー・内部 URL を書いてコミット → 公開リポジトリで漏洩（.gitignore 必須）
 - `AGENTS.md` と `CLAUDE.md` を symlink で共有する → Windows ユーザーは `core.symlinks=false`（デフォルト）のため symlink が9バイトのダミーファイルになり、指示が無警告で消える。クロスプラットフォームチームでは symlink の代わりに `CLAUDE.md` 冒頭に `@AGENTS.md` 1行を書くインクルード形式（Claude Code 公式機能）を使う
 - チームリポジトリで `autoMemoryEnabled`（デフォルト有効）のまま運用する → 開発者ごとに異なる暗黙の文脈が蓄積し、同じコードで異なる挙動になり再現調査が困難になる
+- **`@import` で壊れたリンクを放置する**: タイポや削除でリンク先ファイルが存在しなくなっても、Claude Code は警告なく黙って読み込みをスキップする。「サブディレクトリの CLAUDE.md は cwd がそのサブディレクトリ内にあるときだけ読まれる」という条件と組み合わさると、「書いたつもりのルールが実は一度も読まれていない」状態に気づけない。定期的に import 検証スクリプト（`@`参照先の存在チェック）を CI や棚卸しフローに組み込む
+- 同じ事実を複数ドキュメント（CLAUDE.md・README・`.claude/rules/*`）に重複して書く（SSOT 違反）→ 片方だけ更新されもう片方が古いまま残り、AI が食い違う情報を同時に読んで出力が不安定になる
 
 **出典引用**:
 > "CLAUDE.md はリポジトリにコミットして新規メンバーの立ち上がりコスト削減にも使える。PR レビューの観点に『CLAUDE.md の更新が必要か』を入れるとルールの陳腐化を防げる"
@@ -1683,6 +1692,9 @@ MEMORY.md
 - [Claude Codeに「ファイルベースの永続メモリ」を持たせる：1ファイル1事実＋index方式](https://zenn.dev/ai_daigakusei/articles/claude-code-file-based-memory) (Zenn ai_daigakusei、1ファイル1事実パターン・インデックス分離設計・description設計の重要性) ※2026-06-15 fetch
 - [チームでClaude Codeを使うなら、自動メモリを切る選択肢もありだと思った](https://zenn.dev/hknote/articles/133b00bee2cf23) (Zenn hknote、チーム再現性のための `autoMemoryEnabled: false`・`.claude/settings.json` vs `.claude/settings.local.json` の使い分け) ※2026-06-19 fetch
 - [Claude Codeのmemoryファイルに更新漏れが3か所——「伝えた ≠ 更新した」の構造](https://zenn.dev/tottoko_hamu/articles/2026-06-15-100000) (Zenn tottoko_hamu、Coherence Bias 問題・複数ファイルの同期漏れパターン) ※2026-06-23 fetch
+- [CLAUDE.mdを置いただけで安心していた。実は「読まれる場所」と「読まれない場所」があった](https://zenn.dev/numarn/articles/claude-md-memory-hierarchy-handson) (Zenn numarn、サブディレクトリ CLAUDE.md の cwd 依存読み込み・`@import` 破損リンクの黙殺検証スクリプト) ※2026-07-03 fetch
+- [CLAUDE.md を読み込み順から設計する──三層テンプレと壊れる書き方](https://zenn.dev/stockdev_sho/articles/48483005d272fa) (Zenn stockdev_sho、`CLAUDE.local.md` を含む4層スコープと読み込み順の原則・アンチパターン before/after) ※2026-07-03 fetch
+- [CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5) (Zenn tmiyachi、SSOT原則・4項目への絞り込み) ※2026-07-03 fetch
 
 **出典引用**:
 > "索引と本体を分けて、やっと回り始めました"
@@ -1694,9 +1706,18 @@ MEMORY.md
 > "変更を『口頭で伝えた』だけで終わらせず、『どのファイルが影響を受けるか』を確認するワンステップを挟む"
 > ([Claude Codeのmemoryファイルに更新漏れが3か所——「伝えた ≠ 更新した」の構造](https://zenn.dev/tottoko_hamu/articles/2026-06-15-100000), セクション "Fundamental Principle") ※2026-06-23に実際にfetch成功
 
+> "サブディレクトリの CLAUDE.md は、作業しているディレクトリ(cwd)がそのサブディレクトリの中にあるときだけ読まれる"
+> ([CLAUDEmdを置いただけで安心していた。実は「読まれる場所」と「読まれない場所」があった](https://zenn.dev/numarn/articles/claude-md-memory-hierarchy-handson), セクション "結論") ※2026-07-03に実際にfetch成功
+
+> "読み込み順は広いスコープ → 狭いスコープ。後に読まれた指示ほど「直近の文脈」として効きます。"
+> ([CLAUDE.md を読み込み順から設計する──三層テンプレと壊れる書き方](https://zenn.dev/stockdev_sho/articles/48483005d272fa), セクション "4つのスコープと読み込み順を実パスで掴む") ※2026-07-03に実際にfetch成功
+
+> "複数のドキュメントに同じ事実を書くと、片方を更新したときにもう片方が古いまま残り、AIが食い違う情報を同時に読んで出力が不安定になります"
+> ([CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5), セクション "SSOT: 同じ事実は1か所にしか書かない") ※2026-07-03に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-06-23
+**最終更新**: 2026-07-03
 
 ---
 
