@@ -433,10 +433,20 @@ if (hasSourceChanges && !danger.git.modified_files.some((f) => f.includes('chang
 - 機械的に検出できる指摘は人間が書かない（時間の無駄）
 - ただし「自動化のためのスクリプトメンテナンス」が割に合うか定期的に評価
 
+**AI agent が作成した PR にも同じ自動ゲートを適用する**:
+AI agent が生成した PR だからといって人間の PR よりレビューを簡略化しない。
+むしろ「PR 前（ローカルでの diff サイズ確認）→ PR 中（lint/typecheck/test の必須化）→
+公開前（critical path の手動確認）」の 3 段階ゲートを明示し、reviewdog / danger の
+対象に AI agent 発の PR も含める。
+
+> "人間が review できる差分に切れるかどうかでかなり決まります"
+> ([AI agent が作ったコードを公開する前に、PR 経路へ security gate を差し込む](https://qiita.com/heftykoo/items/2ad35a96389a8d9897a4), セクション "PR中 gate") ※2026-06-30に実際にfetch成功
+
 **出典**:
 - [reviewdog](https://github.com/reviewdog/reviewdog) (reviewdog)
 - [Danger.js](https://danger.systems/js/) (Danger)
+- [AI agent が作ったコードを公開する前に、PR 経路へ security gate を差し込む](https://qiita.com/heftykoo/items/2ad35a96389a8d9897a4) (Qiita heftykoo、AI agent PR 向け3段階ゲート) ※2026-06-30に実際にfetch成功
 
 **バージョン**: reviewdog v0.20+, Danger.js v12+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-06-30
