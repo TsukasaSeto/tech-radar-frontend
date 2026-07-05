@@ -802,6 +802,8 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 - [ ] 外部リポジトリの clone 時は `.mcp.json` の内容を確認してから Claude Code / Cursor を起動する
 - [ ] `allowedTools` / `permissions` は Managed Settings で組織統制する（Rule #13 参照）
 - [ ] ツール定義のメタデータを正規化 JSON 化して SHA-256 でフィンガープリント化し、承認時に保存・実行前に再検証する（承認後のツール定義差し替え＝rug-pull / MCPoison 型攻撃の検知）
+- [ ] AI モデルファイルを外部から取り込む場合、`safetensors` 等の安全なフォーマットを優先し、`pickle` ベースのモデルは picklescan 等でスキャンする（modelscan 単体はブロックリスト方式で `.npz` 等の未対応フォーマットを見逃すため、複数スキャナの併用が前提）
+- [ ] 「誰が・どのツールを・どんな引数で・許可付きで呼んだか」を正規化 JSON で監査ログに残し、SOC/ブルーチームが事後にランタイム検知できる状態にする（OWASP MCP Top 10 相当のリスクに対する Sigma ルール等）
 
 **5つの主要攻撃パターン**:
 
@@ -895,6 +897,8 @@ class ToolPinStore:
 - [What nearly 10,000 developer environments reveal about agentic development risk](https://snyk.io/blog/agentic-development-security-ai-coding-risk/) (Snyk公式ブログ、実測統計・ツール定義への392件プロンプトインジェクション・13.4% critical skills) ※2026-06-23 fetch
 - [MCPツールポイズニング (CVE-2025-54136 / MCPoison) の実証と対策](https://zenn.dev/kta1kri/articles/mcp-tool-poisoning) (Zenn kta1kri、承認バイパス型ポイズニング・名前紐づけ承認の脆弱性・スキーマピニング防御) ※2026-06-27に実際にfetch成功
 - [MCPのツールポイズニングを実演し、クライアント側で防ぐ](https://zenn.dev/libercraft/articles/20260630-mcp-security-tool-poisoning) (Zenn libercraft、ツール定義フィンガープリンティングによる rug-pull 検知の実装例) ※2026-06-30に実際にfetch成功
+- [AIモデルファイルは本当に「安全」か — スキャナを実機で回してわかった、防げる攻撃・防げない攻撃](https://zenn.dev/kta1kri/articles/mcp-supply-chain-model-scanners) (Zenn kta1kri、modelscan/picklescan の検知範囲比較・ブロックリスト方式の限界) ※2026-07-05に実際にfetch成功
+- [OWASP MCP Top 10 の「動く検知ルール集」をOSSで公開した（依存ゼロで検証できる）](https://zenn.dev/kta1kri/articles/mcp-detection-oss) (Zenn kta1kri、SOC向けランタイム検知の Sigma ルール・監査テレメトリ設計) ※2026-07-05に実際にfetch成功
 
 > "エージェントがオープンなWebをブラウズしつつ、特権を持つローカルサービスとも通信できるようになった時点で、localhostは信頼境界ではなくなる"
 > ([localhostを信頼するAIエージェントをWebページ1枚で乗っ取るAutoJack](https://zenn.dev/okssusucha/articles/20260620-autojack-autogen-studio-localhost-rce), セクション "なぜ「localhostは安全」が崩れるのか") ※2026-06-20に実際にfetch成功
@@ -904,6 +908,12 @@ class ToolPinStore:
 
 > "承認は名前に紐づいているので、再承認は求められず、汚染版がそのまま実行される"
 > ([MCPツールポイズニング (CVE-2025-54136 / MCPoison) の実証と対策](https://zenn.dev/kta1kri/articles/mcp-tool-poisoning), Zenn kta1kri, セクション "承認の仕組み") ※2026-06-27に実際にfetch成功
+
+> "modelscan は「ブロックリスト方式」＝原理的な穴がある"
+> ([AIモデルファイルは本当に「安全」か — スキャナを実機で回してわかった、防げる攻撃・防げない攻撃](https://zenn.dev/kta1kri/articles/mcp-supply-chain-model-scanners), セクション "modelscanの限界") ※2026-07-05に実際にfetch成功
+
+> "「誰が・どのツールを・どんな引数で・許可付きで呼んだか」を残していないと、他の全攻撃が沈黙のまま成功する。"
+> ([OWASP MCP Top 10 の「動く検知ルール集」をOSSで公開した（依存ゼロで検証できる）](https://zenn.dev/kta1kri/articles/mcp-detection-oss), セクション "なぜ重要か（SOC視点）") ※2026-07-05に実際にfetch成功
 
 **バージョン**: Claude Code / Cursor / MCP Protocol 全バージョン
 **確信度**: 高

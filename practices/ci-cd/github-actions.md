@@ -597,6 +597,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - AWS IAM ロールの信頼ポリシーで GitHub リポジトリ・ブランチを絞れるため、最小権限原則と相性がよい
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
 - 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
+- OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
 
 **コード例**:
 ```yaml
@@ -639,6 +640,32 @@ jobs:
 }
 ```
 
+**Terraform で OIDC プロバイダー + IAM ロールをコード化する**:
+```hcl
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+}
+
+resource "aws_iam_role" "github_actions_deploy" {
+  name = "github-actions-deploy"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
+      Action    = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringLike = {
+          "token.actions.githubusercontent.com:sub" = "repo:my-org/my-repo:ref:refs/heads/main"
+        }
+      }
+    }]
+  })
+}
+```
+
 **移行チェックリスト**:
 - [ ] workflow に `permissions.id-token: write` を追加
 - [ ] `role-to-assume` に IAM ロール ARN（`vars.OIDC_ROLE_ARN` 等）を設定
@@ -669,6 +696,11 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [GitHub ActionsからAWSへの認証をOIDCで行う](https://zenn.dev/hisa_tech_2973/articles/9f41f231827ec4) (Zenn) ※2026-05-21に実際にfetch成功
 - [GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97) (Zenn、鍵素材を外に出さず KMS で署名する応用パターン) ※2026-05-22に実際にfetch成功
 - [GitHub ActionsとWorkload Identity Federationによるサービスアカウント キーレス化の実践](https://zenn.dev/tk_nomura/articles/2026-07-wif-keyless-github-actions) (Zenn TK、GCP版OIDCキーレス化と`attribute_condition`によるリポジトリ/ブランチ/タグ絞り込み) ※2026-07-08に実際にfetch成功
+- [GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f) (Zenn、OIDC プロバイダー作成込みの Terraform コード例) ※2026-07-05に実際にfetch成功
+
+**出典引用**:
+> "OIDC（OpenID Connect）を使うと、GitHub Actions が実行される際にAWSへの短期トークン（一時的なクレデンシャル）を動的に発行できます。"
+> ([GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f), セクション "なぜ OIDC か？") ※2026-07-05に実際にfetch成功
 
 > "本手法では秘密鍵は Cloud KMS から外に出ることなく、署名処理のみを KMS API で行います。秘密鍵そのものを手元で管理する必要がなくなるため、流出リスクを大幅に低減できます。"
 > ([GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97), セクション "Flow/Process") ※2026-05-22に実際にfetch成功
