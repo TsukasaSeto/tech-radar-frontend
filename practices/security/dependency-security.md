@@ -777,6 +777,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 | Confused Deputy | AI の委任権限を悪用して未認可操作を実行 | 承認ダイアログの内容を毎回確認（「常に許可」を使わない） |
 | **ビルド出力ハイジャック** | ANSI エスケープコードで人間の端末から隠した命令を AI エージェントのログ解析に見せる（2026-06 jqwik 1.10.0 protestware）| テスト出力・ビルドログを AI コンテキストに自動注入しない。破壊的操作は人間の確認を必須にする |
 | **Localhost 信頼境界バイパス** | Web ページから `localhost`/`127.0.0.1` で動く AI エージェントプロセスへ認証なしでアクセスし任意コマンドを実行（AutoJack, AutoGen Studio CVE）。エージェントが Web ブラウズ可能かつローカルサービスとも通信できる状態が前提 | エージェントを別 OS ユーザー・コンテナ・VM で分離。MCP 実行ファイルは許可リスト制。Web ブラウジングと特権ローカルサービスを同一ネットワーク境界で動作させない |
+| **STDIO トランスポートのコマンド未検証実行** | MCP の STDIO インターフェースがコマンド文字列を検証・サニタイズ・サンドボックスなしにサブプロセス実行へ渡す設計になっており、`npx -c` のようなフラグでアローリストを間接的に迂回できる（単一情報源の報告のため件数は参考値） | MCP サーバーを localhost 限定で待受、外部入力を渡す前に禁止文字（`; \| && $() `` >`）を検査、コマンドは文字列でなくリストとして渡す（`shlex.split` 等）、プロセスをコンテナ + 最小権限 + read-only fs でサンドボックス化 |
 
 **出典引用**:
 > "承認制はあっても、UIの設計次第でその意味が失われる"
@@ -841,6 +842,10 @@ class ToolPinStore:
 > "The code prints the instruction line, then prints `ESC [2K` followed by a carriage return — the message disappears from human-readable terminals while remaining visible to automated tools."
 > ([Protestware by open source maintainer to hinder agentic coding: The jqwik 1.10.0 Prompt Injection](https://snyk.io/blog/protestware-open-source-maintainer-qwik-1-10-0-prompt-injection/), Snyk Blog, セクション "Attack Vector") ※2026-06-02に実際にfetch成功
 
+**出典引用**:
+> "コアの問題: MCP の STDIO インターフェースは、任意のコマンド文字列を受け取り、検証・サニタイズ・サンドボックスなしに サブプロセス実行に渡します。"
+> ([MCPのSTDIO設計欠陥 — 200K+サーバーが晒されたRCEリスクと必須対策](https://zenn.dev/kai_kou/articles/242-mcp-systemic-vulnerability-rce-guide), セクション "コアの問題") ※2026-07-05に実際にfetch成功（記事中のCVE件数・影響サーバー数は単一情報源の主張であり未検証）
+
 > "Risk now enters before code reaches the repository, shifting the core security question from 'Is this code secure?' to 'Can we trust the system that created it?'"
 > ([The New Security Risks of the Agentic Development Lifecycle](https://snyk.io/blog/agentic-development-lifecycle/), セクション "The Shift from Artifact to Process Security") ※2026-06-03に実際にfetch成功
 
@@ -866,7 +871,7 @@ class ToolPinStore:
 
 **バージョン**: Claude Code / Cursor / MCP Protocol 全バージョン
 **確信度**: 高
-**最終更新**: 2026-06-30
+**最終更新**: 2026-07-05
 
 ---
 

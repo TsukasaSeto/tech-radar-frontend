@@ -1838,6 +1838,18 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - MCP は接続を広げるだけでなく「エージェントが見える世界を意図的に狭める」ツールとして活用できる
 - Hook (PreToolUse) だけに頼ると `env VAR=val cmd` 形式でラップされた際に文字列検査をすり抜けるため、サンドボックスと組み合わせる
 
+**6段階のパーミッションモード**（安全な順）:
+| モード | 挙動 |
+|---|---|
+| `default` | 読み取りは自動、編集は都度確認 |
+| `plan` | 実行前に変更計画を提示 |
+| `acceptEdits` | ファイル編集のみ自動承認 |
+| `auto` | バックグラウンドの安全性分類器が安全なコマンドを承認 |
+| `dontAsk` | 事前許可済みコマンドのみ実行（CI・無人自動化向け） |
+| `bypassPermissions`（`--dangerously-skip-permissions`） | 安全チェックを全無効化 |
+
+`default` で確認が煩雑になったら `acceptEdits` を経由し、`auto` が利用できる環境ではバックグラウンド分類器に日常承認を委ねるのが安全な段階移行。`bypassPermissions` は使い捨て隔離環境専用であり、常用は運用事故のもと。
+
 **6カテゴリのリスク分類と対策**:
 
 | カテゴリ | リスク | 対策層 |
@@ -1880,9 +1892,15 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 > "AIエージェントに仕事を任せるとは、AIを信頼することではない。AIが間違えてもチームが回収できる形に仕事を切ることだ"
 > ([AIエージェント時代、開発者の仕事は「許可する環境」を設計することになる](https://zenn.dev/heftykoo/articles/1c647688784214)) ※2026-06-08に実際にfetch成功
 
+> "`--dangerously-skip-permissions` is、普段使ってはいけません。これは安全チェックを全部切る隔離環境専用のモードです。"
+> ([Claude Code 権限モード完全ガイド【2026】](https://zenn.dev/joemike/articles/claude-code-permission-modes-bypass-to-auto-2026), セクション "bypassPermissions") ※2026-07-05に実際にfetch成功
+
+**出典**:
+- [Claude Code 権限モード完全ガイド【2026】](https://zenn.dev/joemike/articles/claude-code-permission-modes-bypass-to-auto-2026) (Zenn、6モード比較と段階移行の推奨) ※2026-07-05 fetch
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-06-09
+**最終更新**: 2026-07-05
 
 ---
 
@@ -2038,6 +2056,8 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - `.claude/agents/` 配下の YAML フロントマターで `model:` フィールドを指定すると、サブエージェントごとにモデルを切り替えられる（Claude Code 公式機能）
 - 深い階層のエージェントは上位からの指示が既に絞り込まれた状態で動くため Opus の推論力は不要
 - `CLAUDE_CODE_SUBAGENT_MODEL` 環境変数でデフォルトモデルを一括設定できる
+- 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
+- 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
 
 **コード例**:
 ```yaml
@@ -2121,14 +2141,18 @@ tools: Read, Grep, Edit, Write, Bash
 > 「サブエージェントが許可拒否を受けると、自動で同じエージェントを再呼出しするループに入ることがある。toolsにAgentを含めないことで構造的に防止できる」
 > ([Claude Codeサブエージェントの暴走と再帰ループ防止パターン](https://qiita.com/yurukusa/items/f75c17c3b37759c0009b), セクション "再帰ループの防止") ※2026-06-27に実際にfetch成功
 
+> "複雑な依頼を受けた turn で、thinking + 出力を数千〜数万トークン一気に生成する...完了まで数分かかり、その間画面が無音になる。"
+> ([Claude Code (Opus 4.8) が数分固まる問題、188セッション実測したら原因はAPIでもネットワークでもなかった](https://zenn.dev/yuki_fujisawa/articles/a155d388e61acc), セクション "根本原因: 長考生成 turn") ※2026-07-05に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
 - [Claude Codeサブエージェントの暴走と再帰ループ防止パターン](https://qiita.com/yurukusa/items/f75c17c3b37759c0009b) (Qiita) ※2026-06-27 fetch
+- [Claude Code (Opus 4.8) が数分固まる問題、188セッション実測したら原因はAPIでもネットワークでもなかった](https://zenn.dev/yuki_fujisawa/articles/a155d388e61acc) (Zenn、188セッション・14,000ターンの実測調査) ※2026-07-05 fetch
 
 **バージョン**: Claude Code v2.1.172+
 **確信度**: 高
-**最終更新**: 2026-06-27
+**最終更新**: 2026-07-05
 
 ---
 

@@ -101,14 +101,36 @@ dayjs(date).format('YYYY年MM月DD日');
 - `dayjs` / `date-fns` は **計算**（add / subtract / diff）に特化
 - 両方使い分け：計算は date-fns、表示は `Intl`
 
+**`Temporal` API 併用時の注意（`iso8601` vs `gregory`）**:
+`Temporal.PlainYearMonth` / `Temporal.PlainMonthDay` はデフォルトで暦（calendar）が `iso8601`（年0が存在する天文学的年数、時代区分なし）だが、
+`Intl.DateTimeFormat` は実用上のグレゴリオ暦 `gregory`（BCE/CE）を前提にしており、この2つの暦は年月・月日型では相互変換できない。
+`Intl.DateTimeFormat` に渡す前に `calendar: 'gregory'` を指定して明示的に再構築する。
+
+```javascript
+const pym = Temporal.PlainYearMonth.from('2026-07');
+// Bad: iso8601 のまま Intl.DateTimeFormat に渡すと意図しない結果になりうる
+// Good: gregory で明示的に再構築してから渡す
+const pymGregory = Temporal.PlainYearMonth.from({
+  year: pym.year,
+  month: pym.month,
+  calendar: 'gregory',
+});
+new Intl.DateTimeFormat('ja').format(pymGregory); // '2026/7'
+```
+
 **出典**:
 - [MDN: Intl.DateTimeFormat](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat) (MDN Web Docs)
 - [ECMA-402: DateTimeFormat](https://tc39.es/ecma402/#datetimeformat-objects) (TC39)
 - [Unicode CLDR](https://cldr.unicode.org/) (Unicode)
+- [ECMAScriptにおけるグレゴリオ暦: `iso8601`と`gregory`](https://zenn.dev/fabon/articles/c4b2efbb0c526b) (Zenn、Temporal と Intl の暦不整合の実例) ※2026-07-05に実際にfetch成功
 
-**バージョン**: 全モダンブラウザ
+**出典引用**:
+> "暦が`iso8601`のときにISO 8601の週番号を返しますが、それ以他の暦では`undefined`になります。"
+> ([ECMAScriptにおけるグレゴリオ暦: `iso8601`と`gregory`](https://zenn.dev/fabon/articles/c4b2efbb0c526b), セクション "Temporal") ※2026-07-05に実際にfetch成功
+
+**バージョン**: 全モダンブラウザ、Temporal は Stage 3+ / モダンブラウザ実装済み
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-05
 
 ---
 

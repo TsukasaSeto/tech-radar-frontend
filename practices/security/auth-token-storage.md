@@ -540,6 +540,7 @@ XSS でコードを実行されても攻撃者は鍵を外部に持ち出せな�
 - `window.crypto.subtle.generateKey()` で `extractable: false` を指定した `CryptoKey` は署名には使えるが `.exportKey()` で外に出せない
 - `localStorage` / `sessionStorage` は文字列のみ保存でき `CryptoKey` を格納できない。IndexedDB だけが Structured Clone Algorithm で `CryptoKey` を格納できる
 - 「ブラウザ外に秘密鍵が出られない」+「盗まれたトークンを別デバイスから再送できない」の2条件が揃い、XSS に対する根本的な耐性が得られる
+- OWASP JWT Cheat Sheet も「DPoP Proof JWT」を鍵所有証明の正式なユースケースとして明記しており、署名方式は公開鍵暗号（EdDSA / ECDSA 等）を優先しHMACのような対称鍵方式は避けるべきとしている
 
 **コード例（鍵生成・永続化・DPoP Proof 作成）**:
 ```javascript
@@ -594,9 +595,14 @@ async function createDPoPProof(method, url) {
 - [DPoP + IndexedDB でフロントエンドセッションをがっちり守る](https://zenn.dev/kuboon/articles/e5d955f2cba108) (Zenn、ブラウザ実装ガイド) ※2026-05-24にfetch成功
 - [MDN: SubtleCrypto.generateKey()](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto/generateKey) (MDN Web Docs)
 - [MDN: IndexedDB API](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API) (MDN Web Docs)
+- [OWASP JWT Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/f54d8ded2764010ecacd0deb87e1586da32d41dd) (OWASP CheatSheetSeries、DPoP Proof JWT の公式ユースケース追加・署名方式推奨表を追記した commit) ※2026-07-04に実際にfetch成功
+
+**出典引用**:
+> "A DPoP Proof JWT can be used to prove possession of a private key."
+> ([OWASP JWT Cheat Sheet — Introduction section 更新](https://github.com/OWASP/CheatSheetSeries/commit/f54d8ded2764010ecacd0deb87e1586da32d41dd), セクション "Introduction") ※2026-07-04に実際にfetch成功
 
 **バージョン**: モダンブラウザ（Web Crypto API + IndexedDB 対応、Firefox/Chrome/Safari）
-**確信度**: 中
-**最終更新**: 2026-05-24
+**確信度**: 高
+**最終更新**: 2026-07-04
 
 ---
