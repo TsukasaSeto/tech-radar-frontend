@@ -302,6 +302,7 @@ UIの意図しない見た目の変化を自動的に検出する。
 - スクリーンショットは CI のアーティファクトとして保存でき、差分を視覚的にレビューできる
 - `maxDiffPixelRatio` で許容誤差を設定でき、アンチエイリアスや描画差異によるフレーキーを軽減できる
 - Sentry をすでに使用するチームは Sentry Snapshots（beta）で CI 統合型スクリーンショット差分を追加できる。PR ごとに差分を検出して自動ブロックし、メタデータをエージェントのコンテキストとして渡せる点が特徴
+- **Playwright 専用ではなく Vitest 4 の Browser Mode でも同種の視覚的回帰テストが書ける**（`toMatchScreenshot()`）。実運用の初回導入では複数の詰まりどころが報告されている: ブラウザプロバイダー設定、非同期レンダリング完了待ち、初回実行時のベースライン画像未存在エラー、依存パッケージ解決、オプションのネスト構造の違い。Playwright と Vitest どちらもコンポーネント/ページ単位のツールを既に使っている場合は、E2E とユニット/コンポーネントテストで視覚的回帰の仕組みを分けずに揃えられる
 
 **コード例**:
 ```ts
@@ -352,10 +353,14 @@ test.describe('視覚的回帰テスト', () => {
 - [Playwright Docs: Visual Comparisons](https://playwright.dev/docs/test-snapshots) (Playwright公式)
 - [Playwright API: toHaveScreenshot](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1) (Playwright公式)
 - [Catch visual regressions with Snapshots, now in beta](https://blog.sentry.io/snapshots-available-beta/) (Sentry Blog、CI 統合型スクリーンショット差分 + エージェントコンテキスト対応) ※2026-06-11 fetch
+- [Vitest 4 の Browser Mode で toMatchScreenshot を初めて書いてみた](https://zenn.dev/clopy/articles/vitest4-browser-mode-visual-regression-log) (Zenn Clopy、初回導入で遭遇した5つの詰まりどころの実体験ログ) ※2026-07-08に実際にfetch成功
 
-**バージョン**: Playwright 1.40+
+> "プロバイダー設定・非同期レンダリング待ち・ベースライン未存在・依存解決・オプションのネストという5つの壁に順番にぶつかった"
+> ([Vitest 4 の Browser Mode で toMatchScreenshot を初めて書いてみた](https://zenn.dev/clopy/articles/vitest4-browser-mode-visual-regression-log), セクション "つまずいたポイント") ※2026-07-08に実際にfetch成功
+
+**バージョン**: Playwright 1.40+ / Vitest 4+（Browser Mode）
 **確信度**: 高
-**最終更新**: 2026-06-11
+**最終更新**: 2026-07-08
 
 ---
 

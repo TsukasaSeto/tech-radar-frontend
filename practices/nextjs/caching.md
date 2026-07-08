@@ -13,6 +13,7 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 **根拠**:
 - 各キャッシュ層は独立しており、適切な層を無効化しないと古いデータが表示される
 - デフォルトが変わったバージョン（13→15）があるため明示的な指定が安全
+- **開発モードでの検証は Data Cache の挙動を隠す**: `fetch` リクエストに `cache-control: no-cache` ヘッダーが付く場合（開発モードのハードリロード等）、`options.cache` / `options.next.revalidate` / `options.next.tags` は無視される。そのためローカル開発では「DB更新後すぐ最新が表示される」ように見えても、本番相当の環境では Data Cache が効いたまま古いデータが表示され続けるバグに気づけない
 
 **コード例**:
 ```
@@ -24,10 +25,14 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 
 **出典**:
 - [Next.js Docs: Caching Overview](https://nextjs.org/docs/app/building-your-application/caching) (Next.js公式)
+- [Next.js App Router で DB を更新しても表示データが古いまま — 原因はサーバー側の Data Cache だった](https://zenn.dev/miyuyu/articles/nextjs-data-cache-not-updated) (Zenn yuyami-ya、開発モードで `no-cache` ヘッダーが付くと cache オプションが無視され本番との挙動差でバグを見逃す原因を解説) ※2026-07-08に実際にfetch成功
+
+> "開発モードでは、`fetch` リクエストに `cache-control: no-cache` ヘッダーが含まれる場合、`options.cache` / `options.next.revalidate` / `options.next.tags` は無視されます"
+> ([Next.js App Router で DB を更新しても表示データが古いまま](https://zenn.dev/miyuyu/articles/nextjs-data-cache-not-updated), セクション "なぜローカルでは最新が出たのか") ※2026-07-08に実際にfetch成功
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-07-08
 
 ---
 

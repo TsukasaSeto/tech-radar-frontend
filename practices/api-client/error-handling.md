@@ -166,6 +166,7 @@ if (error) {
 - ジッターを加えることでリトライのタイミングを分散させ、サーバーへの負荷集中を防ぐ
 - ky の `retry` オプションは指数バックオフとジッターを組み込みでサポートしている
 - べき等でない操作（POST等）はリトライしない
+- **失敗を待ってからリトライするのではなく、遅延しきい値で予防的にバックアップリクエストを送る「Hedged Requests」も有効な補完策**: LLM/STT API 等テール遅延（p95/p99）が長いべき等な呼び出しでは、`hedgeAfterMs` 経過時点でバックアップリクエストを追加送信し、先に完了した方を採用・残りをキャンセルする。通常の指数バックオフ＋ジッターは「失敗後」のリカバリ、Hedged Requests は「遅延時」の先制対応という異なる軸の戦略であり、べき等性とキャンセル処理の実装が前提になる
 
 **コード例**:
 ```ts
@@ -323,10 +324,11 @@ ky.create({
 - [RFC 9110: HTTP Semantics - Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#field.retry-after) (IETF)
 - [RFC 9110: HTTP Semantics - Idempotent Methods](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2) (IETF)
 - [Stripe API: Idempotent Requests](https://docs.stripe.com/api/idempotent_requests) (Stripe Docs)
+- [TypeScriptでHedged Requestsを実装する：LLM/STT APIの尾遅延を面接で説明する](https://qiita.com/Karentia/items/21c03624da1be9c7e4fc) (Qiita Karentia、遅延しきい値でのバックアップリクエスト送信・冪等性とキャンセル処理の実装例) ※2026-07-08に実際にfetch成功
 
 **バージョン**: ky 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-07-08（補強）
 
 ---
 
