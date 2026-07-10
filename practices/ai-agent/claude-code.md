@@ -1866,6 +1866,9 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - エージェント設計の核心は「信頼」ではなく「どこまで自律して何を人間に戻すか」の境界設計
 - MCP は接続を広げるだけでなく「エージェントが見える世界を意図的に狭める」ツールとして活用できる
 - Hook (PreToolUse) だけに頼ると `env VAR=val cmd` 形式でラップされた際に文字列検査をすり抜けるため、サンドボックスと組み合わせる
+- README は仕様書ではなく入力（信頼できない外部データ）である。「README に書いてあるから」は agent にとって実行の許可にならない。read-only な調査（`ls` / `find` / `cat`）と、実行を伴う操作（`npm install` 等のインストール・ネットワークアクセス・シークレットファイル読み取り）を、README を読ませる前に分離しておく
+- 確認プロンプトを無効化していても、PreToolUse フックによる正規表現ベースの遮断（再帰的削除・`sudo` 等の権限昇格コマンドの検出）は独立して機能し続ける。フックは「確認」ではなく「実行前の物理的な遮断層」として設計する
+- Hook によるコマンド遮断（入力側）とは別に、チャット常駐エージェントの出力に機密情報が漏れるリスクには、正規表現 → NER → LLM検証の多段パイプラインで安価な手法を先に通す設計が有効という指摘もある（コード例は未提示、参考情報として）
 
 **6段階のパーミッションモード**（安全な順）:
 | モード | 挙動 |
@@ -1913,6 +1916,7 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 **アンチパターン**:
 - `--dangerously-skip-permissions` の使用（すべての安全装置を無効化するため運用NG。代わりに `dontAsk` モードを使う）
 - 単一の Hook (PreToolUse) のみに依存する（ラッパーコマンドによる迂回を防げない）
+- README に「これを実行してください」と書かれているだけで、agent がそのまま実行してよい許可だと解釈する
 
 **出典引用**:
 > "単一の機構で守れる前提を捨てるのがこの記事の背骨です"
@@ -1924,12 +1928,23 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 > "`--dangerously-skip-permissions` is、普段使ってはいけません。これは安全チェックを全部切る隔離環境専用のモードです。"
 > ([Claude Code 権限モード完全ガイド【2026】](https://zenn.dev/joemike/articles/claude-code-permission-modes-bypass-to-auto-2026), セクション "bypassPermissions") ※2026-07-05に実際にfetch成功
 
+> 「README に書いてあるから」は、agent にとって許可ではない。
+> ([README は仕様書ではなく、入力である](https://zenn.dev/heftykoo/articles/30678fef448d73), セクション "README は仕様書ではなく、入力である") ※2026-07-10に実際にfetch成功
+
+> "確認を消しても、フックによる遮断は残る"
+> ([3-Layer Defense Against Autonomous AI Agent Failures](https://zenn.dev/keithval/articles/ai-agent-72h-sprint-day1), セクション "層2: PreToolUse フックで、危険な操作を実行前に殺す") ※2026-07-10に実際にfetch成功
+
 **出典**:
+- [Claude Code 無人自律編 — ask が無力な世界で機構で守る](https://zenn.dev/kojisumiyoshi/articles/ai-agent-unattended-autonomy) ※2026-06-09に実際にfetch成功
+- [AIエージェント時代、開発者の仕事は「許可する環境」を設計することになる](https://zenn.dev/heftykoo/articles/1c647688784214) ※2026-06-08に実際にfetch成功
 - [Claude Code 権限モード完全ガイド【2026】](https://zenn.dev/joemike/articles/claude-code-permission-modes-bypass-to-auto-2026) (Zenn、6モード比較と段階移行の推奨) ※2026-07-05 fetch
+- [README は仕様書ではなく、入力である](https://zenn.dev/heftykoo/articles/30678fef448d73) (Zenn) ※2026-07-10に実際にfetch成功
+- [3-Layer Defense Against Autonomous AI Agent Failures](https://zenn.dev/keithval/articles/ai-agent-72h-sprint-day1) (Zenn) ※2026-07-10に実際にfetch成功
+- [チャット常駐AIの出力から機密情報を自動マスキングする設計パターン](https://zenn.dev/hach/articles/chat-ai-masking-design) (Zenn、参考：出力側マスキングの多段パイプライン、コード例なし) ※2026-07-10に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-05
+**最終更新**: 2026-07-10
 
 ---
 
@@ -2013,8 +2028,29 @@ claude agents
 - タスクを巨大なまま渡すと、AI は見えない前提（アーキテクチャ・API 変更・状態管理方針）を独断で決める
 - 仕様書に「停止条件（Stop conditions）」を書くことで、不明点の前に AI が自己判断で進むのを防げる
 - CLAUDE.md に明示的に「残タスクを通知なしに記録するだけで終了することは禁止」と書かなければ、記録が完了シグナルになる
+- 完了条件が書けないのは「プロンプト力の不足」ではなく、タスクがまだ委任できる形になっていないシグナルである。完了条件は検証方法によって3タイプに分類できる：**到達型**（決定的・ゴール既知 → Stop hook で検証スクリプトを実行）、**収束型**（決定的・範囲未知 → 「打ち切り」の定義と試行回数上限を明示）、**ルーブリック＋判定型**（非決定的 → 独立judgeエージェントで十分条件を判定）
+- ループ実行のハーネスが弱いと、失敗を量産する。Workflow guard（プロセス制御）・Step guard（手順）・Verdict guard（構造化された判定出力）・Quality gate guard（決定的チェック）・Standards guard（コーディング/テスト規約）の5層でガードを分散配置し、単一の巨大な検証に頼らない
 
 **コード例**:
+```bash
+# 収束型の完了条件をStop hookで強制する例（試行回数の上限つき）
+prompt=$(printf '%s' "$input" | jq -r '.tool_input.prompt // ""')
+if ! printf '%s' "$prompt" | grep -q '<success_criteria>'; then
+  jq -n '{hookSpecificOutput: {permissionDecision: "deny",
+  permissionDecisionReason: "完了条件がありません。"}}'
+fi
+```
+
+```yaml
+# Workflow guard: 反復上限と打ち切り時の挙動を明示する
+cycles:
+  code-review:
+    entry: review-code
+    loop: [fix-code, verify-code]
+    max_iterations: 3
+    on_exhaust: ABORT
+```
+
 ```markdown
 ## タスク仕様書テンプレート（8セクション）
 
@@ -2067,13 +2103,23 @@ UI の再設計・認証フローの変更は本タスクに含まない
 > "Claude stops when the work **looks** done. Without a check it can run, 'looks done' is the only signal available."
 > ([Claude Codeが残課題を放置する理由と対策](https://zenn.dev/acntechjp/articles/ce83f62acf41c0), セクション "Layer 1") ※2026-06-12に実際にfetch成功
 
+**出典引用**:
+> "完了条件が書けないのはプロンプト力の不足ではなく、タスクがまだ委任できる形になっていないシグナル"
+> ([Claude Code Loop Analysis 記事](https://zenn.dev/gemcook/articles/467b1233efe811), セクション "事件2") ※2026-07-10に実際にfetch成功
+
+> "ハーネスが弱い loop は、開発を速くするのではなく、失敗を量産する。"
+> ([Guarded Loop Engineering](https://zenn.dev/kamo78/articles/kaji-guarded-loop-engineering), セクション "ハーネスが弱い loop は、失敗を量産する") ※2026-07-10に実際にfetch成功
+
 **出典**:
 - [AIエージェントに渡す仕様書の書き方──巨大な依頼を壊さず小さく渡す](https://zenn.dev/aiwatch_jp/articles/agent-flow-spec-writing) (Zenn、8セクション仕様書フレームワーク) ※2026-06-12に実際にfetch成功
 - [Claude Codeが残課題を放置する理由と対策](https://zenn.dev/acntechjp/articles/ce83f62acf41c0) (Zenn、3層構造の診断と CLAUDE.md 強制ルールによる解決) ※2026-06-12に実際にfetch成功
+- [Claude Code Loop Analysis 記事（完了条件の3分類）](https://zenn.dev/gemcook/articles/467b1233efe811) (Zenn) ※2026-07-10に実際にfetch成功
+- [プロンプトを打つからループを設計するへ（ループを構成する6つの部品）](https://zenn.dev/nenene01/articles/loop-engineering-claude-code) (Zenn) ※2026-07-10に実際にfetch成功
+- [Guarded Loop Engineering（5層ガード設計）](https://zenn.dev/kamo78/articles/kaji-guarded-loop-engineering) (Zenn) ※2026-07-10に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン）
 **確信度**: 高
-**最終更新**: 2026-06-12
+**最終更新**: 2026-07-10
 
 ---
 
@@ -2255,6 +2301,8 @@ AI エージェントの PR は「何が変わったか」は見えるが「な�
 - AI の出力を「信じるか信じないか」ではなく「断れる形にしておく」ことが安全な運用の核心
 - Issue に禁止事項・検証コマンドを明記することで、エージェントの暴走範囲を事前に絞れる
 - 不採用案の記録により、同じ実装を再度試みることをレビュアーが止めやすくなる
+- 複数の AI エージェント（Copilot / Claude / Codex 等）が並行して PR を量産する状況では、単一 PR の意思決定ログだけでは不十分。「この PR は、今 open な他の PR と main 上でぶつかりそうか。ぶつかるなら、どの PR を先に入れると手戻りが少ないか」という **PR 間の着地順序** を判断するレイヤーを、個別 PR の CI 検証とは別に設ける必要がある
+- 複雑な着地順序の判断は AI が自律解決できる範囲を超えるため、`action_required` 相当のステータスが出た場合は人間の ACK を必須にする
 
 **Issue 仕様テンプレート**:
 ```markdown
@@ -2293,9 +2341,16 @@ pnpm lint
 > 「AIを信じるのではなく、AIの出力を断れる形にしておく」
 > ([AIエージェントのPRは「差分」ではなく「意思決定ログ」としてレビューする](https://zenn.dev/heftykoo/articles/2ef4dac14f86bc), セクション "セキュリティ対応としてのAIレビュー") ※2026-06-13に実際にfetch成功
 
+> "このPRは、今openな他のPRとmain上でぶつかりそうか。ぶつかるなら、どのPRを先に入れると手戻りが少ないか。"
+> ([GitHub Copilot/Claude/CodexがPRを作る時代のmerge前チェック設計](https://zenn.dev/veripsa/articles/github-ai-agents-pr-landing-order), セクション "CIとmerge queueだけでは見えにくいもの") ※2026-07-10に実際にfetch成功
+
+**出典**:
+- [AIエージェントのPRは「差分」ではなく「意思決定ログ」としてレビューする](https://zenn.dev/heftykoo/articles/2ef4dac14f86bc) ※2026-06-13に実際にfetch成功
+- [GitHub Copilot/Claude/CodexがPRを作る時代のmerge前チェック設計](https://zenn.dev/veripsa/articles/github-ai-agents-pr-landing-order) (Zenn、PR間の着地順序をmerge前に判断するレイヤー) ※2026-07-10に実際にfetch成功
+
 **バージョン**: Claude Code（エージェント機能対応以降）
 **確信度**: 中
-**最終更新**: 2026-06-13
+**最終更新**: 2026-07-10
 
 ---
 
@@ -2555,5 +2610,45 @@ curl https://nextjs.org/docs/llms.txt
 **バージョン**: Next.js 16.3+
 **確信度**: 高（公式ブログ一次情報）
 **最終更新**: 2026-06-26
+
+---
+
+### 28. AI コードレビューエージェントへの指示は「API ドキュメント」として設計し、diff 起点の狭い探索を強制する
+
+AI レビューエージェントに高機能なツール（広範囲検索・任意ファイル読み取り）を与えるほどレビュー品質が上がるとは限らない。ツールの description・system instructions は「エージェント向け API ドキュメント」であり、記述が曖昧だと「広く検索 → 読む → また検索」という非効率な往復を招く。diff を起点に絞り込む探索順序を明示し、失敗時の具体的なリカバリ手順まで指示に含めることで、レビュー精度を落とさずコストを削減できる。
+
+**根拠**:
+- ツールを増やしても指示が曖昧なままだと、エージェントは「広く探索 → 読む → 探索し直す」を繰り返しレビュー品質が悪化する
+- 効果的な指示順序は「diff から開始 → grep/glob で絞り込み → 該当範囲だけを表示 → 判断」であり、無秩序な全文探索を許さない
+- 指示に失敗時のリカバリ行動（grep が失敗したら検索語を単純化して再試行する、隣接パスを推測しない）を明記すると、エージェントの迷走を防げる
+- 指示文の書き直しだけで、レビュー品質を維持しながら平均レビューコストを約20%削減できた
+
+**コード例**:
+```text
+# Bad: 曖昧なツール指示
+「必要に応じてファイルを読んでレビューしてください」
+
+# Good: diff起点・失敗時リカバリを明示したツール指示
+1. まず対象PRのdiffを取得する
+2. diff中のシンボル・import元をgrep/globで特定範囲に絞り込む
+3. 該当範囲のみをview（全文読み込みしない）
+4. grep が0件の場合: 検索語を単純化して再試行する（隣接パスを推測して読みにいかない）
+5. 上記の情報のみで判断し、それでも不明な場合のみ広域検索を許可する
+```
+
+**アンチパターン**:
+- ツールの description を「何でも読める」曖昧な説明のまま高機能化する（探索が発散しレビューコストが増える）
+- grep 失敗時の挙動を指示せず、エージェントが隣接ファイルを当てずっぽうで読みにいくのを放置する
+
+**出典引用**:
+> "Tool descriptions and system instructions are closer to API documentation. Unclear API docs can leave a developer confused and lead to inefficient or wrong decisions."
+> ([Better tools made Copilot code review worse. Here's how we actually improved it.](https://github.blog/ai-and-ml/github-copilot/better-tools-made-copilot-code-review-worse-heres-how-we-actually-improved-it/), セクション "The result: roughly 20% lower average review cost") ※2026-07-10に実際にfetch成功
+
+**出典**:
+- [Better tools made Copilot code review worse. Here's how we actually improved it.](https://github.blog/ai-and-ml/github-copilot/better-tools-made-copilot-code-review-worse-heres-how-we-actually-improved-it/) (GitHub Blog Engineering、公式、2026-07-10)
+
+**バージョン**: GitHub Copilot code review（エージェント全般に適用可能な原則）
+**確信度**: 高（公式ブログ一次情報）
+**最終更新**: 2026-07-10
 
 ---
