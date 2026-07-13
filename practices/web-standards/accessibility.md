@@ -492,6 +492,9 @@ CSS の `@media (prefers-reduced-motion: reduce)` または JS の `matchMedia` 
 - macOS / iOS / Windows / Android すべてに OS レベルの reduce motion 設定が存在し、ブラウザに伝播する
 - ホバーフィードバック等の小さなアニメーションは保持してよい。「動きの大きさ」と「持続時間」を抑える
 - 共有デバイスでは OS 設定を変更できないケースがある。「OS は全体オフ、このアプリだけオン」または「OS は通常だがこのアプリだけオフ」という個別制御のニーズも存在する
+- **複数ステップのタイムラインアニメーション（GSAP 等）では、全トゥイーンの `duration` を単純に `0` にすると中間状態が1フレームに重なって表示される不具合が起きる**。個々の tween を止めるのではなく、`gsap.set()` 等で最終状態を直接書き込みトゥイーン自体をスキップする方が安全
+- reduced motion は「動きの時間」だけでなく「描画の複雑さ」も削減対象に含めて検討する（例: 多層 `backdrop-filter` を1層に減らす等）。動きを止めても計算・描画コストの重い演出が残ると体感の改善が薄い
+- reduced-motion 分岐の実装漏れ（早期 return によるデッドコード化等）は grep での「hook を呼んでいるか」チェックだけでは検出できない。`no-preference` / `reduce` 両方の状態をレンダリングするスナップショットテストでカバレッジを検証する
 
 **コード例**:
 ```tsx
@@ -589,6 +592,29 @@ const useSystemReducedMotion = () => {
 }
 ```
 
+```ts
+// Bad: 複数ステップの GSAP タイムラインで duration を単純に 0 にする
+// → 中間状態が1フレームに重なって表示される
+function playCardFlip(el: HTMLElement, reduce: boolean) {
+  gsap.timeline()
+    .to(el, { rotateY: 90, duration: reduce ? 0 : 0.3 })
+    .to(el, { rotateY: 180, duration: reduce ? 0 : 0.3 })
+    .to(el, { scale: 1, opacity: 1, duration: reduce ? 0 : 0.3 });
+}
+
+// Good: reduced motion 時はトゥイーンをスキップし、最終状態を直接書き込む
+function playCardFlip(el: HTMLElement, reduce: boolean) {
+  if (reduce) {
+    gsap.set(el, { rotateY: 180, scale: 1, opacity: 1 }); // 最終状態のみ反映
+    return;
+  }
+  gsap.timeline()
+    .to(el, { rotateY: 90, duration: 0.3 })
+    .to(el, { rotateY: 180, duration: 0.3 })
+    .to(el, { scale: 1, opacity: 1, duration: 0.3 });
+}
+```
+
 **判断基準（何を「動き」とみなすか）**:
 - 大きな移動（>30 CSS px）、回転、スケール、パララックス → 抑制
 - 不透明度のフェード（移動なし）、色相変化、3D 効果なしの小さなアイコン揺れ → 保持してよい
@@ -600,13 +626,17 @@ const useSystemReducedMotion = () => {
 - [WebAIM: Designing for Accessibility - Animations](https://webaim.org/articles/seizure/) (WebAIM)
 - [web.dev: prefers-reduced-motion](https://web.dev/articles/prefers-reduced-motion) (web.dev)
 - [OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b) (Zenn、共有デバイス対応・アプリ内設定 UI・useSyncExternalStore + atomWithStorage 実装) ※2026-06-06 fetch
+- [prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m) (dev.to、Medium に同著者が同一内容をクロスポスト、単一ソース扱い。GSAP タイムラインの `gsap.set()` 最終状態パターン・描画複雑さの削減・両 preference 状態のスナップショットテスト) ※2026-07-11 fetch
 
 > "Shared device usage where OS settings cannot be changed; wanting to disable animations only in one app without affecting the entire system"
 > ([OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b), セクション "OS設定だけでは足りない理由") ※2026-06-06に実際にfetch成功
 
+> "Set every tween's duration to 0 there and you haven't disabled the animation, you've teleported the DOM through three overlapping states in one frame."
+> ([prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m), セクション "The one-line fix that's wrong more often than it's right") ※2026-07-11に実際にfetch成功
+
 **バージョン**: Chrome 74+, Firefox 63+, Safari 10.1+
 **確信度**: 高
-**最終更新**: 2026-06-06
+**最終更新**: 2026-07-11
 
 ---
 

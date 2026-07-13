@@ -571,6 +571,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - 人間が最低限のルールを明示的に書いた仕様の方が、AIが自動生成した指示ファイルよりも成功率が高い（ETH Zurich研究で自動生成はコスト20%増・成功率低下を確認）
 - `AGENTS.md` は「恒久的なルール」のみを置き肥大化を防ぐ：手順は SOP へ、設計決定は `_docs/decisions/` へ、作業ログは `_docs/logs/` へ分離する。重要な規則が大量の作業メモに埋もれると遵守率が下がる
 - MCP は **Opt-in モデル**で管理する：常時接続 MCP が増えるほど起動遅延・コンテキスト肥大・CI 不安定が生じる。個人（`~/.codex/config.toml`）→ リポジトリ（`.codex/config.toml` でツールレベル allowlist）→ CI（最小構成）の3層で制御し、タスク要件なしに MCP を自動呼び出ししない
+- symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -630,9 +631,12 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 > "勝手に叩かない。MCP は Suggest → Opt-in で管理し、タスク要件が明示されるまで MCP ツールを自動呼び出ししない"
 > ([MCPを増やしすぎない — エージェントの工具箱の整理](https://zenn.dev/zapabob/articles/mcp-toolbox-organization), セクション "原則1: Suggest → Opt-in") ※2026-06-19に実際にfetch成功
 
+> "symlink は「1実体に束ねる」は解くが、「宣言」と「検証」は解かない"
+> ([AGENTS.md / CLAUDE.md / copilot-instructions.md の増殖を、宣言で終わらせる](https://qiita.com/takashi-matsuyama/items/52cca442efe77ec84f70), セクション "symlink の限界") ※2026-07-11に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-06-19
+**最終更新**: 2026-07-11
 
 ---
 
@@ -1721,6 +1725,7 @@ MEMORY.md
 - [CLAUDE.md を読み込み順から設計する──三層テンプレと壊れる書き方](https://zenn.dev/stockdev_sho/articles/48483005d272fa) (Zenn stockdev_sho、`CLAUDE.local.md` を含む4層スコープと読み込み順の原則・アンチパターン before/after) ※2026-07-03 fetch
 - [CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5) (Zenn tmiyachi、SSOT原則・4項目への絞り込み) ※2026-07-03 fetch
 - [コンテキストの配置順序を5パターン試したら、意味順が最悪の1つだと分かった](https://zenn.dev/kenimo49/articles/context-placement-5-patterns-semantic-worst) (Zenn kenimo49、400タスクのA/B検証による見出し順序と遵守率の関係) ※2026-07-08に実際にfetch成功
+- [AIエージェントを"暴走"させない仕組み ― ドキュメントを憲法にしたら、コードより先にルールが育った話](https://qiita.com/rikiza1989/items/9948daf97fb221da78c2) (Qiita、REQ/ADR/TASK の ID 体系＋ライフサイクル管理＋lint スクリプトで「ドキュメントに書かれていないコードは存在してはいけない」を機械的に強制する具体例。単一事例・スクリプト全文は未公開のため確信度低) ※2026-07-11 fetch
 
 **出典引用**:
 > "索引と本体を分けて、やっと回り始めました"
@@ -1744,9 +1749,12 @@ MEMORY.md
 > "Lost in the Middle 的な現象は hooks の話だけでなく、CLAUDE.md 自体の項目順序にも起きていた"
 > ([コンテキストの配置順序を5パターン試したら、意味順が最悪の1つだと分かった](https://zenn.dev/kenimo49/articles/context-placement-5-patterns-semantic-worst), セクション "5パターンの検証結果") ※2026-07-08に実際にfetch成功
 
+> "ドキュメントに書かれていないコードは、そもそも存在してはいけない"
+> ([AIエージェントを"暴走"させない仕組み ― ドキュメントを憲法にしたら、コードより先にルールが育った話](https://qiita.com/rikiza1989/items/9948daf97fb221da78c2), セクション 冒頭の原則) ※2026-07-11に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-08
+**最終更新**: 2026-07-11
 
 ---
 
@@ -2622,6 +2630,8 @@ AI レビューエージェントに高機能なツール（広範囲検索・�
 - 効果的な指示順序は「diff から開始 → grep/glob で絞り込み → 該当範囲だけを表示 → 判断」であり、無秩序な全文探索を許さない
 - 指示に失敗時のリカバリ行動（grep が失敗したら検索語を単純化して再試行する、隣接パスを推測しない）を明記すると、エージェントの迷走を防げる
 - 指示文の書き直しだけで、レビュー品質を維持しながら平均レビューコストを約20%削減できた
+- 同じツールでも、共通化のスケールは「指示文とベンチマークがタスクに一致しているとき」にのみ成立する。レビュー用に絞った指示文は、本質的にオープンエンドな探索が仕事の CLI エージェントには効果がなかった（＝タスク形状に合わせた指示文が本体）
+- 指示文の効果は最終スコアだけで判断せず、エージェントのツール呼び出し挙動そのもの（絞り込み優先か広い探索か）を内部トレースで可視化し、変更前後を比較して検証する
 
 **コード例**:
 ```text
@@ -2639,16 +2649,20 @@ AI レビューエージェントに高機能なツール（広範囲検索・�
 **アンチパターン**:
 - ツールの description を「何でも読める」曖昧な説明のまま高機能化する（探索が発散しレビューコストが増える）
 - grep 失敗時の挙動を指示せず、エージェントが隣接ファイルを当てずっぽうで読みにいくのを放置する
+- レビュー用に書いた指示文を、探索がオープンエンドな別用途（CLI 等）へ再検証なしで転用する
 
 **出典引用**:
 > "Tool descriptions and system instructions are closer to API documentation. Unclear API docs can leave a developer confused and lead to inefficient or wrong decisions."
 > ([Better tools made Copilot code review worse. Here's how we actually improved it.](https://github.blog/ai-and-ml/github-copilot/better-tools-made-copilot-code-review-worse-heres-how-we-actually-improved-it/), セクション "The result: roughly 20% lower average review cost") ※2026-07-10に実際にfetch成功
 
+> "The takeaway is that shared tools scale when the instructions and benchmarks match the job."
+> ([Better tools made Copilot code review worse. Here's how we actually improved it.](https://github.blog/ai-and-ml/github-copilot/better-tools-made-copilot-code-review-worse-heres-how-we-actually-improved-it/), セクション "Same tools, different job") ※2026-07-11に実際にfetch成功
+
 **出典**:
 - [Better tools made Copilot code review worse. Here's how we actually improved it.](https://github.blog/ai-and-ml/github-copilot/better-tools-made-copilot-code-review-worse-heres-how-we-actually-improved-it/) (GitHub Blog Engineering、公式、2026-07-10)
 
 **バージョン**: GitHub Copilot code review（エージェント全般に適用可能な原則）
-**確信度**: 高（公式ブログ一次情報）
-**最終更新**: 2026-07-10
+**確信度**: 高（公式ブログ一次情報・内部ベンチマークによる検証あり）
+**最終更新**: 2026-07-11
 
 ---

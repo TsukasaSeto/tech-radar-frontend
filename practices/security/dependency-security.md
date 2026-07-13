@@ -79,15 +79,46 @@ npx audit-ci --config audit-ci.json
 | **Moderate** | 次の sprint で対応 |
 | **Low** | バージョン上げのタイミングで吸収 |
 
+**`npm audit fix --force` を無条件に使わない**:
+`--force` は semver の保護を外すオプションであり、脆弱性を安全に直す魔法のコマンドではない。メジャーバージョンを跨いだ破壊的更新や、無関係な上位パッケージ（フレームワーク・ビルドツール）の大規模変更を許可してしまう。CI で fail した場合は `--force` に飛びつく前に、次の順で検証する:
+
+```bash
+# 1. 影響範囲をブランチで隔離
+git checkout -b fix/audit-vulnerability
+
+# 2. 依存経路を確認（本番依存か dev 依存か、どこから来ているか）
+npm explain <package-name>
+
+# 3. まず --force なしで dry-run
+npm audit fix --dry-run --json
+
+# 4. 問題なければ --force なしで適用し、diff を必ず確認
+npm audit fix
+git diff package-lock.json
+
+# 5. lint / typecheck / test / build が通ることを確認してから、
+#    それでも直らない場合にのみ overrides や --force を検討する
+```
+
+**根拠**:
+- `--force` はメジャーバージョンジャンプ・peer dependency 競合・Node/npm バージョン要件違反を許可してしまう
+- 「0 vulnerabilities」という出力は「安全」を意味しない。修正パッチが存在しない脆弱性は audit fix では解決できない
+- 深刻度だけで対応可否を判断せず、本番依存か dev 依存か・実際に到達可能なコードパスか・修正版が存在するかを確認してから動く
+
 **出典**:
 - [npm audit](https://docs.npmjs.com/cli/v10/commands/npm-audit) (npm Docs)
 - [pnpm audit](https://pnpm.io/cli/audit) (pnpm Docs)
 - [audit-ci](https://github.com/IBM/audit-ci) (IBM)
 - [OWASP: Vulnerable and Outdated Components](https://owasp.org/Top10/A06_2021-Vulnerable_and_Outdated_Components/) (OWASP Top 10 A06)
+- [npm auditで脆弱性が出たとき、すぐ`--force`してはいけない理由](https://zenn.dev/zzzzzzz/articles/02c21ea0a1e677) (Zenn、`--force` の破壊的変更リスクと `npm explain` → `--dry-run` → テストの安全な修復手順) ※2026-07-11 fetch
+
+**出典引用**:
+> "しかし、--forceは「強力な修復コマンド」ではありません。互換性を守るための制限を外し、破壊的変更を含むアップデートを許可するオプションです。"
+> ([npm auditで脆弱性が出たとき、すぐ`--force`してはいけない理由](https://zenn.dev/zzzzzzz/articles/02c21ea0a1e677), セクション 冒頭) ※2026-07-11に実際にfetch成功
 
 **バージョン**: npm 8+, pnpm 8+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-11
 
 ---
 

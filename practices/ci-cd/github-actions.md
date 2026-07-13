@@ -691,6 +691,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - `persist-credentials: false` を設定することでトークンが git 設定ファイルに保存されなくなる
 - `gh auth setup-git` は git コマンド実行時にのみトークンを参照し、永続ファイルを作成しない
 - `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる
+- `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に `git remote set-url` で認証を明示的に張り直すと安全
 
 **コード例**:
 ```yaml
@@ -710,6 +711,19 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 
 - name: Push changes
   run: git push origin main  # gh auth setup-git 後は認証済みで動作する
+
+# claude-code-action の後段で push する場合は、認証設定の上書きに注意
+- uses: anthropics/claude-code-action@v1
+  with:
+    anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+
+- name: Push changes after claude-code-action
+  run: |
+    # claude-code-action が git 認証設定を専用トークンで上書きしているため張り直す
+    git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+    git push origin main
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 **出典引用**:
@@ -719,9 +733,12 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "後続ステップは credential ファイルから GitHub トークンを容易に奪取できます。persist-credentials: false を設定することで、このリスクを根本から排除できます。"
 > ([【GitHub Actions】actions/checkout には persist-credentials: false を設定するべき](https://zenn.dev/kou_pg_0131/articles/gha-checkout-persist-credentials), セクション "persist-credentials: false を設定するべき理由") ※2026-05-25に実際にfetch成功
 
-**バージョン**: actions/checkout v4+
+> "claude-code-action は実行中、自分専用の一時トークンで git の認証設定を書き換えます"
+> ([claude-code-actionで自動pushが止まる。git認証上書きの罠と回避策](https://zenn.dev/kaion/articles/claude-code-action-push-auth-pitfall), セクション "Pitfall #1") ※2026-07-11に実際にfetch成功
+
+**バージョン**: actions/checkout v4+ / anthropics/claude-code-action v1
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-07-11
 
 ---
 
@@ -847,3 +864,63 @@ jobs:
 **バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v3
 **確信度**: 中（コミュニティ記事、実績多数）
 **最終更新**: 2026-06-04
+
+---
+
+### 11. 同一ジョブ内の独立したステップは `parallel:` キーワードで並列実行し、ジョブ分割せずに待ち時間を削る
+
+Rule #10 の test sharding / paths-filter は「ジョブを分割」して並列化するが、ジョブ分割にはランナー起動のオーバーヘッドが伴う。デプロイの複数ステップのように**同一ランナー・同一ジョブ内で完結する独立した処理**は、GitHub Actions の `background` / `wait` / `wait-all` / `cancel` / `parallel` キーワードでステップレベルの並列実行に切り替えることで、ジョブを増やさずに待ち時間を削れる。`parallel:` は複数ステップをまとめて `background` 化し、直後に `wait` を挟む糖衣構文。
+
+**根拠**:
+- GitHub 公式が 2026-06-25 にステップレベル並列実行機能（`background`/`wait`/`wait-all`/`cancel`/`parallel`）を GA した
+- ジョブ分割による並列化（Rule #10）は新規ランナーの起動コストがかかるが、ステップ並列はジョブコンテキストを共有したまま同一ランナー内で完結する
+- 独立した複数サービスへのデプロイのように「ジョブに分けるほどではないが直列で待つ理由もない」処理に向く
+- 同一ランナーに処理を詰め込みすぎると CPU・メモリの奪い合いで逆に遅くなることが実測で確認されている。ステップ並列は「ジョブ分割 vs ステップ並列」の判断軸を増やすものであり、無条件にジョブ分割の代替にはならない
+
+**コード例**:
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 独立した2つのECSデプロイステップを同一ジョブ内で並列実行
+      - parallel:
+          - name: Deploy web service
+            uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+            with:
+              task-definition: web-task-def.json
+              service: web-service
+              cluster: production
+
+          - name: Deploy worker service
+            uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+            with:
+              task-definition: worker-task-def.json
+              service: worker-service
+              cluster: production
+```
+
+**判断軸（ジョブ分割 vs ステップ並列）**:
+- 別ランナーで独立に失敗させたい／ログを完全分離したい → ジョブ分割（Rule #10 の matrix）
+- 同一ジョブのコンテキスト（checkout 済みファイル・環境変数）を共有したまま待ち時間だけ削りたい → ステップ並列（`parallel:`）
+- 1 ランナーに詰め込みすぎて CPU/メモリを奪い合っていないか、実行時間を計測して確認する
+
+**出典引用**:
+> "`parallel` takes a group of steps and converts them to `background` steps with a `wait` after, enabling you to easily run multiple steps in parallel."
+> ([Actions steps can now be run in parallel](https://github.blog/changelog/2026-06-25-actions-steps-can-now-be-run-in-parallel/), GitHub Changelog) ※2026-07-11に実際にfetch成功
+
+> "直列だった頃は概ね8分前後だったものが、並列化後は3分前後になりました。"
+> ([GitHub Actions の並列実行機能でデプロイを8分→3分に短縮した](https://zenn.dev/hatsu/articles/github-actions-steps-parallel), セクション "実戦①：本番ECSデプロイの並列化") ※2026-07-11に実際にfetch成功
+
+> "同一ランナーに処理を詰め込みすぎると、CPUやメモリの奪い合いで逆に遅くなることも実測で確認できました。"
+> ([GitHub Actions の並列実行機能でデプロイを8分→3分に短縮した](https://zenn.dev/hatsu/articles/github-actions-steps-parallel), セクション "job並列（needs / matrix）との使い分け") ※2026-07-11に実際にfetch成功
+
+**出典**:
+- [Actions steps can now be run in parallel](https://github.blog/changelog/2026-06-25-actions-steps-can-now-be-run-in-parallel/) (GitHub Changelog 公式、2026-06-25) ※2026-07-11 fetch
+- [GitHub Actions の並列実行機能でデプロイを8分→3分に短縮した](https://zenn.dev/hatsu/articles/github-actions-steps-parallel) (Zenn、実測ベンチマークと job 並列との使い分け) ※2026-07-11 fetch
+
+**バージョン**: GitHub Actions（2026-06-25 以降、`background`/`wait`/`wait-all`/`cancel`/`parallel` GA）
+**確信度**: 高（公式 changelog + 実測ベンチマーク）
+**最終更新**: 2026-07-11
