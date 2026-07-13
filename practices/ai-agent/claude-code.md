@@ -651,6 +651,8 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **4層防御モデル**: CLAUDE.md（確率的・劣化あり）→ settings.json deny（決定論的・文字列変形に弱い）→ PreToolUse フック（決定論的・複雑条件に対応）→ OS サンドボックス（能力を根本的に制限）の順に信頼性が増す。フックは3番目の層として最も実装コスパが高い
 - **フレームワーク固有の破壊コマンドは shell レベルのブロックをすり抜ける**: `rm -rf` や `dd` といった shell コマンドのパターンマッチだけでは `php artisan migrate:fresh`・`rails db:drop`・`prisma migrate reset` 等のフレームワーク CLI が検知されない。DB ワイプ系コマンドは別途 PreToolUse フックに追加する
 - **「危険なのはコマンドの種類ではなく、対象が本番かどうか」**: PreToolUse フックでコマンドそのものをブロックするだけでなく、`AWS_PROFILE`・ホスト名・DB エンドポイントのパターンから「本番向けか」を判定し、read（allow）/ non-prod write（ask）/ prod write（ask）/ prod 不可逆（deny）の3段階で制御することで、ステージング環境の生産性を損なわずに本番安全性を高められる。`PreToolUse` フックは `--dangerously-skip-permissions` モード中でも動作するため、自動実行セッションでの安全層として有効
+- **モデルの「インシデント自己報告」も鵜呑みにしない**: Claude が「プロンプトインジェクションを検出した」等のセキュリティインシデントを自己報告しても、それ自体が作話（実際には起きていない）である場合がある。破壊的コマンドの最終防衛線を CLAUDE.md のルールやモデルの判断に置かず、`PreToolUse` フックの決定論的な正規表現ブロックに置くべき理由がここにもある
+- **credential 漏洩は「入力経路」に境界を引く3層防御で塞ぐ**: シークレットの誤 push は鍵の保管方法だけでは防げず、(1) 固定形状スクリプト（自由記述のコマンドを許可しない）、(2) 20件超の正規表現による PreToolUse フック、(3) ツール出力自体のサニタイズ（読み取った `.env` 内容がそのままコンテキストや外部送信に混入しないようにする）の3層を組み合わせる。実運用で 2 週間に 11 回の漏洩試行を観測してから初めて構造的に塞がった事例がある
 
 **コード例（実践的な PreToolUse パターン）**:
 ```bash
@@ -823,6 +825,8 @@ fi
 - [`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d) (Qiita、フレームワーク固有 DB 破壊コマンドが shell レベルブロックをすり抜ける問題と対策パターン) ※2026-06-17に実際にfetch成功
 - [Claude Codeのpush事故を機械で止める ― APIキー流出と誤push先ガード](https://qiita.com/bokuwalily/items/31b3b4f3a447b6c5d68e) (Qiita、push 先 owner allowlist・ステージ差分のみスキャン・hook bypass フラグ禁止) ※2026-06-22に実際にfetch成功
 - [rm -rf をブロックしても、AIの本番事故は防げない ── hookに『環境』を判定させる](https://zenn.dev/sprix_it/articles/4c44e56ba6f28a) (Zenn sprix_it、環境検知型3段階許可制・prod/staging/local の分岐パターン) ※2026-06-23 fetch
+- [Claude Codeが「プロンプトインジェクション検出」を報告してきたので解析したら作話だった](https://zenn.dev/nanasess/articles/claude-code-prompt-injection-confabulation) (Zenn 大河内健三郎、モデルの自己報告インシデントが作話だった事例と決定論的フックの必要性) ※2026-07-08に実際にfetch成功
+- [AIエージェントとの2週間 — credential を 11 回漏らして、ようやく構造で塞いだ話](https://zenn.dev/hrmtz/articles/credential-leak-structural-defense) (Zenn hrmtz、固定形状スクリプト・正規表現フック・出力サニタイズの3層防御) ※2026-07-08に実際にfetch成功
 
 > "Laravel: migrate:fresh / migrate:reset / db:wipe; Rails: db:drop / db:reset; Django: manage.py flush; Prisma: migrate reset / db push --force-reset — これらは shell 固有の危険コマンドのパターンマッチをすり抜けます"
 > ([`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d), セクション "なぜ既存の防御策が効かないのか") ※2026-06-17に実際にfetch成功
@@ -845,9 +849,15 @@ fi
 > "the danger isn't the command type, but whether it's directed at production"
 > ([rm -rf をブロックしても、AIの本番事故は防げない ── hookに『環境』を判定させる](https://zenn.dev/sprix_it/articles/4c44e56ba6f28a), セクション "Core Principle") ※2026-06-23に実際にfetch成功
 
+> "破壊的コマンドの最終防衛線を、モデルの判断（CLAUDE.mdのルール）に置いてはいけない"
+> ([Claude Codeが「プロンプトインジェクション検出」を報告してきたので解析したら作話だった](https://zenn.dev/nanasess/articles/claude-code-prompt-injection-confabulation), セクション "まとめ") ※2026-07-08に実際にfetch成功
+
+> "AI時代のcredential防衛は「鍵」じゃなくて「入力経路」にboundaryを引く"
+> ([AIエージェントとの2週間 — credential を 11 回漏らして、ようやく構造で塞いだ話](https://zenn.dev/hrmtz/articles/credential-leak-structural-defense), セクション "構造で塞ぐ") ※2026-07-08に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-06-23
+**最終更新**: 2026-07-08
 
 ---
 
@@ -1579,6 +1589,8 @@ Claude Code のサブエージェントはメイン会話のコンテキスト�
 
 CLAUDE.md は**スコープ別に複数配置できる**: `~/.claude/CLAUDE.md`（個人グローバル：ロール・ツール選択）→ `{repo}/CLAUDE.md`（プロジェクト共通：アーキテクチャ方針・禁止操作）→ `{repo}/{subdir}/CLAUDE.md`（サブディレクトリ局所制約）→ `{repo}/CLAUDE.local.md`（個人用サンドボックス設定：テストURL・ダミーデータパス等、`.gitignore` 対象）。チーム共有すべきルールはリポジトリルートに、個人スタイルはグローバルに分離することで、ファイルの肥大化と個人情報の混入を防ぐ。サブディレクトリ CLAUDE.md は「そのディレクトリ以下でのみ有効」な制約を書く場所として、モジュール別の独立したルール管理を実現する。**読み込み順は広いスコープ→狭いスコープの順で、後に読まれた指示ほど「直近の文脈」として強く効く**ため、優先させたいプロジェクト固有ルールほど狭いスコープに書く。
 
+**ファイル内の見出し順序自体もルール遵守率を左右する**: 400 件の同一タスクで CLAUDE.md 内の項目順序を5パターン変えて比較した検証では、「意味的にきれいな順序（概要→アーキテクチャ→規約...）」が最も遵守率が低く（58%）、モデルが実際に参照しやすい順序（重要ルールを先頭・末尾に配置）が最も高かった（86%）。長大な CLAUDE.md では「読みやすい構成」と「LLM が遵守しやすい構成」が一致しないため、最重要の禁止操作・命令は先頭または末尾に寄せる。
+
 **CLAUDE.md に含めるべきもの**:
 - ディレクトリ構成・エントリポイント
 - ビルド・テスト・lint コマンド
@@ -1708,6 +1720,7 @@ MEMORY.md
 - [CLAUDE.mdを置いただけで安心していた。実は「読まれる場所」と「読まれない場所」があった](https://zenn.dev/numarn/articles/claude-md-memory-hierarchy-handson) (Zenn numarn、サブディレクトリ CLAUDE.md の cwd 依存読み込み・`@import` 破損リンクの黙殺検証スクリプト) ※2026-07-03 fetch
 - [CLAUDE.md を読み込み順から設計する──三層テンプレと壊れる書き方](https://zenn.dev/stockdev_sho/articles/48483005d272fa) (Zenn stockdev_sho、`CLAUDE.local.md` を含む4層スコープと読み込み順の原則・アンチパターン before/after) ※2026-07-03 fetch
 - [CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5) (Zenn tmiyachi、SSOT原則・4項目への絞り込み) ※2026-07-03 fetch
+- [コンテキストの配置順序を5パターン試したら、意味順が最悪の1つだと分かった](https://zenn.dev/kenimo49/articles/context-placement-5-patterns-semantic-worst) (Zenn kenimo49、400タスクのA/B検証による見出し順序と遵守率の関係) ※2026-07-08に実際にfetch成功
 
 **出典引用**:
 > "索引と本体を分けて、やっと回り始めました"
@@ -1728,9 +1741,12 @@ MEMORY.md
 > "複数のドキュメントに同じ事実を書くと、片方を更新したときにもう片方が古いまま残り、AIが食い違う情報を同時に読んで出力が不安定になります"
 > ([CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5), セクション "SSOT: 同じ事実は1か所にしか書かない") ※2026-07-03に実際にfetch成功
 
+> "Lost in the Middle 的な現象は hooks の話だけでなく、CLAUDE.md 自体の項目順序にも起きていた"
+> ([コンテキストの配置順序を5パターン試したら、意味順が最悪の1つだと分かった](https://zenn.dev/kenimo49/articles/context-placement-5-patterns-semantic-worst), セクション "5パターンの検証結果") ※2026-07-08に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-03
+**最終更新**: 2026-07-08
 
 ---
 

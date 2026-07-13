@@ -545,6 +545,11 @@ jobs:
 - `permissions: {}` をワークフロー冒頭に置き、すべての権限をデフォルト拒否にする
 - `github.actor == 'dependabot[bot]'` で Dependabot 以外のトリガーを排除
 - `--allowedTools` の `:` 区切りサブコマンド制限で、任意 `bash` 実行を防ぐ（`Bash` だけ許可すると全シェルコマンドが実行可能になる）
+- **`schedule` トリガーで毎朝 Claude Code を自律実行させる場合も同じ最小権限原則が要る**: `prompt` に「PRにコメントして」と書くだけでは投稿権限は付与されない。`--allowedTools` で `Bash(gh pr comment:*)` 等を明示しないと、実行はされてもコメント投稿だけ失敗する。また `ANTHROPIC_API_KEY` を secrets に残したまま OAuth（サブスクリプション）トークンに切り替えると、意図せず両方の課金経路が併存するため、切り替え時は旧 secrets を削除する
+
+**出典（cron/自律実行での追加知見）**:
+- [GitHub ActionsにClaude Codeを組み込んで、PRに自動コードレビューを付ける](https://zenn.dev/virtualcraft/articles/claude-code-github-actions-review) (Zenn jmurayama、`prompt` だけでは投稿権限が付かず `--allowedTools` の明示が必須) ※2026-07-08に実際にfetch成功
+- [APIキーなしでClaude CodeをGitHub Actionsで動かして、毎朝勝手に働かせてみた](https://qiita.com/ktdatascience/items/40d86c446779975615c1) (Qiita ktdatascience、OAuthトークンでの cron 自動化と `ANTHROPIC_API_KEY` 残置による二重課金の罠) ※2026-07-08に実際にfetch成功
 
 **チェックリスト**:
 - [ ] `pull_request_target` を使っている場合、フォーク checkout をしていないか確認
@@ -570,10 +575,12 @@ jobs:
 - [GitHub Actions Cache Poisoning攻撃を理解する](https://zenn.dev/singularity/articles/2026-05-13-github-actions-cache-poisoning) (Zenn) ※2026-05-16 fetch
 - [たった1つのトークンだけでコードベースが丸ごと盗まれる](https://zenn.dev/okamyuji/articles/grafana-github-actions-token-supply-chain) (Zenn) ※2026-05-20 fetch
 - [DependabotのPRをClaude Codeに自動レビューさせるGitHub Actions](https://zenn.dev/mandenaren/articles/dependabot_auto_review) (Zenn、`permissions: {}` デフォルト拒否と `--allowedTools` 制限の実装例) ※2026-05-29に実際にfetch成功
+- [GitHub ActionsにClaude Codeを組み込んで、PRに自動コードレビューを付ける](https://zenn.dev/virtualcraft/articles/claude-code-github-actions-review) (Zenn jmurayama) ※2026-07-08に実際にfetch成功
+- [APIキーなしでClaude CodeをGitHub Actionsで動かして、毎朝勝手に働かせてみた](https://qiita.com/ktdatascience/items/40d86c446779975615c1) (Qiita ktdatascience) ※2026-07-08に実際にfetch成功
 
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-29
+**最終更新**: 2026-07-08
 
 ---
 
@@ -589,6 +596,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - `permissions.id-token: write` を workflow に追加し、`aws-actions/configure-aws-credentials` の `role-to-assume` を設定するだけで移行できる
 - AWS IAM ロールの信頼ポリシーで GitHub リポジトリ・ブランチを絞れるため、最小権限原則と相性がよい
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
+- 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
 
 **コード例**:
 ```yaml
@@ -660,13 +668,14 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 **出典**:
 - [GitHub ActionsからAWSへの認証をOIDCで行う](https://zenn.dev/hisa_tech_2973/articles/9f41f231827ec4) (Zenn) ※2026-05-21に実際にfetch成功
 - [GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97) (Zenn、鍵素材を外に出さず KMS で署名する応用パターン) ※2026-05-22に実際にfetch成功
+- [GitHub ActionsとWorkload Identity Federationによるサービスアカウント キーレス化の実践](https://zenn.dev/tk_nomura/articles/2026-07-wif-keyless-github-actions) (Zenn TK、GCP版OIDCキーレス化と`attribute_condition`によるリポジトリ/ブランチ/タグ絞り込み) ※2026-07-08に実際にfetch成功
 
 > "本手法では秘密鍵は Cloud KMS から外に出ることなく、署名処理のみを KMS API で行います。秘密鍵そのものを手元で管理する必要がなくなるため、流出リスクを大幅に低減できます。"
 > ([GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97), セクション "Flow/Process") ※2026-05-22に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation
 **確信度**: 高
-**最終更新**: 2026-05-22
+**最終更新**: 2026-07-08
 
 ---
 
