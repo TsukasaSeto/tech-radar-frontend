@@ -114,16 +114,31 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 // gray-500 (#6b7280) → 5.9:1 ✓（通常テキストに使用可）
 // gray-400 (#9ca3af) → 2.9:1 ✗（装飾的用途のみ）
 // blue-600 (#2563eb) → 5.9:1 ✓（リンクに使用可）
+
+// デザイントークンは「サーフェス色」と「その上に乗るテキスト色」をペアで定義し、
+// 個別コンポーネントが自己判断でテキスト色を選ばないようにする
+:root {
+  --color-primary: #2563eb;
+  --color-on-primary: #ffffff;    /* primary の上は常にこの色 → 4.5:1 を機械的に担保 */
+  --color-danger: #dc2626;
+  --color-on-danger: #ffffff;
+  --color-disabled-bg: #e5e7eb;
+  --color-disabled-text: #9ca3af; /* WCAG は無効化 UI のコントラスト例外を認めるが、乱用しない */
+}
 ```
 
 **出典**:
 - [WCAG 2.1: Use of Color](https://www.w3.org/TR/WCAG21/#use-of-color) (W3C WCAG)
 - [WCAG 2.1: Contrast (Minimum)](https://www.w3.org/TR/WCAG21/#contrast-minimum) (W3C WCAG)
 - [WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/) (WebAIM)
+- [Why Good-Looking Colors Can Still Fail WCAG Contrast](https://dev.to/hasansarwer/why-good-looking-colors-can-still-fail-wcag-contrast-3kh7) (dev.to、`--color-X`/`--color-on-X` のペア型デザイントークンで無効化UIの例外も含めて機械的に担保する運用) ※2026-07-14に実際にfetch成功
 
-**バージョン**: WCAG 2.1
+> "WCAG 2.2 Success Criterion 1.4.3 requires text and images of text to have at least 4.5:1 contrast, with a lower 3:1 threshold for large-scale text."
+> ([Why Good-Looking Colors Can Still Fail WCAG Contrast](https://dev.to/hasansarwer/why-good-looking-colors-can-still-fail-wcag-contrast-3kh7), dev.to, セクション "What contrast ratio means") ※2026-07-14に実際にfetch成功
+
+**バージョン**: WCAG 2.1 / 2.2
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-07-14
 
 ---
 
@@ -489,6 +504,7 @@ CSS の `@media (prefers-reduced-motion: reduce)` または JS の `matchMedia` 
 **根拠**:
 - 前庭障害（vestibular disorder）を持つユーザーは動きの大きいアニメーションで吐き気・めまいを誘発する
 - WCAG 2.1 SC 2.3.3（Animation from Interactions）はインタラクション起因のアニメーションを無効化する手段を要求する
+- WCAG 2.2 SC 2.2.2（Pause, Stop, Hide）も、自動的に動き続けるコンテンツに一時停止・停止・非表示の手段を要求する点で関連する
 - macOS / iOS / Windows / Android すべてに OS レベルの reduce motion 設定が存在し、ブラウザに伝播する
 - ホバーフィードバック等の小さなアニメーションは保持してよい。「動きの大きさ」と「持続時間」を抑える
 - 共有デバイスでは OS 設定を変更できないケースがある。「OS は全体オフ、このアプリだけオン」または「OS は通常だがこのアプリだけオフ」という個別制御のニーズも存在する
@@ -627,6 +643,7 @@ function playCardFlip(el: HTMLElement, reduce: boolean) {
 - [web.dev: prefers-reduced-motion](https://web.dev/articles/prefers-reduced-motion) (web.dev)
 - [OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b) (Zenn、共有デバイス対応・アプリ内設定 UI・useSyncExternalStore + atomWithStorage 実装) ※2026-06-06 fetch
 - [prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m) (dev.to、Medium に同著者が同一内容をクロスポスト、単一ソース扱い。GSAP タイムラインの `gsap.set()` 最終状態パターン・描画複雑さの削減・両 preference 状態のスナップショットテスト) ※2026-07-11 fetch
+- [Your AI-generated UI probably breaks prefers-reduced-motion](https://dev.to/kevinfroeba/your-ai-generated-ui-probably-breaks-prefers-reduced-motion-1akh) (dev.to、WCAG 2.2.2 の追加言及。本文の技術的主張は既存出典と重複するため引用は WCAG 条項の追加に留める) ※2026-07-14に実際にfetch成功
 
 > "Shared device usage where OS settings cannot be changed; wanting to disable animations only in one app without affecting the entire system"
 > ([OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b), セクション "OS設定だけでは足りない理由") ※2026-06-06に実際にfetch成功
@@ -636,7 +653,7 @@ function playCardFlip(el: HTMLElement, reduce: boolean) {
 
 **バージョン**: Chrome 74+, Firefox 63+, Safari 10.1+
 **確信度**: 高
-**最終更新**: 2026-07-11
+**最終更新**: 2026-07-14
 
 ---
 

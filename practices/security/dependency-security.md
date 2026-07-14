@@ -425,6 +425,7 @@ trustPolicy: no-downgrade
 5. **AI ツール設定への永続化**: `.claude/settings.json`（hooks経由）・`.vscode/tasks.json` を汚染し、credential 窃取スクリプトを常駐させる
 6. **tag/version redirection**: フォーク先の悪意あるコミットにタグを付け直し、npm / Composer 等のレジストリ経由で配布する（2026-05 Laravel Lang 攻撃で確認）——パッケージの信頼境界はブラウザで見るソースリポジトリではなく、コミットを成果物にする一連の仕組み（タグ・CI・レジストリへの push）にある
 7. **CI identity (OIDC token) hijacking**: 開発者の GitHub アカウント乗っ取り → CI OIDC トークン詐取 → 有効な SLSA provenance 付きの悪意パッケージを publish（2026-06 Miasma / @redhat-cloud-services 攻撃）。`--ignore-scripts` は防げない—CI クレデンシャルのローテーションと compromised アカウントの即時 revoke が必須
+8. **workflow ファイルの直接改変（direct Poisoned Pipeline Execution）**: アカウント乗っ取りを経由せず、書き込み権限を持つ既存アイデンティティ（使い捨てアカウント・偽装した author 名等）が `.github/workflows/*.yml` を直接 push・改変し、`id-token: write` 等の広いスコープを要求する（2026-07 Megalodon 攻撃、6時間で5,561リポジトリが被害）。ブランチ保護が弱い/未設定のリポジトリが標的になりやすい。対策は `.github/workflows/**` への CODEOWNERS + 必須レビューを設定し、`id-token: write` を信頼できる特定ジョブのみに限定し、`workflow_dispatch` の新規追加を監視すること
 
 **defense in depth**:
 - `npm audit` + `pnpm audit`（Rule 1）
@@ -498,6 +499,7 @@ updates:
 - [Miasma supply chain attack: malicious code found in @redhat-cloud-services npm packages](https://snyk.io/blog/miasma-supply-chain-attack-malicious-code-redhat-cloud-services-npm-packages/) (Snyk Blog、OIDC token hijacking・SLSA provenance bypass・自己増殖ワーム) ※2026-06-02に実際にfetch成功
 - [pnpm v11 移行メモ — サプライチェーン攻撃対策を中心に](https://zenn.dev/esta_dev/articles/bc7a8dfef21d7b) (Zenn、v11 新デフォルト allowBuilds/blockExoticSubdeps/lockfile integrity・Docker CI 対応パターン) ※2026-06-09に実際にfetch成功
 - [npm サプライチェーン攻撃対策として pnpm v11 を導入した話](https://zenn.dev/onthebakery/articles/8060f23d1f948c) (Zenn、minimumReleaseAge 7日間延長・除外リスト承認期限 CI チェックの実践) ※2026-06-22に実際にfetch成功
+- [Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn) (dev.to、direct Poisoned Pipeline Execution・弱いブランチ保護の悪用) ※2026-07-14に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -510,6 +512,9 @@ updates:
 
 > "A compromised Red Hat employee GitHub account pushed malicious orphan commits that requested an npm-publishing OIDC token and published packages with valid SLSA provenance."
 > ([Miasma supply chain attack](https://snyk.io/blog/miasma-supply-chain-attack-malicious-code-redhat-cloud-services-npm-packages/), Snyk Blog, セクション "Attack Vector") ※2026-06-02に実際にfetch成功
+
+> "The attacker used throwaway accounts with randomized eight-character usernames and forged author identities like `build-bot`, `auto-ci`, `ci-bot`, and `pipeline-bot`."
+> ([Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn), dev.to, セクション "What Happened") ※2026-07-14に実際にfetch成功
 
 **侵害検知時の即時対応チェックリスト**:
 ```bash
@@ -532,7 +537,7 @@ snyk test
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-06-22
+**最終更新**: 2026-07-14
 
 ---
 
@@ -1015,3 +1020,33 @@ grep -rhoE '<(script|link)[^>]+(src|href)="https?://[^"]+"' ./public
 **バージョン**: ブラウザ共通（SRI は Chrome/Firefox/Safari/Edge 全対応）
 **確信度**: 高
 **最終更新**: 2026-06-11
+
+---
+
+### 10. Next.js の月次セキュリティリリース告知に合わせてパッチ適用を計画する
+
+Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用から**月次の定例セキュリティリリース**へ移行することを公式発表した。
+毎月ほぼ1回、次回リリースの想定時期と含まれる脆弱性の最大深刻度を事前告知し、チームが計画的にアップグレード枠を確保できるようにする。
+即座の対応が必要な脆弱性（悪用が既に確認されているもの等）については、従来通り ad-hoc パッチも継続する。
+
+**根拠**:
+- 従来の ad-hoc パッチは頻度こそ低いが事前告知がなく、利用チームに突発的な対応負荷を強いていた
+- LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
+- 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
+- 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+
+**運用への組み込み方**:
+- Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
+- 月次告知で「high 深刻度を含む」と分かった時点で、次回リリース日までにアップグレード検証環境を用意しておく
+- ad-hoc（緊急）パッチの告知は深刻度に関わらず最優先でトリアージする
+
+**出典引用**:
+> "Today we are moving to a formal security release program, with updates that teams can plan around."
+> ([Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program), Next.js Blog, セクション "A predictable release schedule") ※2026-07-14に実際にfetch成功
+
+**出典**:
+- [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+
+**バージョン**: Next.js 16.2+ / 15.5+
+**確信度**: 高
+**最終更新**: 2026-07-14

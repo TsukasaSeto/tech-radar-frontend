@@ -1682,6 +1682,14 @@ AGENTS.md
 MEMORY.md
 ```
 
+**JSONL + supersede 方式（1ファイル1事実方式の代替）**:
+「1ファイル1事実＋インデックス」はファイル数が増えると索引の保守コストが上がる。代替として、単一の追記専用 JSONL ログに `id` / `ts` / `type`（decision/knowledge/lesson/summary）/ `content`（+`tags`）の4フィールドで1行1レコードを記録し、古い記録は削除せず新しいレコードの `supersedes` フィールドに旧 `id` を列挙して無効化する方式もある。過去の意思決定が「なぜ覆ったか」ごと検索可能なまま残るのが利点。埋め込み検索ではなく grep ベースの取得を前提に設計する:
+
+```jsonl
+{"id":"d001","ts":"2026-06-10","type":"decision","content":"認証はJWTからCookie-basedへ変更","tags":["auth"]}
+{"id":"d002","ts":"2026-07-14","type":"decision","content":"Cookie-basedのCSRF対策にdouble-submit採用","tags":["auth"],"supersedes":["d001"]}
+```
+
 **アンチパターン**:
 - 「Claude が覚えているはず」でセッションを閉じる → 次セッションでゼロから説明が必要
 - 自動メモリにコード場所・関数名を記録する → リファクタリングで即腐る
@@ -1726,6 +1734,8 @@ MEMORY.md
 - [CLAUDE.mdを「社内憲法」として設計する ― AIエージェント運用のためのSSOT原則](https://zenn.dev/tmiyachi/articles/b06ce9250c1ab5) (Zenn tmiyachi、SSOT原則・4項目への絞り込み) ※2026-07-03 fetch
 - [コンテキストの配置順序を5パターン試したら、意味順が最悪の1つだと分かった](https://zenn.dev/kenimo49/articles/context-placement-5-patterns-semantic-worst) (Zenn kenimo49、400タスクのA/B検証による見出し順序と遵守率の関係) ※2026-07-08に実際にfetch成功
 - [AIエージェントを"暴走"させない仕組み ― ドキュメントを憲法にしたら、コードより先にルールが育った話](https://qiita.com/rikiza1989/items/9948daf97fb221da78c2) (Qiita、REQ/ADR/TASK の ID 体系＋ライフサイクル管理＋lint スクリプトで「ドキュメントに書かれていないコードは存在してはいけない」を機械的に強制する具体例。単一事例・スクリプト全文は未公開のため確信度低) ※2026-07-11 fetch
+- [Claude Codeに「記憶」を持たせる — CLAUDE.md肥大化から抜け出す二層設計](https://zenn.dev/map_universe/articles/agent-memory-two-layer-design) (Zenn、JSONL + supersede 方式による追記専用メモリスキーマ・grep優先の検索設計) ※2026-07-14に実際にfetch成功
+- [CLAUDE.md/AGENTS.mdは「書けば効く」ではない——指示ファイルを痩せさせる実務](https://zenn.dev/seiri_dev/articles/eca7dc89261ab8) (Zenn、ETH Zurich SRI Labの学術的知見の追加) ※2026-07-14に実際にfetch成功
 
 **出典引用**:
 > "索引と本体を分けて、やっと回り始めました"
@@ -1752,9 +1762,15 @@ MEMORY.md
 > "ドキュメントに書かれていないコードは、そもそも存在してはいけない"
 > ([AIエージェントを"暴走"させない仕組み ― ドキュメントを憲法にしたら、コードより先にルールが育った話](https://qiita.com/rikiza1989/items/9948daf97fb221da78c2), セクション 冒頭の原則) ※2026-07-11に実際にfetch成功
 
+> "次のセッションの机に、どの紙を・どうやって載せるかを設計すること"
+> ([Claude Codeに「記憶」を持たせる — CLAUDE.md肥大化から抜け出す二層設計](https://zenn.dev/map_universe/articles/agent-memory-two-layer-design), セクション "中核原則") ※2026-07-14に実際にfetch成功
+
+> "コンテキストファイルはタスクの成功率を一般に改善しなかった一方で、推論コストは平均で20%超増加した"
+> ([CLAUDE.md/AGENTS.mdは「書けば効く」ではない——指示ファイルを痩せさせる実務](https://zenn.dev/seiri_dev/articles/eca7dc89261ab8), セクション ETH Zurich SRI Lab の調査引用箇所) ※2026-07-14に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-11
+**最終更新**: 2026-07-14
 
 ---
 
@@ -2457,6 +2473,8 @@ jobs:
 
 「ファイルを編集できる AI」「外部に働きかける権限・鍵（GitHub トークン等）」「信頼しきれない入力」の3つが同一ジョブに揃うと、意図しない入力（Issue 本文・外部 Webhook 等）を経由してエージェントを動かされ、その編集力と権限を悪用されるリスクが生まれる。対策は権限をジョブ単位で分離すること: ビルド検証は AI の編集ステップと別ジョブにする、認証情報は使用するステップだけに絞りチェックアウト時に `persist-credentials: false` を設定する、配布・公開は同じジョブから直接起動せず `workflow_run` で疎結合にする（ただしその起動用の鍵は別途必要になる点に注意）。
 
+この3要素の組み合わせは OWASP の LLM アプリケーションリスク一覧における **Excessive Agency（過剰なエージェンシー、LLM06:2025）** とほぼ同じ構造であり、業界標準のリスク分類としても裏付けられる。Claude Code 固有の緩和策としては、`--allowedTools` をワイルドカードではなく `Read(./state.json)` のような単一ファイル・`WebFetch(domain:example.com)` のような単一ドメインまで絞り込み、さらに `--json-schema` で出力を構造化することで、エージェントが持つ権限の面積そのものを縮小できる（実際の git 操作は AI の外側にある決定的な shell ステップに分離し、AI の出力はその入力としてのみ使う）。
+
 **アンチパターン**:
 - プロンプトに「外部送信の前に必ず確認する」と書く → プロンプト変更で迂回される
 - フラグ変数（`let approved = false`）で制御 → エージェントが同一コンテキスト内で上書きできる
@@ -2477,10 +2495,14 @@ jobs:
 - [AIエージェントの承認ゲート設計——外部送信・公開クラスを権限設計で分離する](https://zenn.dev/yushiyamamoto/articles/claude-agent-approval-gate-design-2026-06) (Zenn) ※2026-06-21 fetch
 - [GitHub Actions × Claude で下書きは AI・承認は人間な半自動 PR レビューを作った](https://zenn.dev/prof_nyanko1124/articles/917c89c91a1248) (Zenn) ※2026-06-21 fetch
 - [AIに無人でPRを作らせる前に切り分けたい権限](https://zenn.dev/dely_jp/articles/b120322d2ab99b) (Zenn dely_jp、CI ジョブ単位での権限・認証情報・配布の分離) ※2026-07-06 fetch
+- [個人開発で踏みかけた、自律型AIエージェントの危険な組み合わせ](https://zenn.dev/go_furu93/articles/ai-agent-least-privilege-20260714-p82ee8) (Zenn go_furu93、OWASP LLM06:2025 Excessive Agency の引用・`--allowedTools` のファイル/ドメイン単位スコープ限定と `--json-schema` の実例) ※2026-07-14に実際にfetch成功
+
+> "自律的に動く・書き込み・実行権限を持っている・信頼できない外部コンテンツに触れている。この3つが揃うと…OWASPがLLMアプリケーションの代表的なリスクとして挙げる『Excessive Agency（過剰なエージェンシー）』（LLM06:2025）とほぼ同じ構造です。"
+> ([個人開発で踏みかけた、自律型AIエージェントの危険な組み合わせ](https://zenn.dev/go_furu93/articles/ai-agent-least-privilege-20260714-p82ee8), セクション "何が引っかかったのか") ※2026-07-14に実際にfetch成功
 
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-06
+**最終更新**: 2026-07-14
 
 ---
 
@@ -2664,5 +2686,57 @@ AI レビューエージェントに高機能なツール（広範囲検索・�
 **バージョン**: GitHub Copilot code review（エージェント全般に適用可能な原則）
 **確信度**: 高（公式ブログ一次情報・内部ベンチマークによる検証あり）
 **最終更新**: 2026-07-11
+
+---
+
+### 29. 完了報告はエージェントの発言ではなく、決定的なコマンド出力を証拠として要求する
+
+「コミットしました」「pushしました」というエージェントの一文は検証できないが、`git status --short` / `git log --oneline -3` / `git branch -vv` / `git ls-remote` の生出力は目視で検証できる。完了報告のフォーマットを、エージェントの言葉ではなく **実行結果の生出力そのもの** で構成するよう強制する。LLM を使った再検証（judge agent）ではなく、決定的でスクリプト化可能なコマンドの出力を証拠にすることが核心であり、Rule #21（完了条件の事前定義）が「依頼前にどう定義するか」を扱うのに対し、このルールは「事後の報告そのものをどう検証可能な形にするか」を扱う点で独立している。
+
+**根拠**:
+- 「『コミットしました』は事実だったが、受け取りたかった報告は『リモートに反映され、レビュー可能な状態になった』であり、両者は別物だった」という事例が示す通り、ローカル完了とリモート反映は別の状態であり、ナラティブな報告はこの区別を暗黙に握りつぶす
+- 「報告をエージェントの言葉ではなくコマンド出力で構成させる」ことで、"検証というものの見た目をまとった嘘"（虚偽のコミットハッシュ・偽のpush確認等）を防止できる。これは何もない状態でのhallucinationより見分けが難しい
+- 検証は LLM に頼らず、`git ls-remote` のような decisive で再現可能なコマンドで行う。エージェントの自己申告と、エージェントが実行した検証コマンドの生出力は別の信頼レベルにある
+
+**コード例**:
+```markdown
+## 完了報告フォーマット（プロンプト/CLAUDE.mdに含める）
+タスク完了を報告する際は、以下のコマンドの生出力をそのまま貼り付けること。
+「完了しました」等のナラティブな一文のみの報告は却下する。
+
+- `git status --short`
+- `git log --oneline -3`
+- `git branch -vv`（リモート追跡ブランチとの差分を確認）
+- リモート反映を主張する場合は `git ls-remote <remote> <branch>` の出力も添付
+```
+
+```bash
+# PreToolUse hook 等での機械的な補完検証の例（概念）
+# エージェントの「push完了」報告を鵜呑みにせず、実際にリモートの状態を照会する
+git ls-remote origin refs/heads/<branch-name>
+```
+
+**アンチパターン**:
+- 「完了しました」「pushしました」という一文だけで完了を確定させる
+- エージェント自身に「本当に完了しているか」を再度尋ねて確認させる（LLMによる自己検証は同じ誤りを繰り返しうる）
+- try/catchでAPIエラーを握りつぶし、ローカル処理の完了とリクエストの成功を同一の真偽値に混在させる（「成功」という一語に別々の状態を押し込まない）
+
+**出典引用**:
+> "『コミットしました』は事実だった。しかし私が受け取りたかった報告は『リモートに反映され、レビュー可能な状態になった』であって、両者は別物だった。"
+> ([Claude Codeの『やりました』を信用してはいけない——完了報告に証拠を要求する運用](https://zenn.dev/miharu_tools/articles/cc-completion-report-evidence), セクション "「コミットしました」の翌朝") ※2026-07-14に実際にfetch成功
+
+> "報告をエージェントの言葉ではなくコマンド出力で構成させることだ。『pushしました』という文は検証できないが、`git branch -vv` の出力は目視で検証できる。"
+> ([Claude Codeの『やりました』を信用してはいけない——完了報告に証拠を要求する運用](https://zenn.dev/miharu_tools/articles/cc-completion-report-evidence), セクション "型:完了報告フォーマット") ※2026-07-14に実際にfetch成功
+
+> "検証というものの見た目をまとった嘘です。何もない所での hallucination より質が悪い。"
+> ([Claude Codeが突然感情を持って懺悔してきた](https://zenn.dev/jun_uen0/articles/claude-code-confessed-after-faking-its-work), セクション 懺悔の passage) ※2026-07-14に実際にfetch成功
+
+**出典**:
+- [Claude Codeの『やりました』を信用してはいけない——完了報告に証拠を要求する運用](https://zenn.dev/miharu_tools/articles/cc-completion-report-evidence) (Zenn、完了報告をコマンド生出力で構成するフォーマット提案) ※2026-07-14に実際にfetch成功
+- [Claude Codeが突然感情を持って懺悔してきた](https://zenn.dev/jun_uen0/articles/claude-code-confessed-after-faking-its-work) (Zenn、`git ls-remote` 等の生の照会によるエージェント発言のクロスチェック) ※2026-07-14に実際にfetch成功
+
+**バージョン**: Claude Code（他のコーディングエージェント全般に適用可能な原則）
+**確信度**: 中（コミュニティ複数記事・具体的なコマンド例あり）
+**最終更新**: 2026-07-14
 
 ---
