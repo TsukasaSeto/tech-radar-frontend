@@ -406,9 +406,28 @@ credentials*
 
 PreToolUse フックで `deploy` コマンドの引数を実行前に検査し、`--dir=.` が指定されていたら即座にブロックする（フックの書き方は `ai-agent/claude-code.md` Rule #9 参照）。
 
+**`.gitignore` が一切効かないケース（AI ツールが git を経由しない場合）**:
+
+`.gitignore` は `git add` / `git commit` / `git push` が対象にするファイル範囲を決めるだけであり、AI エージェントのローカルファイルシステムスキャン・`tar`/`rsync`・Docker ビルドコンテキスト・IDE のクラウド同期機能は `.gitignore` を一切参照しない。あるビルドツールへのプロジェクトアップロード事案では、`.gitignore` されていたはずのシークレットファイルが git を経由しない全量アップロードで漏洩した（該当ログで245件のアップロードイベントを確認）。対策は「git 管理外に置く」ではなく「**リポジトリのディレクトリツリーの外に置く**」こと:
+
+```bash
+# Bad: リポジトリ直下（.gitignore 済みでも、非git経路のツールには丸見え）
+project/.env.local
+project/secrets/credentials.json
+
+# Good: リポジトリツリーの外側、OS 標準の設定ディレクトリに保存
+~/.config/myapp/credentials.json
+# または Secret Manager 経由で環境変数として注入（Rule #4 参照）
+```
+
+リポジトリ内に残してよいのは `.env.example` のようなキー名のみのテンプレートだけとし、実値は repo tree の外側 or Secret Manager に置く。
+
 **出典引用**:
 > "AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます。"
 > ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本責") ※2026-05-17に実際にfetch成功
+
+> "gitignore は、`git add` `git commit` `git push` が対象にするファイルの範囲を決めるものであり、それ以外の経路（AIツールのファイルシステム走査・tar/rsync・Dockerビルドコンテキスト等）は一切尊重してくれません。"
+> ([gitignore は防御じゃない。Grok Build の repo アップロード事案から、秘密の置き場所を見直す](https://zenn.dev/ishizakahiroshi/articles/20260714-grok-build-repo-upload-timeline), Zenn, セクション "本題: gitignore は防御じゃない") ※2026-07-14に実際にfetch成功
 
 **事故った時の対応**:
 1. シークレットを **即座に rotate**ﾈgit history から消しても、すでに漏れた値は永久に流出している前提）
@@ -435,13 +454,14 @@ PreToolUse フックで `deploy` コマンドの引数を実行前に検査し�
 - [GitHub: Removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) (GitHub Docs)
 - [AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer) (Zenn takna, gitleaks+lefthook+GitHub Push Protection+Claude Hooks による4層防御) ※2026-05-17 fetch
 - [AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686) (Qiita yurukusa、AI deploy での --dir=. 流出事故・.netlifyignore・PreToolUse 防御) ※2026-06-28に実際にfetch成功
+- [gitignore は防御じゃない。Grok Build の repo アップロード事案から、秘密の置き場所を見直す](https://zenn.dev/ishizakahiroshi/articles/20260714-grok-build-repo-upload-timeline) (Zenn ishizakahiroshi、git を経由しないアップロード経路での gitignore 無効化事案) ※2026-07-14に実際にfetch成功
 
 > "「消したから大丈夫」は、ここでは通用しない"
 > ([AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686), Qiita yurukusa, セクション "事後対応") ※2026-06-28に実際にfetch成功
 
 **バージョン**: 一般原則
 **確信度**: 高
-**最終更新**: 2026-06-28
+**最終更新**: 2026-07-14
 
 ---
 
