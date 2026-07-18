@@ -475,6 +475,16 @@ production 環境では Vercel Environment Variables / AWS Secrets Manager / Dop
 - Secret Manager は IAM で「誰が」「いつ」「何の値を」読んだかを監査ログ化できる
 - ローテーションﾈkey rotation）が手動でなく自動化できる
 - Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供ﾈOS の環境変数として渡される）
+- **サーバーレス関数の「環境変数」も要注意**: AWS Lambda 等の platform-level function configuration（Environment Variables 欄への直接設定）は永続的なデプロイメタデータとしてコンソールや IaC 定義に平文で残り、Secret Manager 経由の一時的なプロセスメモリ上の値とは性質が異なる。シークレットは実行時にランタイムで vault / caching extension から取得し、platform-level function configuration には置かない
+
+**サーバーレス関数での取得例**:
+```ts
+// Bad: Lambda の環境変数欄に直接シークレットを設定（デプロイ設定に平文で残る）
+const apiKey = process.env.STRIPE_SECRET_KEY;
+
+// Good: 実行時に vault / Secrets Manager から取得（関数設定には残らない）
+const apiKey = await getSecret('prod/stripe/secret-key'); // 前掲 getSecret() を利用
+```
 
 **主要な選択肢**:
 
@@ -539,7 +549,12 @@ const dbUrl = await getSecret('prod/database/url');
 - [AWS Secrets Manager Docs](https://docs.aws.amazon.com/secretsmanager/) (AWS)
 - [Doppler](https://www.doppler.com/) (Doppler)
 - [Infisical](https://infisical.com/) (Infisical)
+- [OWASP CheatSheetSeries: Serverless secrets - platform config, not env vars](https://github.com/OWASP/CheatSheetSeries/commit/ae0b3f22f5b24381455f742af9b5fa84063ad770) (OWASP 公式、Serverless/FaaS Security Cheat Sheet の改訂コミット。platform-level function configuration と実行時取得の違いを明確化) ※2026-07-16 fetch
+
+**出典引用**:
+> "Fetch secrets at runtime from a vault or caching extension — not from platform-level function configuration (e.g. Lambda Environment Variables)"
+> ([OWASP CheatSheetSeries: Serverless/FaaS Security Cheat Sheet 改訂](https://github.com/OWASP/CheatSheetSeries/commit/ae0b3f22f5b24381455f742af9b5fa84063ad770), セクション "Secrets Management") ※2026-07-16に実際にfetch成功
 
 **バージョン**: パターンﾈ実装依存）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-16

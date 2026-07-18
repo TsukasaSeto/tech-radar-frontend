@@ -274,6 +274,7 @@ vercel promote <deployment-url>
 - 既にビルド済みの artifact を再利用、ビルド不要で 30 秒以内に切り替え
 - DNS は変更しない（atomic deployment）
 - データベース schema 変更がない限り完全に安全
+- 実運用規模での検証例: 6,000万ユーザー・50万件の動的ページを配信する Speechify は Vercel の Instant Rollback を採用し、2〜3日おき（時に日2回）のデプロイ頻度でも「悪いリリースをユーザーに気づかれる前に戻せる」前提でリリースできている
 
 **GitHub Actions による rollback workflow**:
 ```yaml
@@ -375,10 +376,15 @@ Git revert は「rollback の事実が履歴に残る」点で監査追跡しや
 - [Vercel: Instant Rollback](https://vercel.com/docs/deployments/managing-deployments#instant-rollback) (Vercel)
 - [Google SRE Book: Postmortem Culture](https://sre.google/sre-book/postmortem-culture/) (Google)
 - [Atlassian: Incident management](https://www.atlassian.com/incident-management) (Atlassian)
+- [How Speechify serves 500,000 dynamic pages to 60 million users on Vercel](https://vercel.com/blog/how-speechify-serves-50000-dynamic-pages-to-60-million-users-on-vercel) (Vercel 公式ブログ、Instant Rollback の大規模実運用における効果を示す事例) ※2026-07-16 fetch
+
+**出典引用**:
+> "Vercel's instant rollbacks mean you fix it before anyone notices."
+> ([How Speechify serves 500,000 dynamic pages to 60 million users on Vercel](https://vercel.com/blog/how-speechify-serves-50000-dynamic-pages-to-60-million-users-on-vercel), セクション "Instant Rollbacks") ※2026-07-16に実際にfetch成功
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-16
 
 ---
 
