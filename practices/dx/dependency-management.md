@@ -18,6 +18,7 @@ CI / 本番 / ローカルで完全に同じ依存ツリーが構築されるこ
 - lockfile は依存パッケージ・transitive deps・パッチを完全固定する
 - `packageManager` フィールド + Corepack で pnpm 自体のバージョンも固定可能
 - 同じ commit から make したビルドが常に同じ結果になる reproducibility が CI / 監査の前提
+- `package.json` だけ編集して `pnpm install` を実行し忘れると、lockfile と不整合を起こし `--frozen-lockfile` の CI が全ジョブ同時に fail する実例が報告されている（1パッケージの削除忘れで 7 ジョブ同時 fail）
 
 **`package.json`**:
 ```json
@@ -102,6 +103,19 @@ git checkout --theirs pnpm-lock.yaml
 pnpm install
 ```
 
+**pre-commit hook で unsync を検知する**（`package.json` の編集忘れ対策）:
+```bash
+# .husky/pre-commit
+# package.json が staged なのに pnpm-lock.yaml が staged されていなければ commit を止める
+if git diff --cached --name-only | grep -q '^package\.json$'; then
+  if ! git diff --cached --name-only | grep -q '^pnpm-lock\.yaml$'; then
+    echo "package.json を変更しましたが pnpm-lock.yaml が未更新です。'pnpm install' を実行してください。"
+    exit 1
+  fi
+fi
+```
+CI が fail してから気づくより、ローカルの commit 時点で検知した方が手戻りが小さい。CI ログを読む際も「Install dependencies のステップ」から遡って原因を特定する。
+
 **判断軸**:
 - 新規プロジェクト → pnpm + Corepack + `packageManager` フィールド
 - 既存プロジェクト（npm / yarn 採用）→ 既存を維持、ただし lockfile + `packageManager` は徹底
@@ -111,10 +125,15 @@ pnpm install
 - [Node.js: Corepack](https://nodejs.org/api/corepack.html) (Node.js)
 - [pnpm: Configuration](https://pnpm.io/configuration) (pnpm)
 - [packageManager 仕様](https://nodejs.org/docs/latest/api/packages.html#packagemanager) (Node.js)
+- [package.json 編集後の lockfile 同期忘れで CI 7 ジョブ同時 fail した話](https://qiita.com/teppei19980914/items/3be544670087e8cc0b33) (Qiita、Husky pre-commit での unsync 検知パターン) ※2026-07-05に実際にfetch成功
+
+**出典引用**:
+> "package.json が staging にあるが、pnpm-lock.yaml がない → エラー"
+> ([package.json 編集後の lockfile 同期忘れで CI 7 ジョブ同時 fail した話](https://qiita.com/teppei19980914/items/3be544670087e8cc0b33), セクション "pre-commit hook で防ぐ") ※2026-07-05に実際にfetch成功
 
 **バージョン**: pnpm 9+, Node.js 20+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-05
 
 ---
 
