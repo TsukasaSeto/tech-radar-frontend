@@ -419,6 +419,55 @@ function isValidLocale(tag: string): boolean {
 - [react-i18next: TypeScript](https://react.i18next.com/latest/typescript) (i18next)
 - [paraglide-js](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) (inlang)
 
+---
+
+### 5. AI翻訳を使う場合はプレースホルダー整合性とロケール間キー差分をCIで検証する
+
+LLM による自動翻訳はメッセージ内の `{name}` のような変数プレースホルダーや ICU 複数形構文まで「言葉らしきもの」として書き換えてしまうことがある。
+また翻訳漏れのキーは実行時にエラーにならず、対象ロケールのユーザー体験だけが静かに劣化する。
+どちらも人間のレビューだけに頼らず、正規表現によるプレースホルダー照合とロケール間キー差分の両方を CI で機械的に検証する。
+
+**根拠**:
+- LLM は `{name}` → `{nombre}` のように変数名自体を翻訳したり、ICU 複数形構文 `{count, plural, one {...} other {...}}` を壊したりすることがある
+- 欠落した翻訳キーはビルドを通過し、実行時にも例外を投げないため気付かれにくい（Rule #4 の「型レベル検証」はキー存在チェックが中心で、ロケール間の翻訳内容の整合性までは検証しない）
+- 「ロケールのドリフトをビルド失敗として扱う」ことが最もレバレッジの高い対策として紹介されている
+
+**コード例**:
+```javascript
+// プレースホルダー整合性チェック（翻訳前後で構文が変化していないか）
+const PLACEHOLDER = /\{\{?[^}]+\}?\}|%\{[^}]+\}|%[sd]|<\/?[^>]+>/g;
+
+function placeholders(str) {
+  return (str.match(PLACEHOLDER) ?? []).sort();
+}
+
+function validate(source, translated, key) {
+  const a = placeholders(source);
+  const b = placeholders(translated);
+  if (JSON.stringify(a) !== JSON.stringify(b)) {
+    throw new Error(`Placeholder mismatch in "${key}": ${a} vs ${b}`);
+  }
+}
+```
+
+```bash
+# ロケール間のキー差分をCIで検知する（欠落があれば出力される→ fail させる）
+comm -23 \
+  <(jq -r 'paths(scalars) | join(".")' locales/en.json | sort) \
+  <(jq -r 'paths(scalars) | join(".")' locales/es.json | sort)
+```
+
+**出典引用**:
+> "It translates everything that looks like words, and a surprising amount of what's inside a locale string isn't text meant for humans."
+> ([Why AI-translating your app quietly breaks placeholders (and how to validate it)](https://dev.to/pakvothe/why-ai-translating-your-app-quietly-breaks-placeholders-and-how-to-validate-it-23pg), セクション本文) ※2026-07-22に実際にfetch成功
+
+> "The single highest-leverage move: make locale drift fail the build."
+> ([How to keep locale JSON files in sync (next-intl, i18next, or anything else)](https://dev.to/pakvothe/how-to-keep-locale-json-files-in-sync-next-intl-i18next-or-anything-else-17i6), セクション本文) ※2026-07-22に実際にfetch成功
+
+**バージョン**: ライブラリ非依存（next-intl / react-i18next / react-intl 等）
+**確信度**: 中（非公式・単一著者の2記事+コード例のため。異なる著者による裏付けは未確認）
+**最終更新**: 2026-07-22
+
 **バージョン**: TypeScript 5+, next-intl 3+
 **確信度**: 高
 **最終更新**: 2026-05-16

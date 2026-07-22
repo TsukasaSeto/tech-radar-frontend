@@ -448,3 +448,48 @@ function processInput(value: unknown): string {
 **最終更新**: 2026-05-07
 
 ---
+
+### 9. TypeScript 7.0（ネイティブ Go コンパイラ）移行時は削除された `target` / `moduleResolution` オプションを事前に置き換える
+
+TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target: "es5"` と `moduleResolution: "node"` / `"classic"` が廃止される。
+移行前に `tsconfig.json` の対象オプションを確認し、`target: "ES2015"` 以上・`moduleResolution: "bundler"` に置き換える。
+高速化を謳う宣伝文句（「10倍高速」等）はソースによって数値が大きく異なるため、鵜呑みにせず自プロジェクトで実測する。
+
+**根拠**:
+- `target: "es5"` を指定したままアップグレードすると `error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher.` でビルドが失敗する
+- `moduleResolution` の `"node"` / `"classic"` も削除され、`"bundler"` が唯一の推奨値になる（本ファイル Rule #5 のコード例が既に `"bundler"` を採用しているのはこの流れに合致する）
+- ベンダー側は「10倍高速」を謳うが、独自ベンチマーク記事では型チェックのみで実測 3.3〜4.1倍にとどまったと報告されており、公称値と実測値に乖離がある。マーケティング数値をそのまま採用せず自プロジェクトで計測する
+- 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）
+
+**コード例**:
+```json
+// tsconfig.json - TypeScript 7.0 で削除されたオプションを置き換える
+{
+  "compilerOptions": {
+    // NG: "target": "es5" → TS 7.0 では build エラー (TS5023)
+    "target": "ES2015",
+    // NG: "moduleResolution": "node" / "classic" は削除済み
+    "moduleResolution": "bundler"
+  }
+}
+```
+```bash
+# 並列型チェックのワーカー数を明示する（CPUコア数を目安に）
+tsc --checkers 4
+```
+
+**出典引用**:
+> "error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher."
+> ([TypeScript 7.0移行ガイド](https://zenn.dev/fd_ai_teacher/articles/tech-20260720094013-1), セクション "破壊的変更") ※2026-07-22に実際にfetch成功
+
+> "TypeScript 7 was not 10x faster in my test. It was roughly 3–4x faster."
+> ([TypeScript 7 Is "10x Faster."](https://medium.com/@yesimnoh/typescript-7-is-10x-faster-b6357bd60de5), セクション ベンチマーク結果) ※2026-07-22に実際にfetch成功
+
+> "This transition ... allows the compiler to operate as compiled machine code rather than interpreted JavaScript."
+> ([TypeScript 7.0 Go-Native Compiler: What SaaS Founders Need to Know](https://medium.com/@Bhalli.dev/typescript-7-0-go-native-compiler-what-saas-founders-need-to-know-ffbe2326582e), セクション本文) ※2026-07-22に実際にfetch成功
+
+**バージョン**: TypeScript 7.0+
+**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
+**最終更新**: 2026-07-22
+
+---
