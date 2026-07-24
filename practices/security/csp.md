@@ -212,6 +212,7 @@ export async function POST(req: NextRequest) {
 - 2-4 週間のレポート収集で「期待されない違反」と「正規ソースの allow 漏れ」を区別できる
 - 段階導入は OWASP / Google の CSP 導入ガイドで推奨される
 - enforce 後も `Report-Only` を別ヘッダーで併用して、より厳しいポリシーを試験できる
+- Next.js はビルド時に環境変数を埋め込むため、CSP の allowlist を `process.env` から動的に組み立てると、ビルド後に環境変数が変わっても反映されない。未設定時に `undefined` 文字列がそのまま allowlist に混入し（例: `connect-src 'self' undefined`）、スクリプトブロックのように派手に壊れず analytics のビーコンだけが黙って失敗する部分的な障害になりやすい。既知の API オリジンは環境ごとにハードコードした配列を fallback として持たせる
 
 **段階導入プロセス**:
 1. **Phase 1（1-2 週間）**: `Report-Only` で広めの暫定ポリシー、レポート収集
@@ -240,18 +241,38 @@ response.headers.set('Content-Security-Policy', currentCsp);
 response.headers.set('Content-Security-Policy-Report-Only', tighterCsp);
 ```
 
+```javascript
+// 既知の API オリジンをハードコードした fallback（ビルド時 env var 欠落対策）
+const KNOWN_API_ORIGINS = [
+  "https://api.example.com",
+  "https://api-staging.example.com",
+];
+const BUILD_API_ORIGIN = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+const API_ORIGINS = Array.from(
+  new Set([...KNOWN_API_ORIGINS, BUILD_API_ORIGIN].filter(Boolean)),
+);
+// → env var が空でも "undefined" が connect-src に混入しない
+```
+
 **よくある失敗**:
 - いきなり enforce → 広告 / Analytics / フィードバックフォーム等が壊れる
 - レポート収集だけして調整しない → 永遠に `Report-Only` のままになる
 - production だけで試験 → staging で再現できない事象を見逃す
+- ビルド時に埋め込まれた `process.env` の allowlist が実行時の環境変数変更に追従しない → staging でだけ `connect-src 'self' undefined` のような欠落が起き、analytics のビーコンだけが静かに落ちる
+- allowlist にコメントを残さない → 数ヶ月後に「なぜこのドメインが許可されているか」が分からなくなり、誰かが「整理」した拍子に analytics 等を壊す
 
 **出典**:
 - [MDN: Content-Security-Policy-Report-Only](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy-Report-Only) (MDN Web Docs)
 - [OWASP: Content Security Policy Cheat Sheet - Refactoring inline code](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html#refactoring-inline-code) (OWASP)
+- [I Shipped an Enforcing Content-Security-Policy on a Real Next.js](https://medium.com/@virendrapatil2902/i-shipped-an-enforcing-content-security-policy-on-a-real-next-js-4e12f83f2c28) (Medium、ビルド時 env var 埋め込みによるサイレント障害の実例) ※2026-07-24に実際にfetch成功
+
+**出典引用**:
+> "CSP is baked into the bundle. A missing env var doesn't throw; it silently produces `connect-src 'self' undefined`"
+> ([I Shipped an Enforcing Content-Security-Policy on a Real Next.js](https://medium.com/@virendrapatil2902/i-shipped-an-enforcing-content-security-policy-on-a-real-next-js-4e12f83f2c28), セクション "Failure #3: the API works locally and dies in staging") ※2026-07-24に実際にfetch成功
 
 **バージョン**: CSP Level 2+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-24
 
 ---
 

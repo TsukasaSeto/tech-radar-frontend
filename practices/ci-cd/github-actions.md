@@ -598,6 +598,8 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
 - 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
 - OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
+- **最も多い失敗は信頼ポリシーの `sub` 条件を絞り込まないこと**: 組織内の任意のワークフロー（フォークされた marketplace action を含む）が role を assume できてしまう。`sub` は `repo:<ORG>/<REPO>:ref:refs/heads/main` のように **リポジトリ＋ブランチ／environment 単位で厳密に**指定し、別ワークフローに権限を広げたい場合は既存ロールを緩めず**別の狭いロールを追加**する
+- 旧クレデンシャルの削除は「新しい経路の疎通確認 → 読み取り専用コマンドで検証 → 本番影響のない操作でテスト → 監査ログ確認」の順で確実に検証してから行う。短命トークンであっても、実行中に奪われた場合の影響範囲は role の権限そのものに比例するため、IAM ロールの権限最小化（`sts:GetCallerIdentity` 相当から段階的に拡張）は OIDC 移行後も引き続き必要
 
 **コード例**:
 ```yaml
@@ -677,6 +679,7 @@ resource "aws_iam_role" "github_actions_deploy" {
 **アンチパターン**:
 - 信頼ポリシーの `sub` 条件を `*` にする → 全ブランチ・全フォークからの AssumeRole を許可してしまう
 - 旧クレデンシャルを secrets に残したまま OIDC を追加するだけ → 移行メリットが半減する
+- 複数ワークフローに対応するために最初の role の `sub` 条件をワイルドカードで緩める → 狭いロールを追加で作る方が安全
 
 **GitHub App 秘密鍵の KMS 管理（応用パターン）**:
 ```javascript
@@ -697,17 +700,25 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97) (Zenn、鍵素材を外に出さず KMS で署名する応用パターン) ※2026-05-22に実際にfetch成功
 - [GitHub ActionsとWorkload Identity Federationによるサービスアカウント キーレス化の実践](https://zenn.dev/tk_nomura/articles/2026-07-wif-keyless-github-actions) (Zenn TK、GCP版OIDCキーレス化と`attribute_condition`によるリポジトリ/ブランチ/タグ絞り込み) ※2026-07-08に実際にfetch成功
 - [GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f) (Zenn、OIDC プロバイダー作成込みの Terraform コード例) ※2026-07-05に実際にfetch成功
+- [Auditors, OIDC and the trust policy most teams get wrong](https://dev.to/leobaniak/auditors-oidc-and-the-trust-policy-most-teams-get-wrong-4jcb) (dev.to、`sub` 条件を絞らない失敗パターン) ※2026-07-24に実際にfetch成功
+- [GitHub Actionsで長期AWSキーをなくす5ステップ — OIDC移行の安全チェック付き実務レシピ](https://qiita.com/akira_papa_AI/items/9947bb45cf798b4e4d6e) (Qiita、旧クレデンシャル削除前の検証手順) ※2026-07-24に実際にfetch成功
 
 **出典引用**:
 > "OIDC（OpenID Connect）を使うと、GitHub Actions が実行される際にAWSへの短期トークン（一時的なクレデンシャル）を動的に発行できます。"
 > ([GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f), セクション "なぜ OIDC か？") ※2026-07-05に実際にfetch成功
+
+> "The OIDC subject claim is the perimeter. Scope it to the exact repository, scope it to the exact ref, and when you extend to a second workflow, add a second narrower role rather than a wildcard on the first."
+> ([Auditors, OIDC and the trust policy most teams get wrong](https://dev.to/leobaniak/auditors-oidc-and-the-trust-policy-most-teams-get-wrong-4jcb), セクション "The one line that most teams get wrong") ※2026-07-24に実際にfetch成功
+
+> "短期資格情報でも、実行中に奪われた時の影響はrole権限ぶん残ります。"
+> ([GitHub Actionsで長期AWSキーをなくす5ステップ — OIDC移行の安全チェック付き実務レシピ](https://qiita.com/akira_papa_AI/items/9947bb45cf798b4e4d6e), セクション "よくある失敗5つ") ※2026-07-24に実際にfetch成功
 
 > "本手法では秘密鍵は Cloud KMS から外に出ることなく、署名処理のみを KMS API で行います。秘密鍵そのものを手元で管理する必要がなくなるため、流出リスクを大幅に低減できます。"
 > ([GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97), セクション "Flow/Process") ※2026-05-22に実際にfetch成功
 
 **バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation
 **確信度**: 高
-**最終更新**: 2026-07-08
+**最終更新**: 2026-07-24
 
 ---
 

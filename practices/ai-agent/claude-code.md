@@ -2170,6 +2170,7 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - `CLAUDE_CODE_SUBAGENT_MODEL` 環境変数でデフォルトモデルを一括設定できる
 - 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
 - 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
+- 単一著者の未検証情報だが、v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**という報告がある。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする（公式ドキュメントでの裏取りは未実施）
 
 **コード例**:
 ```yaml
@@ -2185,8 +2186,11 @@ model: haiku
 ```
 
 ```bash
-# デフォルトモデルの一括設定（深い階層の探索エージェントを Haiku に固定）
+# デフォルトモデルの一括設定(深い階層の探索エージェントを Haiku に固定)
 export CLAUDE_CODE_SUBAGENT_MODEL=haiku
+
+# v2.1.219 で拡張されたデフォルトのネスト深さ(1→3)を元に戻す(未公式検証)
+export CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1
 ```
 
 **3層ネスト構成例**:
@@ -2264,16 +2268,20 @@ tools: Read, Grep, Edit, Write, Bash
 > "フォルダにファイルを置いただけでは安心できず、`description` を書き忘れると、まるで最初から無かったかのように扱われる"
 > ([サブエージェントを自作したら、description書き忘れはエラーゼロで黙って無視されていた](https://zenn.dev/numarn/articles/claude-code-subagent-definition-handson), セクション "罠1: description を忘れただけで、存在しない扱いになる。しかもエラーが出ない") ※2026-07-06に実際にfetch成功
 
+> "サブエージェントのネスト生成がデフォルトで深さ3まで可能に"
+> ([Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830), セクション "影響と対応") ※2026-07-24に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
 - [Claude Codeサブエージェントの暴走と再帰ループ防止パターン](https://qiita.com/yurukusa/items/f75c17c3b37759c0009b) (Qiita) ※2026-06-27 fetch
 - [Claude Code (Opus 4.8) が数分固まる問題、188セッション実測したら原因はAPIでもネットワークでもなかった](https://zenn.dev/yuki_fujisawa/articles/a155d388e61acc) (Zenn、188セッション・14,000ターンの実測調査) ※2026-07-05 fetch
 - [サブエージェントを自作したら、description書き忘れはエラーゼロで黙って無視されていた](https://zenn.dev/numarn/articles/claude-code-subagent-definition-handson) (Zenn numarn、description 欠落時のサイレント除外という新しい失敗モード) ※2026-07-06 fetch
+- [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。単著者・未公式検証) ※2026-07-24 fetch
 
-**バージョン**: Claude Code v2.1.172+
+**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、未公式検証）
 **確信度**: 高
-**最終更新**: 2026-07-06
+**最終更新**: 2026-07-24
 
 ---
 
