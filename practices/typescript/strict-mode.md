@@ -459,6 +459,7 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 - `target: "es5"` を指定したままアップグレードすると `error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher.` でビルドが失敗する
 - `moduleResolution` の `"node"` / `"classic"` も削除され、`"bundler"` が唯一の推奨値になる（本ファイル Rule #5 のコード例が既に `"bundler"` を採用しているのはこの流れに合致する）
 - ベンダー側は「10倍高速」を謳うが、独自ベンチマーク記事では型チェックのみで実測 3.3〜4.1倍にとどまったと報告されており、公称値と実測値に乖離がある。マーケティング数値をそのまま採用せず自プロジェクトで計測する
+- 別の独立ベンチマーク（約10.5万行の実プロジェクト）でも tsc 6.0.3 の 2,457ms に対し tsc 7.0.2 は 535ms（4.6倍）、Go バイナリを直接叩く `tsgo` は 524ms（4.7倍、Node.js 起動オーバーヘッド約86ms を除く）と、複数ソースで「公称10倍」と「実測4〜5倍」の乖離が再現している
 - 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）
 
 **コード例**:
@@ -488,8 +489,11 @@ tsc --checkers 4
 > "This transition ... allows the compiler to operate as compiled machine code rather than interpreted JavaScript."
 > ([TypeScript 7.0 Go-Native Compiler: What SaaS Founders Need to Know](https://medium.com/@Bhalli.dev/typescript-7-0-go-native-compiler-what-saas-founders-need-to-know-ffbe2326582e), セクション本文) ※2026-07-22に実際にfetch成功
 
+> "10倍はemitまで含むフルビルドを、VS Codeのような巨大な実アプリで測った値"
+> ([TypeScript 7が来たので、自分のプロジェクトで型チェック時間を測ってみた](https://zenn.dev/var/articles/typescript-7-tsgo-benchmark), セクション "公式の10倍と、実測4.6倍の差はどこから来るか") ※2026-07-24に実際にfetch成功
+
 **バージョン**: TypeScript 7.0+
-**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
-**最終更新**: 2026-07-22
+**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
+**最終更新**: 2026-07-24
 
 ---
