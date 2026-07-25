@@ -87,6 +87,7 @@ Next.js では Middleware で nonce を生成し、`headers()` 経由で Server 
 - Server Component は `headers()` API で Middleware が設定した値を読み取れる
 - Next.js の `<Script>` コンポーネントは `nonce` prop をサポートし、自動で CSP 準拠になる
 - インライン `<script>` 内で `dangerouslySetInnerHTML` を使う場合も nonce 必須
+- nonce は仕様上「リクエストごとに一意」でなければ意味を持たない。静的プリレンダリング等でビルド時に固定された nonce を焼き込んでしまうと、値としては動いていても CSP のセキュリティ効果は実質ゼロになる
 
 **コード例**:
 ```tsx
@@ -130,10 +131,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 **出典**:
 - [Next.js Docs: Content Security Policy](https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy) (Next.js 公式)
 - [Next.js Docs: headers()](https://nextjs.org/docs/app/api-reference/functions/headers) (Next.js 公式)
+- [script-srcのunsafe-inlineを消すために、Next.js 16のmiddlewareでリクエスト毎のnonceを配った話](https://zenn.dev/sen_web3/articles/vouch-csp-nonce-middleware) (Zenn、静的プリレンダリングでのnonce焼き込み問題を実例で確認) ※2026-07-25に実際にfetch成功
 
-**バージョン**: Next.js 13+ (App Router)
+**出典引用**:
+> "nonceは仕様上「リクエストごとに一意」でなければ意味がないため、ビルド時に固定された値は本質的にCSPのセキュリティ効果を持たなくなります。"
+> ([script-srcのunsafe-inlineを消すために、Next.js 16のmiddlewareでリクエスト毎のnonceを配った話](https://zenn.dev/sen_web3/articles/vouch-csp-nonce-middleware), セクション "nonceをリクエスト毎に生成する") ※2026-07-25に実際にfetch成功
+
+**バージョン**: Next.js 13+ (App Router)、Next.js 16 で追加確認
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-25
 
 ---
 

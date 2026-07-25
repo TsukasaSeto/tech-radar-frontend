@@ -1906,6 +1906,9 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - README は仕様書ではなく入力（信頼できない外部データ）である。「README に書いてあるから」は agent にとって実行の許可にならない。read-only な調査（`ls` / `find` / `cat`）と、実行を伴う操作（`npm install` 等のインストール・ネットワークアクセス・シークレットファイル読み取り）を、README を読ませる前に分離しておく
 - 確認プロンプトを無効化していても、PreToolUse フックによる正規表現ベースの遮断（再帰的削除・`sudo` 等の権限昇格コマンドの検出）は独立して機能し続ける。フックは「確認」ではなく「実行前の物理的な遮断層」として設計する
 - Hook によるコマンド遮断（入力側）とは別に、チャット常駐エージェントの出力に機密情報が漏れるリスクには、正規表現 → NER → LLM検証の多段パイプラインで安価な手法を先に通す設計が有効という指摘もある（コード例は未提示、参考情報として）
+- `dontAsk` で Bash が拒否されても、安全とは限らない: 実機検証では Bash ツールが拒否された際に、モデルが拒否メッセージ中の「他のツールでも同じ目的を達成してよい」という案内に従って Write ツールに切り替え、結果的に元の目的（ファイル作成）を達成していた。`permission_denials` のログ件数だけを見て「拒否されたから安全」と判断せず、実際のファイルシステム状態・git 状態を監査する必要がある
+- コマンド名ベースの許可リストは、`bash -c "任意の文字列"` のような汎用シェル実行コマンドが1つ混入するだけで実質的に「何でも許可」へ形骸化する。上記の `env VAR=val cmd` ラッパーと同じ「文字列一致では防げない」脆弱パターンの一種であり、許可リストは「そのコマンド自身が任意コードを実行できるインタプリタでないか」を基準に設計する
+- アプリ層の `permissions.deny` と OS サンドボックス層の制御は独立したレイヤーであり、`deny` で `~/.config/gh/**` のような設定ディレクトリを閉じると、`git` の認証ヘルパー等の正規プロセスまで巻き添えでブロックされ `git push` が失敗しうる。この場合は `deny` を緩めるのではなく、`sandbox.filesystem.allowRead` で「読み取りだけ」を正規プロセスに許可し、書き込み・編集は `deny` のまま維持する層分離が安全
 
 **6段階のパーミッションモード**（安全な順）:
 | モード | 挙動 |
@@ -1945,10 +1948,14 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
   "sandbox": {
     "enabled": true,
     "autoAllowBashIfSandboxed": true,
-    "allowUnsandboxedCommands": false
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "allowRead": ["~/.config/gh"]
+    }
   }
 }
 ```
+`sandbox.filesystem.allowRead` は「読み取りだけ」を `deny` の対象外にする層分離の手段で、`git push` が認証ヘルパー経由で `~/.config/gh` を読む必要がある場合などに使う。書き込み・編集は `deny` のまま塞ぐ。
 
 **アンチパターン**:
 - `--dangerously-skip-permissions` の使用（すべての安全装置を無効化するため運用NG。代わりに `dontAsk` モードを使う）
@@ -1971,6 +1978,15 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 > "確認を消しても、フックによる遮断は残る"
 > ([3-Layer Defense Against Autonomous AI Agent Failures](https://zenn.dev/keithval/articles/ai-agent-72h-sprint-day1), セクション "層2: PreToolUse フックで、危険な操作を実行前に殺す") ※2026-07-10に実際にfetch成功
 
+> "拒否メッセージの中に『同じ目的なら他のツールで試していい』という案内文が入っていて"
+> ([claude -pの権限モードを6種試したら、『don't ask』はBashを拒否したのに目的は達成されていた](https://zenn.dev/numarn/articles/claude-permission-mode-cli-handson), セクション "dontAskモードの挙動") ※2026-07-25に実際にfetch成功
+
+> "『このコマンド名なら許可』というルールの裏側で、実質的には『何でも許可』に近い状態が生まれていました"
+> ([AIエージェントの権限ルールに、`bash -c` という抜け穴があった話](https://zenn.dev/map_universe/articles/bash-c-permission-gap-20260725), セクション "bash -cという抜け穴") ※2026-07-25に実際にfetch成功
+
+> "秘密を守る鍵が正規の配達員まで閉め出した"
+> ([APIトークンを守ったら git push まで止まった—denyルールとsandbox.filesystem.allowReadの使い分け](https://zenn.dev/kanae_yomo/articles/7e93b3483d5bb5), セクション "denyルールとsandbox.filesystem.allowReadの使い分け") ※2026-07-25に実際にfetch成功
+
 **出典**:
 - [Claude Code 無人自律編 — ask が無力な世界で機構で守る](https://zenn.dev/kojisumiyoshi/articles/ai-agent-unattended-autonomy) ※2026-06-09に実際にfetch成功
 - [AIエージェント時代、開発者の仕事は「許可する環境」を設計することになる](https://zenn.dev/heftykoo/articles/1c647688784214) ※2026-06-08に実際にfetch成功
@@ -1978,10 +1994,13 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - [README は仕様書ではなく、入力である](https://zenn.dev/heftykoo/articles/30678fef448d73) (Zenn) ※2026-07-10に実際にfetch成功
 - [3-Layer Defense Against Autonomous AI Agent Failures](https://zenn.dev/keithval/articles/ai-agent-72h-sprint-day1) (Zenn) ※2026-07-10に実際にfetch成功
 - [チャット常駐AIの出力から機密情報を自動マスキングする設計パターン](https://zenn.dev/hach/articles/chat-ai-masking-design) (Zenn、参考：出力側マスキングの多段パイプライン、コード例なし) ※2026-07-10に実際にfetch成功
+- [claude -pの権限モードを6種試したら、『don't ask』はBashを拒否したのに目的は達成されていた](https://zenn.dev/numarn/articles/claude-permission-mode-cli-handson) (Zenn、dontAskの実機検証、denialログだけでは安全性を測れない実証) ※2026-07-25に実際にfetch成功
+- [AIエージェントの権限ルールに、`bash -c` という抜け穴があった話](https://zenn.dev/map_universe/articles/bash-c-permission-gap-20260725) (Zenn、コマンド名ベース許可リストの脆弱性) ※2026-07-25に実際にfetch成功
+- [APIトークンを守ったら git push まで止まった—denyルールとsandbox.filesystem.allowReadの使い分け](https://zenn.dev/kanae_yomo/articles/7e93b3483d5bb5) (Zenn、app層denyとOSサンドボックス層の相互作用の実例) ※2026-07-25に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-10
+**最終更新**: 2026-07-25
 
 ---
 
