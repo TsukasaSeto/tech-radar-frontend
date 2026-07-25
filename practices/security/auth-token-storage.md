@@ -606,3 +606,77 @@ async function createDPoPProof(method, url) {
 **最終更新**: 2026-07-04
 
 ---
+
+### 7. トークンリフレッシュの競合はタブ内・タブ間の2階層で同時実行制御する
+
+素朴な「401 を受けたらリフレッシュする」実装は、同一タブ内の複数リクエストが同時に 401 を受けた場合と、
+複数ブラウザタブが同時にリフレッシュを試みる場合の両方で競合し、
+片方が無効化された旧トークンで上書きしてセッションを壊す。
+タブ内は single-flight Promise + 世代番号、タブ間は `Web Locks API` で、それぞれ別の同時実行制御が必要。
+
+**根拠**:
+- 同一タブ内: 複数リクエストが同時に 401 を受けると、リフレッシュ処理を複数回発火してしまう。進行中のリフレッシュ Promise を共有（single-flight）し、リフレッシュ完了後に届いた「リフレッシュ前に発行された古いレスポンス」による再リフレッシュを世代番号（`tokenGeneration`）の比較で防ぐ
+- 複数タブ間: 各ブラウザタブは独立した JS ランタイムを持つため、single-flight Promise はタブをまたいで共有できない。`navigator.locks`（Web Locks API）でタブ横断の排他ロックを取得し、ロック取得中に他タブが既にリフレッシュ済みでないか `localStorage` のタイムスタンプで二重チェックしてから実際のリフレッシュ処理を実行する
+- リフレッシュトークンが rotation（Rule #3）で使い捨てになっている場合、この種の競合は「同じリフレッシュトークンを2回使おうとした」と誤検知され、正規ユーザーのセッションが強制ログアウトされる実害につながる
+
+**コード例（タブ内: single-flight + 世代番号）**:
+```ts
+let refreshPromise: Promise<string> | null = null;
+let tokenGeneration = 0;
+
+async function getValidToken(): Promise<string> {
+  if (refreshPromise) return refreshPromise; // 進行中のリフレッシュに相乗り
+
+  const myGeneration = tokenGeneration;
+  refreshPromise = (async () => {
+    try {
+      const newToken = await refreshAccessToken();
+      tokenGeneration++; // 世代を進める
+      return newToken;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+  return refreshPromise;
+}
+
+// 401 ハンドラ側: 自分がリクエストした時点より後にリフレッシュが完了していれば再試行不要
+async function handle401(requestGeneration: number) {
+  if (requestGeneration < tokenGeneration) return; // 既に新しいトークンで解決済み
+  await getValidToken();
+}
+```
+
+**コード例（タブ間: Web Locks API + localStorage 二重チェック）**:
+```ts
+async function refreshAcrossTabs(): Promise<string> {
+  return navigator.locks.request('token-refresh', async () => {
+    const lastRefreshedAt = Number(localStorage.getItem('token_refreshed_at') ?? 0);
+    if (Date.now() - lastRefreshedAt < 5000) {
+      // 直近5秒以内に他タブがリフレッシュ済み → 保存済みトークンをそのまま使う
+      return localStorage.getItem('access_token')!;
+    }
+    const newToken = await refreshAccessToken();
+    localStorage.setItem('access_token', newToken);
+    localStorage.setItem('token_refreshed_at', String(Date.now()));
+    return newToken;
+  });
+}
+```
+
+**出典**:
+- [トークン更新の競合を防ぐ：single-flightと世代番号による遅延401対策](https://zenn.dev/itakuradev/articles/token-refresh-single-flight-generation) (Zenn、同一タブ内の競合対策) ※2026-07-25に実際にfetch成功
+- [The Multiple Browser Tab Token Trap: Synchronizing JWT Refresh Across Browser Tabs](https://dev.to/nileshcodehub/the-multiple-browser-tab-token-trap-synchronizing-jwt-refresh-across-browser-tabs-45f6) (dev.to、複数タブ間の競合対策) ※2026-07-25に実際にfetch成功
+
+**出典引用**:
+> "Promiseは、更新中の重複を防ぎます。世代番号は、更新終了後に届いた古いレスポンスから、不要な更新が再開されることを防ぎます。"
+> ([トークン更新の競合を防ぐ](https://zenn.dev/itakuradev/articles/token-refresh-single-flight-generation), セクション "single-flightと世代番号の役割は異なる") ※2026-07-25に実際にfetch成功
+
+> "By combining Axios Interceptors with the Web Locks API, we eliminated cross-tab token refresh race conditions completely."
+> ([The Multiple Browser Tab Token Trap](https://dev.to/nileshcodehub/the-multiple-browser-tab-token-trap-synchronizing-jwt-refresh-across-browser-tabs-45f6), セクション "Section 8: Conclusion") ※2026-07-25に実際にfetch成功
+
+**バージョン**: `navigator.locks`（Web Locks API: Chrome 69+, Firefox 96+, Safari 15.4+）
+**確信度**: 中（それぞれ単著者・非公式の1記事だが、「タブ内」「タブ間」という異なるスコープで同じ知見（素朴なトークンリフレッシュは競合する）を補完的に裏付けているため、単独記事より一段高い確信度として扱う）
+**最終更新**: 2026-07-25
+
+---

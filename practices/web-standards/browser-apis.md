@@ -349,3 +349,63 @@ controller.abort();  // 両方を一度でキャンセル
 **バージョン**: Chrome 66+, Firefox 57+, Safari 12.1+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 6. Baseline Widely Available 外の API 利用を TypeScript + CI で機械的に拒否する
+
+`tsconfig` の `target` / `lib` はビルド出力の構文レベルを決めるだけで、実行時に使える Web API の可否は保証しない。
+`noLib: true` の専用 `tsconfig` に Baseline Widely Available のみを含む型定義を読み込ませ、
+対象外 API の使用を `tsc` のコンパイルエラーとして CI で機械的に検出する。
+
+**根拠**:
+- Vite/webpack の `target` はトランスパイル対象の構文（アロー関数・オプショナルチェイニング等）を下げるだけで、`Promise.withResolvers` や `document.startViewTransition` のような「構文的には新しくないが実装が新しい」API の呼び出しは素通りしてビルドが通ってしまう
+- 通常の `tsconfig.json`（標準の `lib`）は Baseline に関わらず「その API が型定義に存在するかどうか」でしか判定できないため、ブラウザ互換性チェックとしては機能しない
+- `typescript-baseline-lib` と `@baseline-types/dom-widely-available` を組み合わせ、`noLib: true` にした専用 `tsconfig.baseline.json` で型チェック専用に読み込ませることで、「型としては存在するが Baseline Widely Available 外」の API を型エラーとして検出できる
+- CI で `tsc --noEmit -p tsconfig.baseline.json` を通すだけで PR 単位でのブラウザ互換性ゲートになり、レビュアーの目視確認に依存しない
+
+**コード例**:
+```jsonc
+// tsconfig.baseline.json
+{
+  "compilerOptions": {
+    "noLib": true,
+    "types": ["@baseline-types/dom-widely-available", "typescript-baseline-lib"],
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}
+```
+
+```yaml
+# .github/workflows/baseline-check.yml
+- name: Check Baseline Widely Available compatibility
+  run: npx tsc --noEmit -p tsconfig.baseline.json
+```
+
+```ts
+// Bad: Baseline Widely Available 外の API を無警告で使ってしまう
+const { promise, resolve } = Promise.withResolvers<void>(); // tsconfig.baseline.json では型エラーになる
+
+// Good: Baseline 到達済みの代替、または feature detection でフォールバック
+let resolveFn: () => void;
+const promise = new Promise<void>((resolve) => { resolveFn = resolve; });
+```
+
+**出典**:
+- [そのAPI、Baselineですか？ TypeScriptの型とCIでブラウザ互換性を守る](https://zenn.dev/ru/articles/17941500fa3391) (Zenn) ※2026-07-25に実際にfetch成功
+- [Your Build Target Is Not an API Contract: Enforcing Baseline with TypeScript](https://dev.to/ryuya/your-build-target-is-not-an-api-contract-enforcing-baseline-with-typescript-epn) (dev.to、同一手法の別実装解説) ※2026-07-25に実際にfetch成功
+
+**出典引用**:
+> "ViteとTypeScriptは、どちらも別の役割を正しく果たしています。足りないのは『このAPIはWidely Availableか』という検査です。"
+> ([そのAPI、Baselineですか？](https://zenn.dev/ru/articles/17941500fa3391), セクション "2つの型パッケージを入れて、実際に止める") ※2026-07-25に実際にfetch成功
+
+> "Its build target tells the transformer which JavaScript syntax needs to be lowered. It does not automatically reject every API that falls outside the corresponding Baseline target."
+> ([Your Build Target Is Not an API Contract](https://dev.to/ryuya/your-build-target-is-not-an-api-contract-enforcing-baseline-with-typescript-epn), セクション "Why the build passes") ※2026-07-25に実際にfetch成功
+
+**バージョン**: TypeScript 5.x, `typescript-baseline-lib` / `@baseline-types/dom-widely-available`（2026-07時点の最新）
+**確信度**: 中（2記事とも同一の2パッケージ・同一のtsconfigパターンを紹介しており、独立した手法検証というより同一ツールの再解説に近いため、パターン2の形式は満たすものの「高」への格上げは見送る）
+**最終更新**: 2026-07-25
+
+---

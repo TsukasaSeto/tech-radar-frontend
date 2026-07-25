@@ -642,6 +642,21 @@ jobs:
 }
 ```
 
+**GCP Workload Identity Federation プールの作成（`gcloud` CLI）**:
+```bash
+gcloud iam workload-identity-pools create github-pool \
+  --location=global \
+  --display-name="GitHub Actions Pool" \
+  --project="<プロジェクトID>"
+
+gcloud iam workload-identity-pools providers create-oidc github-provider \
+  --location=global \
+  --workload-identity-pool=github-pool \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='<ORG>/<REPO>'"
+```
+
 **Terraform で OIDC プロバイダー + IAM ロールをコード化する**:
 ```hcl
 resource "aws_iam_openid_connect_provider" "github" {
@@ -702,6 +717,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f) (Zenn、OIDC プロバイダー作成込みの Terraform コード例) ※2026-07-05に実際にfetch成功
 - [Auditors, OIDC and the trust policy most teams get wrong](https://dev.to/leobaniak/auditors-oidc-and-the-trust-policy-most-teams-get-wrong-4jcb) (dev.to、`sub` 条件を絞らない失敗パターン) ※2026-07-24に実際にfetch成功
 - [GitHub Actionsで長期AWSキーをなくす5ステップ — OIDC移行の安全チェック付き実務レシピ](https://qiita.com/akira_papa_AI/items/9947bb45cf798b4e4d6e) (Qiita、旧クレデンシャル削除前の検証手順) ※2026-07-24に実際にfetch成功
+- [GitHub Actions OIDC連携でGCPデプロイをセキュアに自動化する仕組み](https://zenn.dev/fd_ai_teacher/articles/tech-20260724151323-1) (Zenn、Workload Identity Federationプール作成の`gcloud` CLIコマンド) ※2026-07-25に実際にfetch成功
 
 **出典引用**:
 > "OIDC（OpenID Connect）を使うと、GitHub Actions が実行される際にAWSへの短期トークン（一時的なクレデンシャル）を動的に発行できます。"
@@ -713,12 +729,15 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "短期資格情報でも、実行中に奪われた時の影響はrole権限ぶん残ります。"
 > ([GitHub Actionsで長期AWSキーをなくす5ステップ — OIDC移行の安全チェック付き実務レシピ](https://qiita.com/akira_papa_AI/items/9947bb45cf798b4e4d6e), セクション "よくある失敗5つ") ※2026-07-24に実際にfetch成功
 
+> "サービスアカウントキーが不要になることで、キーの漏洩リスクやローテーションの運用負荷がゼロになり"
+> ([GitHub Actions OIDC連携でGCPデプロイをセキュアに自動化する仕組み](https://zenn.dev/fd_ai_teacher/articles/tech-20260724151323-1), セクション "OIDCとWorkload Identity Federationの概要") ※2026-07-25に実際にfetch成功
+
 > "本手法では秘密鍵は Cloud KMS から外に出ることなく、署名処理のみを KMS API で行います。秘密鍵そのものを手元で管理する必要がなくなるため、流出リスクを大幅に低減できます。"
 > ([GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97), セクション "Flow/Process") ※2026-05-22に実際にfetch成功
 
 **バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation
 **確信度**: 高
-**最終更新**: 2026-07-24
+**最終更新**: 2026-07-25
 
 ---
 
@@ -733,7 +752,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - Rule #6 の pull_request_target サプライチェーンリスクと組み合わせると、外部 PR のスクリプトがトークンを奪取する攻撃経路になる
 - `persist-credentials: false` を設定することでトークンが git 設定ファイルに保存されなくなる
 - `gh auth setup-git` は git コマンド実行時にのみトークンを参照し、永続ファイルを作成しない
-- `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる
+- `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる。`zizmor` は `persist-credentials` 漏れだけでなく、`${{ github.event.pull_request.title }}` のような信頼できない式を `run:` に直接展開してしまうテンプレートインジェクション、過剰な `permissions`、SHA 未固定のアクション参照もあわせて検出する
 - `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に `git remote set-url` で認証を明示的に張り直すと安全
 
 **コード例**:
@@ -769,6 +788,22 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
+**`zizmor` での自動検知例**:
+```yaml
+# .github/workflows/zizmor.yml
+- name: Run zizmor
+  uses: zizmorcore/zizmor-action@v1
+```
+```yaml
+# Bad: PR タイトルを run: に直接展開（テンプレートインジェクション、zizmor が検出）
+- run: echo "PR Title is: ${{ github.event.pull_request.title }}"
+
+# Good: 環境変数経由でシェルに渡す（式展開ではなく変数参照にする）
+- env:
+    PR_TITLE: ${{ github.event.pull_request.title }}
+  run: echo "PR Title is: $PR_TITLE"
+```
+
 **出典引用**:
 > "the auth token is persisted in the local git config. This enables your scripts to run authenticated git commands. The token is removed during post-job cleanup."
 > ([actions/checkout README](https://raw.githubusercontent.com/actions/checkout/main/README.md)) ※2026-05-25に実際にfetch成功
@@ -779,9 +814,15 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "claude-code-action は実行中、自分専用の一時トークンで git の認証設定を書き換えます"
 > ([claude-code-actionで自動pushが止まる。git認証上書きの罠と回避策](https://zenn.dev/kaion/articles/claude-code-action-push-auth-pitfall), セクション "Pitfall #1") ※2026-07-11に実際にfetch成功
 
-**バージョン**: actions/checkout v4+ / anthropics/claude-code-action v1
+> "GitHub Actionsのワークフロー定義ファイルには、テンプレートインジェクション、過剰な権限設定、未固定のアクションなど、気付かないうちに致命的なセキュリティリスクが潜んでいるケースが少なくありません。"
+> ([GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6), セクション "検出される代表的なリスクと修正例") ※2026-07-25に実際にfetch成功
+
+**出典（追加）**:
+- [GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6) (Qiita、`zizmor` の具体的な導入手順とテンプレートインジェクション修正例) ※2026-07-25に実際にfetch成功
+
+**バージョン**: actions/checkout v4+ / anthropics/claude-code-action v1 / zizmor
 **確信度**: 高
-**最終更新**: 2026-07-11
+**最終更新**: 2026-07-25
 
 ---
 

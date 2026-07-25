@@ -321,6 +321,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - pnpm の `onlyBuiltDependencies` で「必要な script のみ allowlist」運用が現実的
 - lockfile-lint で lockfile の整合性（resolved URL・integrity hash）も検証する
 - `npm audit` / `pnpm audit` は CVE 登録済みの既知脆弱性のみを検出する。Socket のような行動解析型スキャナーは install script 実行可否・ネットワーク接続要求・ファイルシステム操作を静的解析し、CVE に存在しない新種マルウェアや公開直後の zero-day 汚染を検知できる
+- 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: `!=3.0` で難読化された特定バージョンを除外）を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
 
 **`--ignore-scripts` の運用**:
 ```bash
@@ -500,6 +501,7 @@ updates:
 - [pnpm v11 移行メモ — サプライチェーン攻撃対策を中心に](https://zenn.dev/esta_dev/articles/bc7a8dfef21d7b) (Zenn、v11 新デフォルト allowBuilds/blockExoticSubdeps/lockfile integrity・Docker CI 対応パターン) ※2026-06-09に実際にfetch成功
 - [npm サプライチェーン攻撃対策として pnpm v11 を導入した話](https://zenn.dev/onthebakery/articles/8060f23d1f948c) (Zenn、minimumReleaseAge 7日間延長・除外リスト承認期限 CI チェックの実践) ※2026-06-22に実際にfetch成功
 - [Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn) (dev.to、direct Poisoned Pipeline Execution・弱いブランチ保護の悪用) ※2026-07-14に実際にfetch成功
+- [When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b) (Medium、警告を「インストール後の報告」から「インストール前の非バイパスゲート」に転換した実例) ※2026-07-25に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -515,6 +517,9 @@ updates:
 
 > "The attacker used throwaway accounts with randomized eight-character usernames and forged author identities like `build-bot`, `auto-ci`, `ci-bot`, and `pipeline-bot`."
 > ([Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn), dev.to, セクション "What Happened") ※2026-07-14に実際にfetch成功
+
+> "A policy that runs only after installation can report a problem, but it cannot honestly claim to have stopped the risky install path."
+> ([When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b), Medium, セクション "From a Warning to a Non-Bypassable Gate") ※2026-07-25に実際にfetch成功
 
 **侵害検知時の即時対応チェックリスト**:
 ```bash
@@ -537,7 +542,7 @@ snyk test
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-07-25
 
 ---
 
