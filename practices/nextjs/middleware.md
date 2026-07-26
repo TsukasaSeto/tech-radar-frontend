@@ -54,7 +54,7 @@ v16 では `middleware.ts` が非推奨になり、新規プロジェクトで�
 | ランタイム | Edge（デフォルト）/ Node.js | **Node.js 固定**（Edge 非サポート） |
 | 配置の単位 | プロジェクトに 1 つ | プロジェクトに 1 つ |
 
-ランタイムが Node.js 固定になることで、`jsonwebtoken` など Node.js API に依存するライブラリも使えるようになる一方、Edge ランタイム前提の最適化（地理ベースのリダイレクトなど）は失われる。
+ランタイムが Node.js 固定になることで、`jsonwebtoken` など Node.js API に依存するライブラリも使えるようになる一方、Edge ランタイム前提の最適化（地理ベースのリダイレクトなど）は失われる。移行時は `request.geo` / `request.ip`、明示的な `runtime: 'edge'` 指定、ストリーミング `Response`、WASM import に依存したコードが Node.js ランタイム下でも動くか個別に確認する（これらは移行を即座に壊すわけではないが、出荷前に必ずテストすべき挙動として報告されている）。
 
 **Proxy（旧 middleware）は楽観的チェックに留め、最終認可は DAL で行う（CVE-2025-29927 の教訓）**:
 2025 年 3 月に Next.js の middleware で **CVE-2025-29927**（CVSS 9.1）が公表され、`x-middleware-subrequest` ヘッダを送るだけで middleware の認証チェックを完全にバイパスできる脆弱性が判明した。教訓は「middleware（v16 では proxy）単独で守られていると考えない」「認可は DAL に必ず置く（defense-in-depth）」。Proxy は楽観的チェック（速い拒否）、`page.tsx` は粗いガード、**DAL は最終的な砦**という三層を守る。
@@ -78,10 +78,14 @@ export function proxy(request: NextRequest) {
 **出典**:
 - [Next.jsの考え方 / 5.2 Proxy（旧 middleware）・6.4 認可チェックを多段で組む](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [Next.js Docs: middleware → proxy 移行](https://nextjs.org/docs/messages/middleware-to-proxy)
+- [Migrating middleware.ts to proxy.ts in Next.js 16](https://dev.to/dev_encyclopedia/migrating-middlewarets-to-proxyts-in-nextjs-16-heres-what-actually-changes-3gbd) (dev.to、Node.js ランタイム下で個別確認が必要な挙動を追加) ※2026-07-26 fetch
+  > "None of these break the migration outright, but each one is worth testing under Node.js before you ship."
+  > (セクション "Patterns Requiring Testing")
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **確信度**: 既存（高）→ 高
+**最終更新**: 2026-07-26
 
 ---
 
