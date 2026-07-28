@@ -63,6 +63,7 @@ async function Profile({ userId }: { userId: string }) {
 - 二重ソース・オブ・トゥルースの回避
 - 不要な再レンダリングの削減
 - バグの温床（同期漏れ）を排除
+- 計算が軽い場合は `useMemo` を「とりあえず」付けない。React が依存配列を比較するコスト自体が、値を再計算するコストを上回ることがあるため、計測してから初めて `useMemo` を検討する
 
 **コード例**:
 ```tsx
@@ -93,10 +94,14 @@ function TodoList({ todos, filter }: Props) {
 
 **出典**:
 - [You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) (React公式 / 2024)
+- [Reactのパフォーマンス改善で迷わないために。現場で学んだ「とりあえずuseMemo」が危険な理由](https://qiita.com/NekoByte/items/8f98eb37e0d44e121984) (Qiita、軽い計算への安易な `useMemo` 付与が逆効果になりうる理由の補強) ※2026-07-27 fetch
+
+> "むしろ、Reactが「このオブジェクトは変わっていないか？」を判定するためのコストの方が、オブジェクトを新しく作るコストよりも高くなってしまうことすらあるのです。"
+> ([Reactのパフォーマンス改善で迷わないために。現場で学んだ「とりあえずuseMemo」が危険な理由](https://qiita.com/NekoByte/items/8f98eb37e0d44e121984), Qiita, セクション "「とりあえずメモ化」がコードを複雑にする理由") ※2026-07-27に実際にfetch成功
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-07-27
 
 ---
 

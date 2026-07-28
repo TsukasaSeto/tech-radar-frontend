@@ -90,6 +90,7 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 - 色覚特性（色盲）があるユーザーは色の区別が困難な場合がある
 - コントラスト比が低いと視力の弱いユーザーがテキストを読めない
 - WCAG 2.1 Success Criterion 1.4.1（Use of Color）と 1.4.3（Contrast）で要求される
+- コントラスト比の計算式（相対輝度から `(明るい方 + 0.05) / (暗い方 + 0.05)`）は外部ライブラリなしでも実装できる。デザイントークンの検証や lint スクリプトに組み込めば、色の組み合わせを機械的にチェックできる
 
 **コード例**:
 ```tsx
@@ -135,10 +136,14 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 
 > "WCAG 2.2 Success Criterion 1.4.3 requires text and images of text to have at least 4.5:1 contrast, with a lower 3:1 threshold for large-scale text."
 > ([Why Good-Looking Colors Can Still Fail WCAG Contrast](https://dev.to/hasansarwer/why-good-looking-colors-can-still-fail-wcag-contrast-3kh7), dev.to, セクション "What contrast ratio means") ※2026-07-14に実際にfetch成功
+- [HEX/RGB/HSL変換とWCAGコントラスト比をライブラリなしで実装する](https://zenn.dev/a1221/articles/color-utils-introduction) (Zenn、外部ライブラリなしでの相対輝度・コントラスト比の TypeScript 実装例) ※2026-07-27 fetch
+
+> "const brightest = Math.max(lum1, lum2); const darkest = Math.min(lum1, lum2); return Math.round(((brightest + 0.05) / (darkest + 0.05)) * 100) / 100;"
+> ([HEX/RGB/HSL変換とWCAGコントラスト比をライブラリなしで実装する](https://zenn.dev/a1221/articles/color-utils-introduction), Zenn, セクション "ステップ2：コントラスト比") ※2026-07-27に実際にfetch成功
 
 **バージョン**: WCAG 2.1 / 2.2
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-07-27
 
 ---
 
