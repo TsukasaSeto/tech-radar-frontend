@@ -197,6 +197,7 @@ export function LikeButton({ post }: { post: Post }) {
 - Next.js は CSRF 保護を提供するが、認証（セッション確認）・認可（権限チェック）・入力バリデーションは開発者の責任
 - UI で管理者ボタンを非表示にしても、エンドポイント自体はインターネット上の誰もが直接 POST 呼び出しできる
 - RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認証チェックが漏れても DB が行単位でアクセスを制御できる（多層防御の最終ライン）
+- ロールベースの権限管理（RBAC）では、認証チェックを Server Action の中だけに置くのでは不十分。少なくとも①ルーティング層（未許可ロールをルート単位でブロック）②UI層（許可されない操作ボタン自体を出さない）③Server層（すべての Server Action 内部で `requirePermission()` 等により権限を再検証）の3層で防御する。UI層での非表示はあくまで見た目の制御であり、Server Action は「実体を伴うネットワークエンドポイント」であるためサーバー側の再検証を省略できない
 
 **コード例**:
 ```tsx
@@ -232,10 +233,14 @@ export async function deleteUser(raw: unknown): Promise<void> {
 **出典**:
 - ['use server' Doesn't Mean Private](https://medium.com/@raselhasan11/use-server-doesn-t-mean-private-fbffbca20ea3) (Medium) ※2026-05-14 fetch
 - [「内部API Routeを作らない」Next.js 16 — DALとServer Actionsで読み書きを分離する](https://zenn.dev/shippai/articles/d3b146e960e3b2) (Zenn、requireAuth + Zod + RLS 3段防御パターン・DAL との責務分離) ※2026-06-14 fetch
+- [Role-Based Access Control (RBAC) in Next.js 16](https://dev.to/muhammadalisma/role-based-access-control-rbac-in-nextjs-16-2026-beginners-guide-3ihh) (dev.to muhammadalisma、ルート/UI/サーバーの3層RBAC・`requirePermission()`パターン) ※2026-07-29に実際にfetch成功
+
+> "Real role-based auth needs checks in at least three layers: Route level, UI level, and Server level"
+> ([Role-Based Access Control (RBAC) in Next.js 16](https://dev.to/muhammadalisma/role-based-access-control-rbac-in-nextjs-16-2026-beginners-guide-3ihh), セクション "Why This Is Tricky") ※2026-07-29に実際にfetch成功
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-06-14
+**最終更新**: 2026-07-29
 
 ---
 

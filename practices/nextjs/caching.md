@@ -43,6 +43,7 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 **根拠**:
 - タグベースはデータの種類に対応して複数ページを一括無効化できる
 - Server Actions と組み合わせることでミューテーション後の自動更新が可能
+- `revalidateTag` / `revalidatePath` が無効化するのは Data Cache（`fetch` 結果のキャッシュ）であり、ルート自体の Full Route Cache（静的にプリレンダーされた HTML/RSC ペイロード）は別物である。データ取得を経由しない静的ルート（例: サイトマップのように内部データをコード内に埋め込んで生成するルート）では、Data Cache 側をいくら無効化してもルートの描画結果は更新されない。この場合は対象ルートに `export const revalidate = <秒数>` を明示し、ISR として時間ベースで再生成させる必要がある
 
 **コード例**:
 ```tsx
@@ -56,12 +57,32 @@ export async function createUser(formData: FormData) {
 }
 ```
 
+```tsx
+// Bad: サイトマップ等の静的ルートで revalidateTag だけに頼る
+// → 内部データはタグ経由で無効化されても、ルート自体の Full Route Cache が古いまま残る
+export async function GET() {
+  const posts = await getPosts({ next: { tags: ['posts'] } });
+  return new Response(buildSitemap(posts));
+}
+
+// Good: ルート自体に ISR の再検証秒数を明示する
+export const revalidate = 3600; // 1時間ごとにルートの描画結果自体を再生成
+export async function GET() {
+  const posts = await getPosts({ next: { tags: ['posts'] } });
+  return new Response(buildSitemap(posts));
+}
+```
+
 **出典**:
 - [Next.js Docs: On-demand Revalidation](https://nextjs.org/docs/app/building-your-application/data-fetching/incremental-static-regeneration#on-demand-revalidation-with-revalidatetag) (Next.js公式)
+- [Next.js sitemap not updating? Here's the real fix](https://dev.to/techpotions/nextjs-sitemap-not-updating-heres-the-real-fix-2257) (dev.to techpotions、revalidateTagがData CacheのみでFull Route Cacheを無効化しない点、`export const revalidate` によるISR対応) ※2026-07-29に実際にfetch成功
+
+> "revalidateTag clears your data, not the route that renders it. If the route itself is cached... invalidating inner data leaves the outer rendered output untouched."
+> ([Next.js sitemap not updating? Here's the real fix](https://dev.to/techpotions/nextjs-sitemap-not-updating-heres-the-real-fix-2257), セクション "The Real Fix") ※2026-07-29に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-07-29
 
 ---
 
