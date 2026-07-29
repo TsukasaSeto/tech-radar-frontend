@@ -157,6 +157,7 @@ Ajax通信結果・フォームバリデーション・進捗状況など、DOM 
 - `aria-live="polite"` は現在の読み上げ完了後に通知し、`aria-live="assertive"` は即座に割り込む。`assertive` の過剰使用は読み上げ中断で体験を損なう
 - `aria-atomic="true"` を設定するとリージョン全体を一括で読み上げ、部分更新の誤読を防ぐ
 - ライブリージョンはページ初期読み込み時から DOM に存在させ、後から追加しない（追加されたリージョンは無視するブラウザがある）
+- AIチャットのようなトークンストリーミングUIでは、生成中に逐次通知すると読み上げが連続で中断される。ストリーミング中は `aria-live` の通知を抑制し、生成完了時にまとめて1回だけ知らせる設計にする（`role="log"` も長い会話ログの継続的更新に有効）
 
 **コード例**:
 ```tsx
@@ -225,10 +226,14 @@ function EmailField() {
 - [MDN: ARIA live regions](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA/ARIA_Live_Regions) (MDN Web Docs)
 - [WCAG 2.1 SC 4.1.3: Status Messages](https://www.w3.org/TR/WCAG21/#status-messages) (W3C WCAG)
 - [WAI-ARIA 1.2: aria-live](https://www.w3.org/TR/wai-aria-1.2/#aria-live) (W3C WAI)
+- [Making AI Chatbots Accessible for Screen Reader Users: A Developer Guide](https://medium.com/@marketing_58999/making-ai-chatbots-accessible-for-screen-reader-users-a-developer-guide-8f77a92407d5) (Medium、`role="log"` ライブリージョン・ストリーミング中の通知抑制と完了時の一括通知・NVDA/JAWS/VoiceOverでの実機検証) ※2026-07-29に実際にfetch成功
+
+> "An ARIA live region tells the browser to announce dynamic content changes to assistive technology."
+> ([Making AI Chatbots Accessible for Screen Reader Users: A Developer Guide](https://medium.com/@marketing_58999/making-ai-chatbots-accessible-for-screen-reader-users-a-developer-guide-8f77a92407d5), セクション "ARIA Live Regions") ※2026-07-29に実際にfetch成功
 
 **バージョン**: ARIA 1.2 / すべてのモダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-07-29
 
 ---
 
@@ -681,3 +686,81 @@ WebAIM の調査データが MDN ARIA ページで引用: 「ARIA を使用し�
 `@media (prefers-contrast: more)` で OS のハイコントラストモードを検知し、テキストカラー・リンクカラー・プレースホルダーを強制的に高コントラスト値に上書きするパターン。`prefers-contrast: more` 対応は WCAG 最低基準（4.5:1）の達成後に行う補助的対応として位置づけられ、低視力ユーザーの OS 設定を尊重する実装になる。WCAG 最低基準を満たしたうえで、さらに高コントラストが必要なユーザー（弱視・老眼等）のために上乗せ対応できる。
 
 **確信度**: 既存（高）→ 高（CSS実装パターン追加）
+
+---
+
+### 9. 比較表・データ一覧は div グリッドではなく `<table>` 要素で組む — アクセシビリティツリーと AI/LLM 抽出の両方が構造を失う
+
+CSS Grid で div を並べただけの「見た目だけの表」は、視覚的なレイアウトとしては正しく見えても、行と列の対応関係という構造情報を一切保持しない。この構造情報の欠落は、スクリーンリーダーのアクセシビリティツリーと、AI/LLM 検索エンジンによる HTML→テキスト変換の両方で同時に問題化する。`role="table"`・`role="row"`・`role="cell"` などの ARIA ロールを div に付与しても、アクセシビリティ監査ツールは実表と同等のスコアを返すが、実際のテキスト抽出（スクリーンリーダーの読み上げ順、AI 検索のコンテンツ取得）では対応関係が再現できない。表形式のデータは常にネイティブの `<table>`（`<thead>`/`<tbody>`/`<th scope>`）で実装する。
+
+**根拠**:
+- ARIA は「アクセシビリティツリー」という単一の消費者だけを対象にした補正であり、`<table>` 要素はそれに加えてテキスト抽出系のツールも含めた、より広い消費者に同時対応する
+- div+ARIA grid と実 `<table>` を同一データで比較検証した結果、アクセシビリティツリー上のスコアは同等でも、`turndown`（GFM変換）・`html-to-text`（dataTable）等のテキスト抽出では実 `<table>` が 7/7 行を正しく復元できたのに対し、div+ARIA grid は 0/7 だった（英語圏の検証データ）
+- 日本語圏の独立した検証でも、div グリッドの比較表を HTML→テキスト変換すると「どの値がどちらの列のものか」という対応関係の印が失われることが確認されている（Zenn 側の検証）
+- AI 検索エンジン（LLM ベースの検索・要約）は DOM をそのまま解釈するのではなく、HTML→テキスト/Markdown 変換を経由してから処理するため、この構造欠落はスクリーンリーダー対応と AI/GEO（Generative Engine Optimization）対応の両方に同時に影響する
+- `table-fixed` と明示的な列幅指定を併用すると、レイアウトの自由度を保ちながら実表への置き換えが行いやすい
+
+**コード例**:
+```tsx
+// Bad: 見た目だけの比較表（div + CSS Grid）
+function ComparisonGrid() {
+  return (
+    <div className="grid grid-cols-3 gap-2" role="table">
+      <div role="row" className="contents">
+        <div role="columnheader">プラン</div>
+        <div role="columnheader">価格</div>
+        <div role="columnheader">ストレージ</div>
+      </div>
+      <div role="row" className="contents">
+        <div role="cell">Pro</div>
+        <div role="cell">¥1,200</div>
+        <div role="cell">100GB</div>
+      </div>
+    </div>
+  );
+  // ARIA ロールがありアクセシビリティ監査は通過するが、
+  // テキスト抽出（スクリーンリーダーの読み上げ順・AI検索のコンテンツ取得）では
+  // 「Pro」「¥1,200」「100GB」が同じ行に属するという対応関係が再現できない
+}
+
+// Good: ネイティブ <table> で構造を保持する
+function ComparisonTable() {
+  return (
+    <table className="table-fixed w-full">
+      <thead>
+        <tr>
+          <th scope="col" className="w-1/3">プラン</th>
+          <th scope="col" className="w-1/3">価格</th>
+          <th scope="col" className="w-1/3">ストレージ</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Pro</th>
+          <td>¥1,200</td>
+          <td>100GB</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+  // スクリーンリーダーは th/td の対応関係を正しく読み上げ、
+  // AI検索側の HTML→テキスト変換でも行・列の対応関係が失われない
+}
+```
+
+**出典引用**:
+> "消えるのは対応関係です。どの値がどちらの列のものかを示す印が、どこにもない"
+> ([比較表を div グリッドで組むと AI 検索に読まれない](https://zenn.dev/nakagawarm/articles/mamepdf-comparison-table-semantics-geo), セクション "なぜ問題なのか：AI は HTML をそのまま読まない") ※2026-07-29に実際にfetch成功
+
+> "ARIA is a corrective aimed at exactly one consumer, the accessibility tree. The table element serves that consumer plus a wider set at the same time."
+> ([What a div grid quietly loses: measuring the a11y tree and text extraction on the same table](https://dev.to/jangwook_kim_e31e7291ad98/what-a-div-grid-quietly-loses-measuring-the-a11y-tree-and-text-extraction-on-the-same-table-46f), セクション "The layer role=\"table\" can't reach") ※2026-07-29に実際にfetch成功
+
+**出典**:
+- [比較表を div グリッドで組むと AI 検索に読まれない](https://zenn.dev/nakagawarm/articles/mamepdf-comparison-table-semantics-geo) (Zenn nakagawarm) ※2026-07-29に実際にfetch成功
+- [What a div grid quietly loses: measuring the a11y tree and text extraction on the same table](https://dev.to/jangwook_kim_e31e7291ad98/what-a-div-grid-quietly-loses-measuring-the-a11y-tree-and-text-extraction-on-the-same-table-46f) (dev.to jangwook_kim、div+ARIA grid vs 実table のテキスト抽出比較データ 7/7 vs 0/7) ※2026-07-29に実際にfetch成功
+
+**バージョン**: HTML Living Standard（`<table>` 要素） / WAI-ARIA 1.2
+**確信度**: 高（異なる著者2名がそれぞれ独立の検証データで同じ知見を報告）
+**最終更新**: 2026-07-29
+
+---

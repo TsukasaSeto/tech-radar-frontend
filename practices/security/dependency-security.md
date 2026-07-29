@@ -132,6 +132,7 @@ patch / minor は自動マージ、major は手動レビュー、というルー
 - 自動 PR があれば「次やればいい」を防ぎ、コミット履歴で更新可否を判断できる
 - Renovate は npm 以外（GitHub Actions・Docker・Terraform）も統合管理できる
 - Dependabot は GitHub 公式、設定がシンプル。Renovate は柔軟だが設定が複雑
+- バージョン更新 PR は `groups` でエコシステムごとに1本へまとめ、`interval` を `daily` から `monthly` に落とすとレビュー負荷を大きく下げられる。ただしこれは version-update（バージョン追従）の頻度であり、セキュリティ修正 PR は脆弱性の公開と同時に独立してトリガーされるため、この間隔設定では遅延しない
 
 **Renovate 設定例**（推奨）:
 ```json
@@ -221,10 +222,14 @@ updates:
 - [Renovate Docs](https://docs.renovatebot.com/) (Mend)
 - [Dependabot Docs](https://docs.github.com/en/code-security/dependabot) (GitHub)
 - [Snyk: Automated dependency updates](https://snyk.io/blog/automate-fixes-with-snyks-prs/) (Snyk)
+- [Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/) (GitHub Blog 公式、`groups` によるエコシステム単位のPR集約と`interval: monthly`化、セキュリティPRが独立トリガーである点) ※2026-07-29に実際にfetch成功
+
+> "Dependabot security updates are raised as soon as a vulnerability with a fix is disclosed, independent of your schedule"
+> ([Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/), セクション "Security Prioritization") ※2026-07-29に実際にfetch成功
 
 **バージョン**: Renovate v37+, Dependabot v2
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-07-29
 
 ---
 
