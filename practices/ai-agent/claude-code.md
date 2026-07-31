@@ -2015,6 +2015,7 @@ auto mode は「全部手動承認」と `--dangerously-skip-permissions` の中
 - `/goal` は完了条件を機械的に判定できる形で記述する（「`npm test` が exit 0」「指定ファイルに関数が存在する」など）。曖昧な完了条件（「きれいにリファクタして」）は auto mode 下で無限ループの原因になる
 - auto mode（2026年3月 research preview）はクラシファイアがルーティン承認を処理し、危険操作のみブロックする。有効化前に hard deny ルールを確定させる順序が重要
 - **導入推奨順序**: agents ビューで状況把握 → /goal で完了条件を定義 → hard deny で安全境界を確定 → auto mode を有効化 → Routines で完全自動化
+- 「機械的に判定できる完了条件」という原則は Claude Code 純正機能（`/goal`）以外でも再現できる。カスタム MCP サーバーで `list_tasks` のようなタスク管理ツールを自作し、Stop Hook でタスク完了を通知させる構成でも、完了判定は「ファイルが存在するか」ではなく「MCP 経由で取得した `status` フィールド」で行うことで、前倒しの完了判定を防げる
 
 **コード例**:
 ```bash
@@ -2068,9 +2069,15 @@ claude agents
 > 「全部手動承認」と `--dangerously-skip-permissions` の中間を埋める位置づけです
 > ([Claude Codeを「貼り付いて見守る」運用から卒業する：/goal・agentsビュー・auto mode実務導入ガイド](https://zenn.dev/yushiyamamoto/articles/claude-code-goal-agents-autonomy), セクション "3. auto mode") ※2026-06-10に実際にfetch成功
 
+> "問題は速さそのものではなく、その速さに見合った御す手段を持っているかどうかにある。"
+> ([Claude Code を並列で回したら「速すぎて怖く」なったので、自分の開発を管制する環境を作った](https://zenn.dev/takerin/articles/c386a8c97f03eb), セクション "速さをどう御すか") ※2026-07-30に実際にfetch成功
+
+**出典（追加）**:
+- [Claude Code を並列で回したら「速すぎて怖く」なったので、自分の開発を管制する環境を作った](https://zenn.dev/takerin/articles/c386a8c97f03eb) (Zenn takerin、Stop Hook + カスタム MCP タスクサーバーで `status` フィールドを完了判定に使う実装) ※2026-07-30 fetch
+
 **バージョン**: Claude Code（2026年3月以降）
 **確信度**: 中
-**最終更新**: 2026-06-10
+**最終更新**: 2026-07-30
 
 ---
 
@@ -2429,6 +2436,8 @@ pnpm lint
 - 「コードレベルで『この操作は承認なしに実行できない』という制約を持たせるのが、承認ゲートの役割」
 - GitHub Actions × Claude の半自動 PR レビューも同パターン: 下書き生成（書き込みなし）→ ラベル承認 → 公開。「対象リポジトリに書き込まない」段階を設けることで誤指摘の流出を防ぐ
 - ソフトウェア設計原則: エージェントに権限を与えないことが最も確実な制御手段（最小権限原則の適用）
+- 承認ゲートの実装は「1個の書き込みツールにまとめない」こと。MCP 経由の書き込みは prepare（下書き作成）/ approve（人間確認）/ commit（実行）の3段階に分割し、prepare 時点のペイロードハッシュを commit 時に検証することで、承認プレビューと実際の実行内容の改ざん・すり替えを防げる
+- 承認ゲートの設計で見落とされやすいのは「承認された後」ではなく「承認されなかった後」の設計。TTL 切れはデフォルトで拒否扱い（fail-closed）にする、承認・却下を判定する API は人間専用インターフェースに限定し AI 自身が叩けないようにする、承認トークンを通知本文に含めない（漏洩・自己承認の防止）、監査ログをゲートの主要な成果物として扱う、の4点が「拒否パス」設計の核心
 
 **コード例（承認ゲートの型設計と実行フロー）**:
 ```typescript
@@ -2468,6 +2477,33 @@ async function runWithApprovalGate(
   }
   return { ...output, requiresApproval: blocked };
 }
+```
+
+**コード例（prepare / approve / commit の3段階分割とハッシュ検証）**:
+```typescript
+export class FeedbackService {
+  async prepare(actorId: string, rawInput: unknown) {
+    const input = PrepareInput.parse(rawInput);
+    const draft = {
+      id: randomUUID(),
+      actorId,
+      ...payload,
+      payloadHash: hashPayload(payload),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000), // TTL切れはfail-closed
+    };
+    await this.repo.insertDraft(draft);
+    return { draftId: draft.id, expectedHash: draft.payloadHash, preview: payload };
+  }
+  // commit時にpayloadHashを再検証し、prepare時点からの改ざん・すり替えを検出する
+}
+
+// 承認・却下の判定APIは人間専用（AIエージェント自身が叩けるスコープに置かない）
+const approval = await requestApproval({
+  action: "delete_user",
+  summary: "Delete user usr_123 (LTV $0, inactive for 90 days)",
+});
+const status = await waitForApproval({ id: approval.id });
+if (status !== "approved") throw new Error(`not approved: ${status}`); // 未承認はデフォルト拒否
 ```
 
 **CI/CD 実装パターン（GitHub Actions × Claude 半自動 PR レビュー）**:
@@ -2540,9 +2576,19 @@ jobs:
 > "自律的に動く・書き込み・実行権限を持っている・信頼できない外部コンテンツに触れている。この3つが揃うと…OWASPがLLMアプリケーションの代表的なリスクとして挙げる『Excessive Agency（過剰なエージェンシー）』（LLM06:2025）とほぼ同じ構造です。"
 > ([個人開発で踏みかけた、自律型AIエージェントの危険な組み合わせ](https://zenn.dev/go_furu93/articles/ai-agent-least-privilege-20260714-p82ee8), セクション "何が引っかかったのか") ※2026-07-14に実際にfetch成功
 
+> "誰が、どの画面で、送信内容を最終確定するか"
+> ([MCPからのフィードバック送信を事故らせない「prepare / approve / commit」設計](https://zenn.dev/susie/articles/ff7e57ba892542), セクション "1個の書き込みツールにまとめない") ※2026-07-30に実際にfetch成功
+
+> "承認されなかったとき、何が起きるかを全部設計すること"
+> ([承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6), セクション "Introduction") ※2026-07-30に実際にfetch成功
+
+**出典（追加）**:
+- [MCPからのフィードバック送信を事故らせない「prepare / approve / commit」設計](https://zenn.dev/susie/articles/ff7e57ba892542) (Zenn susie、書き込みツールの3段階分割とペイロードハッシュによる改ざん防止) ※2026-07-30 fetch
+- [承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6) (Zenn argosvix、TTL fail-closed・人間専用の判定API・トークン非通知・監査ログによる「拒否パス」設計) ※2026-07-30 fetch
+
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-14
+**最終更新**: 2026-07-30
 
 ---
 
