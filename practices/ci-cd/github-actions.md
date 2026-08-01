@@ -597,6 +597,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - AWS IAM ロールの信頼ポリシーで GitHub リポジトリ・ブランチを絞れるため、最小権限原則と相性がよい
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
 - 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
+- 同じ原則は **Docker Hub でも同様**: OIDC federation を使うと長期有効な Docker アクセストークンをリポジトリ・環境シークレット・Actions キャッシュのどこにも保持せず、短命トークンで `docker/login-action` を認証できる
 - OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
 - **最も多い失敗は信頼ポリシーの `sub` 条件を絞り込まないこと**: 組織内の任意のワークフロー（フォークされた marketplace action を含む）が role を assume できてしまう。`sub` は `repo:<ORG>/<REPO>:ref:refs/heads/main` のように **リポジトリ＋ブランチ／environment 単位で厳密に**指定し、別ワークフローに権限を広げたい場合は既存ロールを緩めず**別の狭いロールを追加**する
 - 旧クレデンシャルの削除は「新しい経路の疎通確認 → 読み取り専用コマンドで検証 → 本番影響のない操作でテスト → 監査ログ確認」の順で確実に検証してから行う。短命トークンであっても、実行中に奪われた場合の影響範囲は role の権限そのものに比例するため、IAM ロールの権限最小化（`sts:GetCallerIdentity` 相当から段階的に拡張）は OIDC 移行後も引き続き必要
@@ -735,9 +736,15 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "本手法では秘密鍵は Cloud KMS から外に出ることなく、署名処理のみを KMS API で行います。秘密鍵そのものを手元で管理する必要がなくなるため、流出リスクを大幅に低減できます。"
 > ([GitHub App の秘密鍵を Cloud KMS に閉じ込める](https://zenn.dev/acntechjp/articles/64c6deacee1c97), セクション "Flow/Process") ※2026-05-22に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation
+> "There is no long-lived Docker token in the repo, in an environment secret, or in an Actions cache."
+> ([Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392), セクション "How OIDC federation eliminates stored PATs") ※2026-08-01に実際にfetch成功
+
+**出典（追加）**:
+- [Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392) (dev.to leobaniak、Docker Hub版OIDC federationの`permissions.id-token:write`+`docker/login-action`構成) ※2026-08-01に実際にfetch成功
+
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation
 **確信度**: 高
-**最終更新**: 2026-07-25
+**最終更新**: 2026-08-01
 
 ---
 
@@ -754,6 +761,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - `gh auth setup-git` は git コマンド実行時にのみトークンを参照し、永続ファイルを作成しない
 - `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる。`zizmor` は `persist-credentials` 漏れだけでなく、`${{ github.event.pull_request.title }}` のような信頼できない式を `run:` に直接展開してしまうテンプレートインジェクション、過剰な `permissions`、SHA 未固定のアクション参照もあわせて検出する
 - `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に `git remote set-url` で認証を明示的に張り直すと安全
+- `claude-code-action` の認証は `anthropic_api_key`（従量課金）以外に、`claude setup-token` で発行した `CLAUDE_CODE_OAUTH_TOKEN` を使う方法もある。Claude の Pro/Max サブスクリプション認証で動作し、実行ログの `total_cost_usd` が `0` になることで API キー課金が発生していないことを確認できる
 
 **コード例**:
 ```yaml
@@ -814,15 +822,19 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "claude-code-action は実行中、自分専用の一時トークンで git の認証設定を書き換えます"
 > ([claude-code-actionで自動pushが止まる。git認証上書きの罠と回避策](https://zenn.dev/kaion/articles/claude-code-action-push-auth-pitfall), セクション "Pitfall #1") ※2026-07-11に実際にfetch成功
 
+> "実行ログの `total_cost_usd` は `0` でした"
+> ([GitHub ActionsのPR自動レビューを公式claude-code-actionで組む(APIキー課金なし)](https://qiita.com/itaraiguma/items/3a723688a2fe571c33ec), セクション サブスク課金の確認) ※2026-08-01に実際にfetch成功
+
 > "GitHub Actionsのワークフロー定義ファイルには、テンプレートインジェクション、過剰な権限設定、未固定のアクションなど、気付かないうちに致命的なセキュリティリスクが潜んでいるケースが少なくありません。"
 > ([GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6), セクション "検出される代表的なリスクと修正例") ※2026-07-25に実際にfetch成功
 
 **出典（追加）**:
 - [GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6) (Qiita、`zizmor` の具体的な導入手順とテンプレートインジェクション修正例) ※2026-07-25に実際にfetch成功
+- [GitHub ActionsのPR自動レビューを公式claude-code-actionで組む(APIキー課金なし)](https://qiita.com/itaraiguma/items/3a723688a2fe571c33ec) (Qiita itaraiguma、`claude setup-token` による `CLAUDE_CODE_OAUTH_TOKEN` 発行とサブスク課金の実行ログ検証) ※2026-08-01に実際にfetch成功
 
 **バージョン**: actions/checkout v4+ / anthropics/claude-code-action v1 / zizmor
 **確信度**: 高
-**最終更新**: 2026-07-25
+**最終更新**: 2026-08-01
 
 ---
 

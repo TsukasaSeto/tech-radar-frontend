@@ -1383,6 +1383,7 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 - [ ] コマンドチェーン（`xargs rm`、`find ... -delete` 等）はチェーン先頭コマンドからパターンを書く
 - [ ] `deny` で保護したファイルパスが `git diff`/`git show`/`git log -p` 等の Bash コマンドからもアクセスできないか確認する（deny は Read ツールにしか効かない）
 - [ ] 外部リポジトリを clone した直後は信頼ダイアログを確認する（CVE-2026-33068）。ダイアログが出ない場合は `~/.claude.json` 内の対象プロジェクトの `hasTrustDialogAccepted` が `false` で固着していないか確認する
+- [ ] `allowedMcpServers`/`allowManagedMcpServersOnly` で MCP サーバーを許可リスト化する際は、ローカルの MCP サーバーだけでなく claude.ai 側が提供するコネクタ（Google Drive・Gmail・Google Calendar 等）の URL パターンも明示的にワイルドカードで含める。含めないとコネクタまで巻き添えでブロックされる
 
 **出典引用**:
 > "すべての層を強制力のあるレベルで設定する" — `disableBypassPermissionsMode: 'disable'` が Managed Settings のコア設定
@@ -1432,9 +1433,15 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 > "2.1.53 以降は「信頼を承認するまでリポジトリ側の設定を一切処理しない」挙動になり、未信頼ワークスペースでは `permissions.allow` を無視したうえで警告を出すようになった"
 > ([Claude Code 2.1.53+ の Workspace Trust と permissions.allow の挙動変更](https://zenn.dev/wharfe/articles/claude-code-untrusted-workspace-permissions), Zenn wharfe, セクション "CVE-2026-33068 の修正内容") ※2026-06-28に実際にfetch成功
 
+> "ローカルのMCPサーバーだけでなく、claude.ai側が提供するコネクタ(Google Drive・Gmail・Google Calendarなど)まで巻き添えでブロックされる"
+> ([MCP許可リストとコネクタは共存できない？管理設定の落とし穴を実機検証した](https://zenn.dev/dehio3/articles/202607_mcp-allowlist-vs-connector), セクション "起きたこと") ※2026-08-01に実際にfetch成功
+
+**出典（追加）**:
+- [MCP許可リストとコネクタは共存できない？管理設定の落とし穴を実機検証した](https://zenn.dev/dehio3/articles/202607_mcp-allowlist-vs-connector) (Zenn dehio3、allowedMcpServers がコネクタを巻き添えでブロックする実機検証とワイルドカード回避策) ※2026-08-01に実際にfetch成功
+
 **バージョン**: Claude Code v2.1.53+（Workspace Trust）、v2.1.172+（ネスト型サブエージェント）、v2.1.178+（Tool(param:value) 構文）、Enterprise Managed Settings 対応環境
 **確信度**: 中
-**最終更新**: 2026-06-28
+**最終更新**: 2026-08-01
 
 ---
 
@@ -2824,5 +2831,66 @@ git ls-remote origin refs/heads/<branch-name>
 **バージョン**: Claude Code（他のコーディングエージェント全般に適用可能な原則）
 **確信度**: 中（コミュニティ複数記事・具体的なコマンド例あり）
 **最終更新**: 2026-07-14
+
+---
+
+### 30. セッションを再開する際は `--continue`（直近）または `--resume`（選択式）を使う
+
+Claude Code は会話を作業中ずっとローカルの JSONL ファイル（`~/.claude/projects/<project>/<sessionID>.jsonl`）に継続保存している。ターミナルを閉じても会話は消えていないため、`claude --continue` で直近セッションから、`claude --resume` でセッション一覧から選んで再開できる。起動オプション（`--mcp-config` 等）は再開時に引き継がれないため再指定が必要な点に注意する。
+
+**根拠**:
+- セッションはローカルファイルに永続化されているため、ターミナルを閉じる／SSH切断などで会話が失われることはない
+- `--continue` は直近の1件を無条件に再開する。複数プロジェクト・複数セッションを並行させている場合は `--resume` で一覧から選ぶ方が事故が少ない
+- `/rename` でセッションに名前を付けておくと `--resume <name>` で直接指定でき、一覧から探す手間が減る
+- MCP サーバー接続などの起動時オプションはセッションファイルに含まれないため、再開後に想定した MCP ツールが使えない場合はオプションの再指定漏れを疑う
+
+**コード例**:
+```bash
+# 直近セッションを再開
+claude --continue
+
+# セッション名を付けて保存 → 名前で選択的に再開
+# (セッション内で /rename my-feature を実行しておく)
+claude --resume my-feature
+
+# 起動オプションは再開時に引き継がれないため明示的に再指定する
+claude --resume my-feature --mcp-config ./.mcp.json
+```
+
+**出典引用**:
+> "Claude Code は、その会話を作業中ずっとローカルのファイルに継続保存しています"
+> ([Claude Codeの会話は閉じても消えていない ― --continue で直前の続きから再開する](https://zenn.dev/akira_papa/articles/da5655c3e09c8e), セクション セッション永続化の仕組み) ※2026-08-01に実際にfetch成功
+
+**バージョン**: Claude Code CLI
+**確信度**: 中
+**最終更新**: 2026-08-01
+
+---
+
+### 31. Plan mode は「承認で完了」ではなく「実装フェーズの開始点」として扱う
+
+公式ドキュメントが推奨する Claude Code のワークフローは Explore → Plan → Implement → Commit の順で進む。Plan mode でプランが承認されても、それは実装フェーズの入り口に過ぎず「正解が保証された」わけではない。Claude はもっともらしく見える実装を出す一方でエッジケースを扱えていないことがあるため、承認後も実装結果を検証する。
+
+**根拠**:
+- 公式ドキュメントの Explore → Plan → Implement → Commit というワークフローは、Plan の承認をゴールではなく次工程への引き継ぎ地点と位置づけている
+- プランが「もっともらしい」ことと「エッジケースまで正しい」ことは別の軸であり、承認後の実装でも検証テストを省略しない
+- プランに問題を見つけた場合は `/clear` でやり直すか、`Ctrl+G` でプランを直接編集してから実装フェーズに進める
+
+**コード例**:
+```bash
+# Plan mode でプランを作成 → 承認 → 実装
+# プランに問題があれば、実装前に Ctrl+G で直接編集する
+
+# プラン自体を作り直したい場合は /clear でコンテキストをリセットしてから再度計画させる
+/clear
+```
+
+**出典引用**:
+> "Claude はもっともらしく見える実装を出すが、エッジケースを扱えていない"
+> ([Plan モードを正解保証と勘違いするとなぜやり直しが増えるのか ── 公式 docs が推奨する3つの付き合い方](https://zenn.dev/gudezou/articles/a017fa7cc840f6), セクション 本論) ※2026-08-01に実際にfetch成功
+
+**バージョン**: Claude Code（Plan mode）
+**確信度**: 中
+**最終更新**: 2026-08-01
 
 ---

@@ -680,3 +680,32 @@ async function refreshAcrossTabs(): Promise<string> {
 **最終更新**: 2026-07-25
 
 ---
+
+### 8. JWT の denylist キーには生の JWT やそのハッシュ値ではなく `jti` + `iss` クレームを使う
+
+Rotation（Rule #3）が使えないステートレスな JWT（サードパーティ発行・rotation非対応の既存トークン等）を失効させる場合、denylist（失効リスト）のキー設計を誤ると JWT malleability によってバイパスされうる。生の JWT やその単純ハッシュをキーにせず、`jti`（JWT ID）と `iss`（発行者）クレームの組み合わせをキーにする。
+
+**根拠**:
+- JWT はヘッダーやクレームの順序・空白・エンコーディングを変えても署名検証は通る場合があり（malleability）、生の JWT やその単純ハッシュをキーにすると同一トークンが別のキーとして denylist に登録され、バイパスされる余地がある
+- `jti` + `iss` はトークンの表現差異に影響されない安定した識別子であり、denylist のキーとして安全
+- OWASP は Token Status List（TSL）のような集約的失効の仕組みも新たに正式ガイダンスとして追記している
+
+**コード例**:
+```ts
+// Bad: 生のJWTやその単純ハッシュをdenylistキーにする（malliabilityでバイパスされうる）
+await denylist.add(sha256(rawJwt));
+
+// Good: jti + iss をキーにする（トークン表現の違いに影響されない）
+const { jti, iss } = decodeJwtPayload(rawJwt);
+await denylist.add(`${iss}:${jti}`);
+```
+
+**出典引用**:
+> "Using the raw JWT or a secure hash of the JWT as the denylist key is not safe and might expose the application to denylist bypass through JWT malleability"
+> ([OWASP JWT Cheat Sheet — Cleanup/streamline JWT cheat sheet (#2283)](https://github.com/OWASP/CheatSheetSeries/commit/8d23424dfe51b7639d9547a642a7fd4b7a76e135), セクション "JWT Denylist") ※2026-08-01に実際にfetch成功
+
+**バージョン**: JWT（RFC 7519）全般
+**確信度**: 高
+**最終更新**: 2026-08-01
+
+---
