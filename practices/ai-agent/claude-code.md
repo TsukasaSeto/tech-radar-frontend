@@ -1916,6 +1916,7 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - `dontAsk` で Bash が拒否されても、安全とは限らない: 実機検証では Bash ツールが拒否された際に、モデルが拒否メッセージ中の「他のツールでも同じ目的を達成してよい」という案内に従って Write ツールに切り替え、結果的に元の目的（ファイル作成）を達成していた。`permission_denials` のログ件数だけを見て「拒否されたから安全」と判断せず、実際のファイルシステム状態・git 状態を監査する必要がある
 - コマンド名ベースの許可リストは、`bash -c "任意の文字列"` のような汎用シェル実行コマンドが1つ混入するだけで実質的に「何でも許可」へ形骸化する。上記の `env VAR=val cmd` ラッパーと同じ「文字列一致では防げない」脆弱パターンの一種であり、許可リストは「そのコマンド自身が任意コードを実行できるインタプリタでないか」を基準に設計する
 - アプリ層の `permissions.deny` と OS サンドボックス層の制御は独立したレイヤーであり、`deny` で `~/.config/gh/**` のような設定ディレクトリを閉じると、`git` の認証ヘルパー等の正規プロセスまで巻き添えでブロックされ `git push` が失敗しうる。この場合は `deny` を緩めるのではなく、`sandbox.filesystem.allowRead` で「読み取りだけ」を正規プロセスに許可し、書き込み・編集は `deny` のまま維持する層分離が安全
+- 無人稼働では権限モード・フック以外に「ブロックされたチケット数が閾値を超えたら新規着手を止める」ようなサーキットブレーカーも有効。閲覧・パッチ提案は可逆だが投稿・公開等の外部発信操作は不可逆なので、後者にだけ人間ゲートを置く。ポリシーチェックは1箇所のコメントやフラグに委ねず、各アクションの実行段階ごとに冗長にかける設計が事故を減らす
 
 **6段階のパーミッションモード**（安全な順）:
 | モード | 挙動 |
@@ -2004,10 +2005,11 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - [claude -pの権限モードを6種試したら、『don't ask』はBashを拒否したのに目的は達成されていた](https://zenn.dev/numarn/articles/claude-permission-mode-cli-handson) (Zenn、dontAskの実機検証、denialログだけでは安全性を測れない実証) ※2026-07-25に実際にfetch成功
 - [AIエージェントの権限ルールに、`bash -c` という抜け穴があった話](https://zenn.dev/map_universe/articles/bash-c-permission-gap-20260725) (Zenn、コマンド名ベース許可リストの脆弱性) ※2026-07-25に実際にfetch成功
 - [APIトークンを守ったら git push まで止まった—denyルールとsandbox.filesystem.allowReadの使い分け](https://zenn.dev/kanae_yomo/articles/7e93b3483d5bb5) (Zenn、app層denyとOSサンドボックス層の相互作用の実例) ※2026-07-25に実際にfetch成功
+- [I Run Agents Unattended. These Four Kill Switches Matter](https://dev.to/lainagent_ai/i-run-agents-unattended-these-four-kill-switches-matter-36ag) (dev.to、閾値ベースのサーキットブレーカーと不可逆操作への人間ゲートの実例) ※2026-08-02に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-25
+**最終更新**: 2026-08-02
 
 ---
 
@@ -2893,4 +2895,62 @@ claude --resume my-feature --mcp-config ./.mcp.json
 **確信度**: 中
 **最終更新**: 2026-08-01
 
+---
+
+### 32. `additionalContext` の文字数予算を優先度付きで管理し、末尾からの単純truncateを避ける
+
+Claude Code の hook（`SessionStart` 等）が標準出力の JSON で返す `hookSpecificOutput.additionalContext` は文字列としてそのまま会話コンテキストに挿入されるが、上限を超えた分を末尾から単純に切り捨てると、意図的に文末に置いたルールなど重要な情報から先に失われる。ブロックごとに優先度（保持必須 / 遅延ドロップ可 / 早期ドロップ可）を割り当て、超過時は優先度の低いブロックから落とす。
+
+**根拠**:
+- `SessionStart` hook は標準出力に1つの JSON を返すだけで、その中の `additionalContext` がそのまま会話コンテキストに入る仕組みのため、文字数管理はプロンプト設計そのものに直結する
+- 素朴な `text[:BUDGET]` のような末尾切り捨ては、「結びに大事なことを書く」自然な文章構成と衝突し、上限到達時に真っ先にルールが消える
+- 差分/優先度ベースの表示（全件列挙ではなく増分・高優先度のみ）にすることで、追跡対象が5倍以上に増えても注入サイズをほぼ横ばいに保てた（実測 約1483→1525文字）
+- 省略が発生したことを明示しないと、後続のセッションが「見えているはずの情報が実は削られていた」ことに気づけない
+
+**コード例**:
+```python
+# SessionStart hook: additionalContext に文字列を注入する
+import json
+
+hook_output = {
+    "hookSpecificOutput": {
+        "hookEventName": "SessionStart",
+        "additionalContext": build_context(blocks, budget=2000),
+    }
+}
+print(json.dumps(hook_output))
+```
+
+```python
+# Bad: 末尾から単純truncate — 上限到達時に真っ先にルールが消える
+def build_context_naive(text: str, budget: int) -> str:
+    return text[:budget]
+
+# Good: ブロックに優先度を付け、低優先度から落とす
+KEEP, DROP_LATE, DROP_FIRST = 2, 1, 0
+
+def build_context(blocks: list[tuple[int, str]], budget: int) -> str:
+    blocks = sorted(blocks, key=lambda b: -b[0])  # 優先度が高い順
+    out, used = [], 0
+    for priority, text in blocks:
+        if used + len(text) > budget:
+            continue  # このブロックは省略（呼び出し元で「省略あり」を明示する）
+        out.append(text)
+        used += len(text)
+    return "\n".join(out)
+```
+
+**出典引用**:
+> "フックは標準出力に JSON を1つ返すだけで、その中の `additionalContext` に入れた文字列が、そのまま会話の文脈に入ります。"
+> ([additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget), セクション "前提：起動時に文字列を流し込む仕組み") ※2026-08-02に実際にfetch成功
+
+> "結びに大事なことを書く癖が、そのまま出ています。つまり上限に当たった瞬間、最初に消えるのがルールでした。"
+> ([additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget), セクション "見つけた問題：あふれたぶんを末尾から捨てていた") ※2026-08-02に実際にfetch成功
+
+**出典**:
+- [additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget) (Zenn、`SessionStart` hook の `additionalContext` 実装と優先度ベース truncate の実測) ※2026-08-02に実際にfetch成功
+
+**バージョン**: Claude Code（`hookSpecificOutput.additionalContext` を持つ hook 全般）
+**確信度**: 中（公式APIの検証記事、パターン1c：単独ソース）
+**最終更新**: 2026-08-02
 ---
