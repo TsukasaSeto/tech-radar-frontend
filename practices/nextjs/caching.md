@@ -393,3 +393,57 @@ async function MyDashboard() {
 **最終更新**: 2026-06-05
 
 ---
+
+### 9. 大量ページ数のサイトは全ページ事前ビルドをやめ、ISR + 空の `generateStaticParams` で「初回アクセス時に生成」に倒す
+
+数十万ページ規模の静的サイトでは、ビルド時に全ページを生成すると使われないページの生成コストを毎回払うことになる。`generateStaticParams` を空配列にして事前ビルド対象を0件にし、ISR（`revalidate` 付き）で初回リクエスト時にオンデマンド生成・以降はキャッシュから返す構成に倒す。ビルドの並列度（`experimental.cpus`）を上げても、ボトルネックが計算ではなくメモリ帯域・データロードの場合は速くならず、メモリ使用量だけが増えて悪化することがある。
+
+**根拠**:
+- 24万ページのうち実際にアクセスされるのはごく一部で、全件事前ビルドは「使われないページのために毎回コストを払う」構成になる
+- 並列化はボトルネックが計算（CPU）のときにのみ有効。メモリ帯域・データロードがボトルネックの構成では並列度を上げるほどメモリ使用量が増え、OOM やビルド遅延を招く
+- Full Route Cache のオンメモリ上限は `cacheMaxMemorySize` で調整でき、ISR 方式でもキャッシュヒット率を制御できる
+- 全件を一度に読み込むデータ取得は、集計クエリ1本に置き換えることでメモリ使用量を抑えられる
+
+**コード例**:
+```js
+// next.config.js
+module.exports = {
+  experimental: {
+    cpus: 1, // メモリ律速のビルドでは並列度を上げるとむしろ悪化する
+  },
+  cacheMaxMemorySize: 50 * 1024 * 1024, // Full Route Cache のオンメモリ上限（バイト）
+};
+```
+
+```tsx
+// app/[slug]/page.tsx
+export const revalidate = 3600; // ISR: 1時間ごとに再検証
+
+export async function generateStaticParams() {
+  // Bad: 全24万件をビルド時に生成 → メモリ枯渇・ビルド時間増大
+  // return await getAllSlugs();
+
+  // Good: 空配列を返し、ビルド時は生成しない。初回リクエスト時にオンデマンド生成してキャッシュ
+  return [];
+}
+```
+
+**アンチパターン**:
+- ページ数が数万〜数十万件規模のサイトで `generateStaticParams` に全件を渡し、ビルド時に全ページを事前生成する
+- ビルドが遅い原因を計算コストと決めつけて `experimental.cpus` を安易に増やす（メモリ律速の場合は逆効果）
+
+**出典引用**:
+> "24万ページのうち、実際に人やクローラーが見るのはごく一部です。全部を先に作るのは、使われないページのために毎回1時間を払っているのと同じでした。"
+> ([24万ページのNext.jsを、RAM 4GBのVPS 1台で動かす](https://zenn.dev/shiorisuimoku/articles/nextjs-240k-pages-on-4gb-vps), セクション "全ページ事前ビルドをやめる") ※2026-08-02に実際にfetch成功
+
+> "並列化で速くなるのは計算がボトルネックのときで、ここはメモリ帯域とデータロードがボトルネックでした。"
+> ([24万ページのNext.jsを、RAM 4GBのVPS 1台で動かす](https://zenn.dev/shiorisuimoku/articles/nextjs-240k-pages-on-4gb-vps), セクション "ビルドの並列度を上げたら、遅くなった") ※2026-08-02に実際にfetch成功
+
+**出典**:
+- [24万ページのNext.jsを、RAM 4GBのVPS 1台で動かす](https://zenn.dev/shiorisuimoku/articles/nextjs-240k-pages-on-4gb-vps) (Zenn、`generateStaticParams`/`experimental.cpus`/`cacheMaxMemorySize` の実測検証) ※2026-08-02に実際にfetch成功
+
+**バージョン**: Next.js 15+ App Router
+**確信度**: 中（公式APIの検証記事、パターン1c：単独ソース）
+**最終更新**: 2026-08-02
+
+---
