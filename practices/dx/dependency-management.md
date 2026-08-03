@@ -580,6 +580,27 @@ pnpm install
 3. パッケージ更新時にパッチが当たらなくなる → 検証して更新
 4. パッチは最小限に（行数が多いほどメンテコスト上がる）
 
+**`npm overrides` / `pnpm.overrides` も同じ「技術負債」として扱う**:
+`overrides` は依存グラフ内のバージョン番号を強制的に書き換えるだけで、
+上書き対象パッケージのコードが実際にそのバージョンと互換かは検証しない。
+`ERESOLVE` エラーを消すためだけにコピペで追加すると、非互換が黙って残ったまま
+CI やプロダクションで後から顕在化する。可能な限りスコープを絞り（下記 Bad/Good 参照）、
+一時しのぎとして上流修正後に削除する運用ルールを patch-package と同様に適用する。
+
+```json
+// Bad: 影響範囲が広い（全ての依存が対象になる）
+"overrides": {
+  "react": "$react"
+}
+
+// Good: 影響範囲を特定パッケージ配下のみに限定
+"overrides": {
+  "@testing-library/react-hooks": {
+    "react": "$react"
+  }
+}
+```
+
 **判断軸（パッチを当てるべきか）**:
 | 状況 | 対応 |
 |---|---|
@@ -610,7 +631,10 @@ npx patch-package <package-name>
 **出典**:
 - [pnpm patch](https://pnpm.io/cli/patch) (pnpm)
 - [patch-package](https://github.com/ds300/patch-package) (ds300)
+- [The npm `overrides` Snippet Everyone Copy-Pastes — And What It Actually Does](https://dev.to/mayank7924/the-npm-overrides-snippet-everyone-copy-pastes-and-what-it-actually-does-3flg) (dev.to mayank7924、`overrides` のスコープ限定パターンと「設定ではなく負債として扱う」原則) ※2026-08-03に実際にfetch成功
+  > "If you do add an override, treat it like debt, not like settings."
+  > (セクション "A temporary patch. Not permanent config")
 
 **バージョン**: pnpm 8+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-03

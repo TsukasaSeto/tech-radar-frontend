@@ -657,6 +657,8 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **「危険なのはコマンドの種類ではなく、対象が本番かどうか」**: PreToolUse フックでコマンドそのものをブロックするだけでなく、`AWS_PROFILE`・ホスト名・DB エンドポイントのパターンから「本番向けか」を判定し、read（allow）/ non-prod write（ask）/ prod write（ask）/ prod 不可逆（deny）の3段階で制御することで、ステージング環境の生産性を損なわずに本番安全性を高められる。`PreToolUse` フックは `--dangerously-skip-permissions` モード中でも動作するため、自動実行セッションでの安全層として有効
 - **モデルの「インシデント自己報告」も鵜呑みにしない**: Claude が「プロンプトインジェクションを検出した」等のセキュリティインシデントを自己報告しても、それ自体が作話（実際には起きていない）である場合がある。破壊的コマンドの最終防衛線を CLAUDE.md のルールやモデルの判断に置かず、`PreToolUse` フックの決定論的な正規表現ブロックに置くべき理由がここにもある
 - **credential 漏洩は「入力経路」に境界を引く3層防御で塞ぐ**: シークレットの誤 push は鍵の保管方法だけでは防げず、(1) 固定形状スクリプト（自由記述のコマンドを許可しない）、(2) 20件超の正規表現による PreToolUse フック、(3) ツール出力自体のサニタイズ（読み取った `.env` 内容がそのままコンテキストや外部送信に混入しないようにする）の3層を組み合わせる。実運用で 2 週間に 11 回の漏洩試行を観測してから初めて構造的に塞がった事例がある
+- **`permissions.deny` と PreToolUse フックは弱点が異なるため併用が最適**: `permissions.deny`（`Read(.env)` 等）は列挙パターンによる拒否のため例外表現（`.env.example` だけ許可等）が苦手だが、`Bash` コマンド自体も拒否対象にできるため `cat` / `head` / `sed` 経由の間接アクセスも塞げる。PreToolUse フックは任意のロジックで例外を判定できる柔軟性がある一方、フック自体の実装漏れが弱点になる。列挙式の防御は列挙した分しか守らないため、両方を重ねて弱点を補い合う
+- **同じ PreToolUse パターンは「危険コマンド」以外の事故にも展開できる**: 削除コマンドの列挙＋`exit 2`だけでなく、実在しないスキル/ツール名の生成、ディレクトリ境界外アクセス、ブラウザプロファイルの誤認、セッション再開時のコンテキスト欠落など、75日間の運用で観測した複数の事故パターンに同じ「決定論的スクリプトで判定してブロック」の型を横展開できる
 
 **コード例（実践的な PreToolUse パターン）**:
 ```bash
@@ -831,6 +833,8 @@ fi
 - [rm -rf をブロックしても、AIの本番事故は防げない ── hookに『環境』を判定させる](https://zenn.dev/sprix_it/articles/4c44e56ba6f28a) (Zenn sprix_it、環境検知型3段階許可制・prod/staging/local の分岐パターン) ※2026-06-23 fetch
 - [Claude Codeが「プロンプトインジェクション検出」を報告してきたので解析したら作話だった](https://zenn.dev/nanasess/articles/claude-code-prompt-injection-confabulation) (Zenn 大河内健三郎、モデルの自己報告インシデントが作話だった事例と決定論的フックの必要性) ※2026-07-08に実際にfetch成功
 - [AIエージェントとの2週間 — credential を 11 回漏らして、ようやく構造で塞いだ話](https://zenn.dev/hrmtz/articles/credential-leak-structural-defense) (Zenn hrmtz、固定形状スクリプト・正規表現フック・出力サニタイズの3層防御) ※2026-07-08に実際にfetch成功
+- [Claude Codeから.envを守る：permissions.deny vs PreToolUseフック](https://qiita.com/tomada/items/650546e8b9f5e33d5820) (Qiita tomada、列挙式deny拒否とフック例外処理の弱点比較・Bash経由の間接アクセス遮断) ※2026-08-03に実際にfetch成功
+- [Claude Codeの権限確認をスキップする前に置いた7つのフック — 75日運用して踏んだ事故の記録](https://zenn.dev/aiqlabs/articles/2494e9a5abf58d) (Zenn aiqlabs、削除以外（スキル名の作話・境界外アクセス・ブラウザプロファイル誤認等）への横展開事例) ※2026-08-03に実際にfetch成功
 
 > "Laravel: migrate:fresh / migrate:reset / db:wipe; Rails: db:drop / db:reset; Django: manage.py flush; Prisma: migrate reset / db push --force-reset — これらは shell 固有の危険コマンドのパターンマッチをすり抜けます"
 > ([`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d), セクション "なぜ既存の防御策が効かないのか") ※2026-06-17に実際にfetch成功
@@ -859,9 +863,15 @@ fi
 > "AI時代のcredential防衛は「鍵」じゃなくて「入力経路」にboundaryを引く"
 > ([AIエージェントとの2週間 — credential を 11 回漏らして、ようやく構造で塞いだ話](https://zenn.dev/hrmtz/articles/credential-leak-structural-defense), セクション "構造で塞ぐ") ※2026-07-08に実際にfetch成功
 
+> "列挙式の防御は、列挙した分しか守りません。"
+> ([Claude Codeから.envを守る：permissions.deny vs PreToolUseフック](https://qiita.com/tomada/items/650546e8b9f5e33d5820), セクション "2方式の違い") ※2026-08-03に実際にfetch成功
+
+> "削除に該当する構文を全部列挙して、`exit 2` で落とします。"
+> ([Claude Codeの権限確認をスキップする前に置いた7つのフック](https://zenn.dev/aiqlabs/articles/2494e9a5abf58d), セクション "事故 1: 「たぶん無関係なので消しますね」") ※2026-08-03に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-07-08
+**最終更新**: 2026-08-03
 
 ---
 

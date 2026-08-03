@@ -119,6 +119,7 @@ export default function GlobalError({
 - `tracesSampler` 関数で「チェックアウト」や「ログイン」などクリティカルフローのみ 100% サンプルできる
 - エラーは `tracesSampleRate` と独立してキャプチャされるため、エラー取りこぼしは起きない
 - エラーイベント自体も 2 段階サンプリングできる: `beforeSend` 内で通常エラーを 25% のみ通過させ、checkout / auth / payment 等のクリティカルパスのみ 100% 送信。月間イベント消費量を抑えつつ重要エラーを取りこぼさない
+- **`tunnelRoute` は `tracesSampleRate` と掛け合わさるとコストの上限を消す**: `tunnelRoute` は広告ブロッカー回避のため Sentry イベントを自社サーバー（Serverless Function）経由で送信する設定だが、`tracesSampleRate: 1.0` と組み合わせると全トレースが自社関数の呼び出しコストとして跳ね返る。トラフィックが 4 倍（80k→350k PV）になった際、月額 ¥10万→¥35万にコストが跳ね上がった実例がある。設定変更直後ではなくトラフィック増加時に遅れて顕在化するため、`tunnelRoute` を使う場合は特に本番の `tracesSampleRate` を低く保つ
 
 **コード例**:
 ```ts
@@ -149,10 +150,13 @@ Sentry.init({
 **出典**:
 - [Sentry Docs: Performance Sampling](https://docs.sentry.io/platforms/javascript/performance/) (Sentry公式)
 - [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi、エラーレベル 2 段階サンプリング) ※2026-05-06 fetch
+- [Sentryの設定2行でVercel代が月10万円→35万円になった話](https://zenn.dev/slotana777/articles/sentry-tunnel-route-2400usd) (Zenn slotana777、`tunnelRoute` + `tracesSampleRate: 1.0` の組み合わせによるコスト事故の実例) ※2026-08-03に実際にfetch成功
+  > "地雷は、埋めた時には爆発しない。"
+  > (セクション "学んだこと")
 
 **バージョン**: @sentry/nextjs 8+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-03
 
 ---
 

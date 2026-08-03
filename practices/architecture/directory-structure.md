@@ -169,6 +169,7 @@ import { useAuthStore } from '@/features/auth'; // 上位層への依存 NG
 - コンポーネントを削除するときに関連ファイルが見つけやすく、削除漏れが防げる
 - ファイルの関連性がディレクトリ構造から一目で分かる
 - Kent C. Dodds の「Place code as close to where it's relevant as possible」原則に基づく
+- App Router では `_` プレフィックスの private フォルダ（例: `_components/`）を使うとルーティング対象から除外されつつルート専用コンポーネントをコロケーションできる。`(main)` のような route group と組み合わせることで、URL に影響を与えずルート単位のグルーピングと共有コンポーネントの分離を両立できる
 
 **コード例**:
 ```
@@ -191,10 +192,13 @@ src/
 **出典**:
 - [Colocation](https://kentcdodds.com/blog/colocation) (Kent C. Dodds / 2019)
 - [Testing Library: Colocation](https://testing-library.com/docs/guiding-principles) (Testing Library公式)
+- [大規模Next.js App Router、ゼロから始める「Colocation」フォルダ設計術](https://qiita.com/DaokFrontier/items/a6aaef79544131cb2707) (Qiita DaokFrontier、`_components` private フォルダ + route group の組み合わせパターン) ※2026-08-03に実際にfetch成功
+  > "特定の機能やページに関連するすべてのファイルが近くにあるため、コードを追いかける手間が省けます"
+  > (セクション "Colocationのメリット")
 
-**バージョン**: React 18+, TypeScript 5+
+**バージョン**: React 18+, TypeScript 5+, Next.js App Router
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-03
 
 ---
 
