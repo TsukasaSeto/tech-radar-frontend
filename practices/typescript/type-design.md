@@ -148,6 +148,7 @@ const user = UserSchema.parse(unknownData); // 型安全
 - `strictNullChecks` なしでは null 参照エラーが型チェックで防げない
 - `?.` と `??` により冗長な null チェックを簡潔に書ける
 - Non-null assertion `!` の乱用は避ける（実質 `any` と同等のリスク）
+- `null` を単一の失敗値として返すと全ての失敗モードが1つの型に潰れ、呼び出し側は原因を推測するかログを一般化するしかなくなる。値がなぜ欠けているのかを型で表現できていないと、`strictNullChecks` を有効にしても実行時エラーは防げない
 
 **コード例**:
 ```tsx
@@ -169,12 +170,29 @@ function processUser(user: User | null) {
 }
 ```
 
+**コード例（欠落理由を Discriminated Union で表現する）**:
+```typescript
+// Good: なぜ値が無いのかを型で区別する
+type FetchUserResult =
+  | { kind: 'success'; user: User }
+  | { kind: 'networkError'; message: string }
+  | { kind: 'notFound' };
+
+async function fetchUser(id: string): Promise<FetchUserResult> {
+  // 呼び出し側は kind で分岐でき、原因ごとに正しいハンドリングを強制される
+}
+```
+
 **出典**:
 - [TypeScript Handbook: Strictness](https://www.typescriptlang.org/docs/handbook/2/basic-types.html#strictness) (TypeScript公式)
+- [TypeScript Strict Null Checks in 2026: Real-World Patterns for Handling `undefined` Without the Noise](https://dev.to/jsmanifest/typescript-strict-null-checks-in-2026-real-world-patterns-for-handling-undefined-without-the-eoh) (dev.to、単純な null 返却の限界と Discriminated Union による欠落理由の型表現) ※2026-08-05に実際にfetch成功
+
+> "A null return collapses all failure modes into one type, forcing the caller to guess what went wrong or log generic errors."
+> ([TypeScript Strict Null Checks in 2026](https://dev.to/jsmanifest/typescript-strict-null-checks-in-2026-real-world-patterns-for-handling-undefined-without-the-eoh), セクション "Discriminated Unions") ※2026-08-05に実際にfetch成功
 
 **バージョン**: TypeScript 2.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-08-05
 
 ---
 

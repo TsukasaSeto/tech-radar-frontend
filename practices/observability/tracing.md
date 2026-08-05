@@ -356,6 +356,7 @@ OTLP エクスポートは現時点でログ・トレースのみサポートし
 - Sentry SDK はスタックトレース・セッションリプレイ・パフォーマンス詳細など**アプリケーションコンテキスト**の収集に強い
 - 2者は OTLP 経由で共存でき、`traceparent` / `baggage` ヘッダーを通じてトレースを連結できる
 - どちらか一方に統一しようとすると、相手の強みを失う
+- Sentry の `OtlpIntegration` はアクティブな OTel トレースコンテキストを読み取り、発生した Sentry イベントへ自動でスタンプする。これにより「エラーから原因スパンへ」「スパンから発生したエラーへ」の双方向ナビゲーションが可能になる
 
 **コード例**:
 ```ts
@@ -387,9 +388,13 @@ allow_headers = ["sentry-trace", "baggage", "traceparent"]
 
 **出典**:
 - [Sentry Blog: How Sentry and OpenTelemetry Work Together](https://blog.sentry.io/sentry-opentelemetry-work-together/) (Sentry公式ブログ) ※2026-05-27に実際にfetch成功
+- [Your OTel spans, our errors: A Sentry love story in one trace](https://blog.sentry.io/otel-spans-errors-sentry-trace/) (Sentry公式ブログ、`OtlpIntegration` によるトレースコンテキスト自動付与の実装詳細) ※2026-08-05に実際にfetch成功
+
+> "It reads the active OTel trace context and stamps it onto every Sentry event"
+> ([Your OTel spans, our errors: A Sentry love story in one trace](https://blog.sentry.io/otel-spans-errors-sentry-trace/), セクション "What the OtlpIntegration does under the hood") ※2026-08-05に実際にfetch成功
 
 **確信度**: 高
-**最終更新**: 2026-05-27
+**最終更新**: 2026-08-05
 
 ---
 
