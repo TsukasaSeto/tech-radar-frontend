@@ -133,6 +133,7 @@ patch / minor は自動マージ、major は手動レビュー、というルー
 - Renovate は npm 以外（GitHub Actions・Docker・Terraform）も統合管理できる
 - Dependabot は GitHub 公式、設定がシンプル。Renovate は柔軟だが設定が複雑
 - バージョン更新 PR は `groups` でエコシステムごとに1本へまとめ、`interval` を `daily` から `monthly` に落とすとレビュー負荷を大きく下げられる。ただしこれは version-update（バージョン追従）の頻度であり、セキュリティ修正 PR は脆弱性の公開と同時に独立してトリガーされるため、この間隔設定では遅延しない
+- Renovate は GitHub 以外に GitLab / Bitbucket / Azure DevOps など複数プラットフォームに対応し、90 以上のパッケージマネージャーをサポートする。マルチプラットフォーム運用や npm 以外のエコシステムを広く自動更新したい場合は Renovate が優位、GitHub 単体で追加セットアップなしに始めたい場合は Dependabot が優位という判断軸になる
 
 **Renovate 設定例**（推奨）:
 ```json
@@ -223,13 +224,14 @@ updates:
 - [Dependabot Docs](https://docs.github.com/en/code-security/dependabot) (GitHub)
 - [Snyk: Automated dependency updates](https://snyk.io/blog/automate-fixes-with-snyks-prs/) (Snyk)
 - [Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/) (GitHub Blog 公式、`groups` によるエコシステム単位のPR集約と`interval: monthly`化、セキュリティPRが独立トリガーである点) ※2026-07-29に実際にfetch成功
+- [ライブラリ最新化、Dependabot vs Renovate：自動化の最適解を比較](https://zenn.dev/fd_ai_teacher/articles/tech-20260804154450-1) (Zenn、Renovate のマルチプラットフォーム対応・90+パッケージマネージャー対応という選定軸の追加根拠) ※2026-08-05に実際にfetch成功
 
 > "Dependabot security updates are raised as soon as a vulnerability with a fix is disclosed, independent of your schedule"
 > ([Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/), セクション "Security Prioritization") ※2026-07-29に実際にfetch成功
 
 **バージョン**: Renovate v37+, Dependabot v2
 **確信度**: 高
-**最終更新**: 2026-07-29
+**最終更新**: 2026-08-05
 
 ---
 

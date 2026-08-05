@@ -398,6 +398,7 @@ function processInput(value: unknown): string {
 - `strict: true` は実際には8つの独立したフラグの束であり、一括適用すると数千件のエラーが一度に発生する
 - フラグを難易度順に有効化することで、段階的なPRで進められ、レビューが可能になる
 - `strictNullChecks` だけで全エラーの60〜80%を占めるため（30kライン換算で1000〜4000件）、最後に予算を確保して臨む
+- 既存プロジェクトで `strict` を一括有効化すると大量のエラーが同時発生するため、個別フラグを分けて段階導入する方針は複数の実務記事でも共通して推奨されている
 
 **有効化推奨順序**（エラー影響が少ない順）:
 1. `alwaysStrict` — ほぼコストゼロ（`"use strict"` 付与のみ）
@@ -442,10 +443,11 @@ function processInput(value: unknown): string {
 
 **出典**:
 - [TypeScript strict Mode Is 8 Flags. Turn strictNullChecks On Last.](https://dev.to/gabrielanhaia/typescript-strict-mode-is-8-flags-turn-strictnullchecks-on-last-52mj) (dev.to gabrielanhaia / 2026-05-07) ※2026-05-07に実際にfetch成功
+- [TypeScriptのstrictを段階的に有効にするためのtsconfigの設定順番](https://qiita.com/felix-jp-studio/items/6246cd224e77def4f845) (Qiita、段階導入方針の独立した裏付けとコード例) ※2026-08-05に実際にfetch成功
 
 **バージョン**: TypeScript 4.0+
 **確信度**: 高
-**最終更新**: 2026-05-07
+**最終更新**: 2026-08-05
 
 ---
 

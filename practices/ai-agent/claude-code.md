@@ -659,6 +659,7 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **credential 漏洩は「入力経路」に境界を引く3層防御で塞ぐ**: シークレットの誤 push は鍵の保管方法だけでは防げず、(1) 固定形状スクリプト（自由記述のコマンドを許可しない）、(2) 20件超の正規表現による PreToolUse フック、(3) ツール出力自体のサニタイズ（読み取った `.env` 内容がそのままコンテキストや外部送信に混入しないようにする）の3層を組み合わせる。実運用で 2 週間に 11 回の漏洩試行を観測してから初めて構造的に塞がった事例がある
 - **`permissions.deny` と PreToolUse フックは弱点が異なるため併用が最適**: `permissions.deny`（`Read(.env)` 等）は列挙パターンによる拒否のため例外表現（`.env.example` だけ許可等）が苦手だが、`Bash` コマンド自体も拒否対象にできるため `cat` / `head` / `sed` 経由の間接アクセスも塞げる。PreToolUse フックは任意のロジックで例外を判定できる柔軟性がある一方、フック自体の実装漏れが弱点になる。列挙式の防御は列挙した分しか守らないため、両方を重ねて弱点を補い合う
 - **同じ PreToolUse パターンは「危険コマンド」以外の事故にも展開できる**: 削除コマンドの列挙＋`exit 2`だけでなく、実在しないスキル/ツール名の生成、ディレクトリ境界外アクセス、ブラウザプロファイルの誤認、セッション再開時のコンテキスト欠落など、75日間の運用で観測した複数の事故パターンに同じ「決定論的スクリプトで判定してブロック」の型を横展開できる
+- **`matcher` を単一ツール名だけに絞ると、別ツール経由の迂回が素通りする**: `matcher: "Bash"` だけを対象にしたブロックフックは、`Write` ツールで同じファイル操作を行う迂回を防げない（3 回中 2 回、同一ファイルへの書き込みが素通りした実測あり）。`matcher: "Bash|Write"` のように迂回先のツールも含めて列挙すると、同条件でバイパスは 0 件になった。ブロックされた回も含め、hook を素通りした操作は「成功・エラーなし・終了コード0」で返ってくるため、ログだけでは迂回に気づきにくい点にも注意する
 
 **コード例（実践的な PreToolUse パターン）**:
 ```bash
@@ -835,6 +836,7 @@ fi
 - [AIエージェントとの2週間 — credential を 11 回漏らして、ようやく構造で塞いだ話](https://zenn.dev/hrmtz/articles/credential-leak-structural-defense) (Zenn hrmtz、固定形状スクリプト・正規表現フック・出力サニタイズの3層防御) ※2026-07-08に実際にfetch成功
 - [Claude Codeから.envを守る：permissions.deny vs PreToolUseフック](https://qiita.com/tomada/items/650546e8b9f5e33d5820) (Qiita tomada、列挙式deny拒否とフック例外処理の弱点比較・Bash経由の間接アクセス遮断) ※2026-08-03に実際にfetch成功
 - [Claude Codeの権限確認をスキップする前に置いた7つのフック — 75日運用して踏んだ事故の記録](https://zenn.dev/aiqlabs/articles/2494e9a5abf58d) (Zenn aiqlabs、削除以外（スキル名の作話・境界外アクセス・ブラウザプロファイル誤認等）への横展開事例) ※2026-08-03に実際にfetch成功
+- [AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson) (Zenn numarn、`matcher: Bash` のみでは `Write` ツール経由の迂回を防げない実測とその対策) ※2026-08-05に実際にfetch成功
 
 > "Laravel: migrate:fresh / migrate:reset / db:wipe; Rails: db:drop / db:reset; Django: manage.py flush; Prisma: migrate reset / db push --force-reset — これらは shell 固有の危険コマンドのパターンマッチをすり抜けます"
 > ([`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d), セクション "なぜ既存の防御策が効かないのか") ※2026-06-17に実際にfetch成功
@@ -869,9 +871,12 @@ fi
 > "削除に該当する構文を全部列挙して、`exit 2` で落とします。"
 > ([Claude Codeの権限確認をスキップする前に置いた7つのフック](https://zenn.dev/aiqlabs/articles/2494e9a5abf58d), セクション "事故 1: 「たぶん無関係なので消しますね」") ※2026-08-03に実際にfetch成功
 
+> "門番の対象を `Bash|Write` と書き換えて迂回先も塞ぐと、今度は 3回中 0回になりました"
+> ([AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson), セクション "対策：matcherを迂回先まで広げる") ※2026-08-05に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-08-03
+**最終更新**: 2026-08-05
 
 ---
 
@@ -2963,4 +2968,44 @@ def build_context(blocks: list[tuple[int, str]], budget: int) -> str:
 **バージョン**: Claude Code（`hookSpecificOutput.additionalContext` を持つ hook 全般）
 **確信度**: 中（公式APIの検証記事、パターン1c：単独ソース）
 **最終更新**: 2026-08-02
+
+---
+
+### 33. AI が一括生成した巨大な PR は、依存チェーンを明示したスタック型 PR に分解する
+
+AI エージェントが機能全体を単一の巨大な PR として生成すると、レビュアーは差分の意図を追いにくい。
+機能をレイヤー（データ層・API 層・配線・UX など）に分解し、依存関係の順序を明示した「スタック型 PR」に切り分けることで、
+1 PR あたりのレビュー負荷を下げ、レビュアーは上位レイヤーから読むことで全体のゴールを先に把握できる。
+
+**根拠**:
+- 単一の巨大 PR はレビュアーが「何から読むべきか」を自分で組み立て直す必要があり、認知負荷が高い
+- レイヤーごとに分割し依存チェーンを明示すると、各 PR は単独でレビュー可能な単位になる
+- 上位レイヤー（ゴールに近い層）から読む順序を固定すると、レビュアーは目的を先に理解してから実装詳細を検証できる
+- `gh stack` のようなツールで PR 間の依存関係・rebase・同期をコマンド化すると、スタックの管理コストを機械的に下げられる
+
+**コード例（gh-stack 拡張でのスタック管理）**:
+```bash
+gh extension install github/gh-stack
+gh init stack
+gh stack add       # レイヤー単位でブランチ/PRを追加
+gh stack push
+gh stack submit     # スタック全体をPRとして提出
+gh stack rebase
+gh stack sync       # ベースブランチの変更をスタック全体に反映
+```
+
+**出典引用**:
+> "Instead of shooting for a single pull request that addresses the issue in its entirety, you break down the feature into logical layers and identify the dependency chain"
+> ([Turn one giant AI-generated pull request to a reviewable stack](https://github.blog/engineering/turn-one-giant-ai-generated-pull-request-to-a-reviewable-stack/), セクション "GitHub stacked pull requests") ※2026-08-05に実際にfetch成功
+
+> "Read top-down, for context. This gives you the end goal at the very beginning of the review process, so you can set a bearing."
+> ([Turn one giant AI-generated pull request to a reviewable stack](https://github.blog/engineering/turn-one-giant-ai-generated-pull-request-to-a-reviewable-stack/), セクション "Reviewing and updating the stack") ※2026-08-05に実際にfetch成功
+
+**出典**:
+- [Turn one giant AI-generated pull request to a reviewable stack](https://github.blog/engineering/turn-one-giant-ai-generated-pull-request-to-a-reviewable-stack/) (GitHub公式ブログ、Julia Muiruri) ※2026-08-05に実際にfetch成功
+
+**バージョン**: gh-stack extension（GitHub CLI 拡張）
+**確信度**: 高（公式ブログ由来、パターン1）
+**最終更新**: 2026-08-05
+
 ---
