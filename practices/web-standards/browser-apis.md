@@ -267,13 +267,34 @@ function TabPanel({ tabs }: { tabs: Tab[] }) {
 @keyframes fade-in  { from { opacity: 0; } to { opacity: 1; } }
 ```
 
+**React での利用（React 19.3+ canary、実験的）**:
+React は `<ViewTransition>` コンポーネントで `document.startViewTransition()` をラップし、`Suspense` の `fallback`（スケルトン画面）から実コンテンツへの切り替わりにもアニメーションを付けられる。ただし本稿執筆時点（2026-08）では stable ではなく canary 版限定の機能であり、アニメーション自体が数百ミリ秒の遅延を追加するため、体感待ち時間を減らすはずのスケルトン画面の目的と部分的に矛盾しうる点に注意する。
+
+```tsx
+// React 19.3 canary: Suspense + ViewTransition でスケルトン→実コンテンツを滑らかに切り替え
+<ViewTransition update="thumbnail-reveal">
+  <Suspense fallback={<SkeletonThumbnail />}>
+    <ThumbnailContent promise={promise} />
+  </Suspense>
+</ViewTransition>
+```
+```css
+::view-transition-new(.thumbnail-reveal) {
+  animation: thumbnail-circle-reveal 680ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+```
+
 **出典**:
 - [View Transitions API - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/API/View_Transitions_API) (MDN Web Docs)
 - [Smooth transitions with the View Transition API](https://developer.chrome.com/docs/web-platform/view-transitions/) (Chrome for Developers)
+- [スケルトンスクリーンからコンテンツへの切り替わりをアニメーションする（ViewTransition & Suspense）](https://zenn.dev/dentyu/articles/animate-skeleton-with-view-transition) (Zenn、React `<ViewTransition>` + `Suspense` の実装例、canary版の制約とレイテンシのトレードオフ) ※2026-08-06に実際にfetch成功
 
-**バージョン**: Chrome 111+ (Same-Document), Chrome 126+ (Cross-Document), Safari 18+
+> "Reactの`<ViewTransition>`は、ReactによるUIの更新とブラウザのView Transition APIを連携させるコンポーネントです。"
+> ([スケルトンスクリーンからコンテンツへの切り替わりをアニメーションする（ViewTransition & Suspense）](https://zenn.dev/dentyu/articles/animate-skeleton-with-view-transition), セクション "ViewTransition") ※2026-08-06に実際にfetch成功
+
+**バージョン**: Chrome 111+ (Same-Document), Chrome 126+ (Cross-Document), Safari 18+；React `<ViewTransition>` は React 19.3+ canary（実験的）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-06
 
 ---
 
