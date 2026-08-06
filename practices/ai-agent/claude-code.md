@@ -895,6 +895,7 @@ fi
 - **3段階の判定ロジック**: ①リードエージェントは無条件通過、②サブエージェントの worktree ルートを `git rev-parse --show-toplevel` で検証、③サブエージェントの worktree が主リポジトリと一致する場合はブロック
 - **worktree が守るのは「実行」であって「着地（マージ）」ではない**: 物理的なファイル競合が起きなくても、エージェントA がヘルパー関数のシグネチャを変更し、エージェントB が別の worktree でその呼び出し側を書き換えていた場合、両方の PR は個別に CI を通過し git 上のコンフリクトも起きない。しかし順番にマージすると意味的に噛み合わなくなり、実行時に初めて壊れる。対策は worktree 隔離だけでは不十分で、共有 API・関数シグネチャに触れる変更は PR 説明に明記させ、マージ前に呼び出し側への影響を人間または統合テストでレビューするステップを挟む
 - **個人開発で複数案件の worktree を並走させる場合は「公開前ゲート」を fail-closed で設計する**: 案件ごとに独立した worktree を割り当てても、機密情報混入チェックを「読み込みに失敗したら通す」設計にすると事故る。NGワードリストの読み込みに失敗した場合は例外を握りつぶさず**ブロック側にフォールバックする**（`except OSError: return None` → 呼び出し側で `None` は「公開不可」として扱う）。worktree ごとに `.claude/settings.local.json` の `model` フィールドを変えることで、案件の複雑度に応じたモデル使い分けも並走運用に組み込める
+- **名前付き起動（named launch）特有の破綻**: `isolation: "worktree"` は名前を指定しない起動でのみ安定して機能し、`git worktree move` によるリネームが失敗すると agent の作業ディレクトリごと消失するなど、実行のたびに壊れ方が変わる不安定さが報告されている。対策として worktree 作成・シンボリックリンク・非トラッキングファイルのコピー・フックの再生成・ポート割当てを1本の決定論的シェルスクリプトに切り出し、「LLM の判断が必要な作業（実装）」と「LLM の判断が不要な作業（環境構築）」を明確に分離すると再現性が上がる。この分離は `isolation: "worktree"` オプション自体・関連 Hooks・命名リネームを丸ごと不要にする選択肢でもある
 
 **コード例**:
 ```bash
@@ -983,13 +984,17 @@ exit 0
 > "個人開発は『開発』より『運用』で詰まる"
 > ([1人で8プロジェクトを並列開発する「業務OS」— Claude Code worktree × Skill × 公開前ゲート × Obsidianミラーvault](https://qiita.com/TaichiEndoh/items/ad15d1fcf838decc3c8a), セクション "はじめに") ※2026-07-06に実際にfetch成功
 
+> "改名した瞬間、エージェントが動かなくなりました"
+> ([【並列開発】isolation: worktreeやめました 〜決定論と認知を分けてAIと仕事する〜](https://zenn.dev/rakko_inc/articles/2da36c0abe4dbe), セクション "起動のたびに壊れ方が変わった") ※2026-08-06に実際にfetch成功
+
 **出典**（追加）:
 - [worktrees でエージェントを分けたのに、結局 main でぶつかった話](https://zenn.dev/veripsa/articles/worktrees-not-enough-parallel-agents) (Zenn veripsa、意味的マージコンフリクト・worktree 隔離では防げない実行時の噛み合わせ崩れ) ※2026-07-03 fetch
 - [1人で8プロジェクトを並列開発する「業務OS」— Claude Code worktree × Skill × 公開前ゲート × Obsidianミラーvault](https://qiita.com/TaichiEndoh/items/ad15d1fcf838decc3c8a) (Qiita TaichiEndoh、fail-closed な公開前ゲートと worktree 単位のモデル使い分け) ※2026-07-06 fetch
+- [【並列開発】isolation: worktreeやめました 〜決定論と認知を分けてAIと仕事する〜](https://zenn.dev/rakko_inc/articles/2da36c0abe4dbe) (Zenn rakko_inc、named launch でのリネーム失敗と決定論的セットアップスクリプトへの置き換え) ※2026-08-06 fetch
 
 **バージョン**: Claude Code + Git（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-06
+**最終更新**: 2026-08-06
 
 ---
 
@@ -1622,6 +1627,8 @@ Claude Code のサブエージェントはメイン会話のコンテキスト�
 
 CLAUDE.md は**スコープ別に複数配置できる**: `~/.claude/CLAUDE.md`（個人グローバル：ロール・ツール選択）→ `{repo}/CLAUDE.md`（プロジェクト共通：アーキテクチャ方針・禁止操作）→ `{repo}/{subdir}/CLAUDE.md`（サブディレクトリ局所制約）→ `{repo}/CLAUDE.local.md`（個人用サンドボックス設定：テストURL・ダミーデータパス等、`.gitignore` 対象）。チーム共有すべきルールはリポジトリルートに、個人スタイルはグローバルに分離することで、ファイルの肥大化と個人情報の混入を防ぐ。サブディレクトリ CLAUDE.md は「そのディレクトリ以下でのみ有効」な制約を書く場所として、モジュール別の独立したルール管理を実現する。**読み込み順は広いスコープ→狭いスコープの順で、後に読まれた指示ほど「直近の文脈」として強く効く**ため、優先させたいプロジェクト固有ルールほど狭いスコープに書く。
 
+上記の個人グローバル〜ローカルの4層に加え、組織管理者が配布する**管理ポリシー**（macOS: `/Library/Application Support/`、Linux: `/etc/claude-code/`、Windows: `C:\Program Files\` 配下）が最も広いスコープとして先頭に読み込まれる。読み込みは現在の作業ディレクトリ（cwd）から親ディレクトリへツリーを遡る形で行われ、各階層のファイルは**上書きではなく「連結」**される（狭いスコープが広いスコープを消すわけではなく、両方が文脈に積み上がる）。実際にどのファイルが読み込まれているかは `/context` コマンドの Memory files 欄で確認できる。
+
 **ファイル内の見出し順序自体もルール遵守率を左右する**: 400 件の同一タスクで CLAUDE.md 内の項目順序を5パターン変えて比較した検証では、「意味的にきれいな順序（概要→アーキテクチャ→規約...）」が最も遵守率が低く（58%）、モデルが実際に参照しやすい順序（重要ルールを先頭・末尾に配置）が最も高かった（86%）。長大な CLAUDE.md では「読みやすい構成」と「LLM が遵守しやすい構成」が一致しないため、最重要の禁止操作・命令は先頭または末尾に寄せる。
 
 **CLAUDE.md に含めるべきもの**:
@@ -2022,9 +2029,20 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - [APIトークンを守ったら git push まで止まった—denyルールとsandbox.filesystem.allowReadの使い分け](https://zenn.dev/kanae_yomo/articles/7e93b3483d5bb5) (Zenn、app層denyとOSサンドボックス層の相互作用の実例) ※2026-07-25に実際にfetch成功
 - [I Run Agents Unattended. These Four Kill Switches Matter](https://dev.to/lainagent_ai/i-run-agents-unattended-these-four-kill-switches-matter-36ag) (dev.to、閾値ベースのサーキットブレーカーと不可逆操作への人間ゲートの実例) ※2026-08-02に実際にfetch成功
 
+> "ルールは deny → ask → allow の順に評価され、最初にマッチしたものが結果を決めます。"
+> ([Claude Code をチームに配るときの settings.json — deny / ask / allow をどう引いたか](https://zenn.dev/tikuwaman/articles/claude-code-team-settings-json), セクション "評価順序を先に押さえる") ※2026-08-06に実際にfetch成功
+
+**根拠（追加）**:
+- パーミッションルールは **`deny` → `ask` → `allow` の順に評価され、最初にマッチした結果が採用される**（`deny` に例外を追加することはできない）。`ask` は `curl`・`wget`・`npx` のような外部接続・任意コード実行系コマンドに使うと、`auto` や `bypassPermissions` へモードを緩めても確認が残る「床」として機能する（`allow` はモードを緩めると素通りする）
+- `deny`/`allow` のパスパターンで `/path` と書くと、ファイルシステムのルートではなく**`settings.json` の配置場所からの相対パス**として解釈される。絶対パスを指定したい場合は `//path` または `~/path` を使う
+- Read/Edit の `deny` は Claude の組み込みツールと認識済みの Bash コマンド（`cat` 等）しか止めず、Python/Node スクリプトによる直接ファイル読み取りは防げない。これは `bash -c` の抜け穴と同種の「文字列一致では防げない」限界であり、パーミッション設計は「最下位スコープであり、削除・回避されうる」前提で管理者ポリシー層と組み合わせる
+
+**出典**（追加）:
+- [Claude Code をチームに配るときの settings.json — deny / ask / allow をどう引いたか](https://zenn.dev/tikuwaman/articles/claude-code-team-settings-json) (Zenn、評価順序・パス構文の落とし穴・ask のモード横断性) ※2026-08-06に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-02
+**最終更新**: 2026-08-06
 
 ---
 
@@ -3007,5 +3025,68 @@ gh stack sync       # ベースブランチの変更をスタック全体に反�
 **バージョン**: gh-stack extension（GitHub CLI 拡張）
 **確信度**: 高（公式ブログ由来、パターン1）
 **最終更新**: 2026-08-05
+
+---
+
+### 34. Anthropic 公式の PR レビュープラグイン（`code-review` / `pr-review-toolkit`）を使い分ける
+
+Claude Code には Anthropic 公式マーケットプレイス配布のプラグインとして、単一コマンドで信頼度スコア付きレビューを行う `code-review` と、観点別に6エージェントへ分業させる `pr-review-toolkit` の2種類がある。「まず全体を素早く一次スクリーニングしたい」場合は `code-review`、「テスト・エラー処理・型設計等、特定観点を深掘りしたい」場合は `pr-review-toolkit` を使う。
+
+**根拠**:
+- `code-review` は CLAUDE.md 準拠チェック・変更行の明白なバグ・git blame からの文脈的バグ・過去 PR コメントとの比較・コメント整合性検証の5エージェントを並列実行し、0〜100 の信頼スコアでフィルタする（スコア80未満は自動的にコメントへ出力されない）ため、誤検知の少ない一次スクリーニングに向く。`gh auth login` 済みの GitHub CLI を前提とする
+- `pr-review-toolkit` は観点特化の6エージェントから必要な観点だけを選んで実行する「分業型」設計で、自然言語トリガーとスラッシュコマンドの両方から呼び出せるため、レビュー観点を絞った深掘りに向く
+
+**コード例**:
+```bash
+# インストール（両方とも公式マーケットプレイスから）
+/plugin install code-review@claude-plugins-official
+/plugin install pr-review-toolkit@claude-plugins-official
+/reload-plugins
+
+# 実行
+/code-review:code-review                          # 5エージェント並列・信頼スコアでフィルタ
+/pr-review-toolkit:review-pr tests errors          # 観点を絞って実行
+```
+
+**出典引用**:
+> "Pull Request のレビューは時間がかかります。大きな変更ほど見落としが増え、レビュアーによって観点にばらつきも出ます。"
+> ([Anthropic公式プラグイン「code-review」でPRレビューを自動化する](https://zenn.dev/shirochan/articles/4bfdcf3ebd7176), セクション "はじめに") ※2026-08-06に実際にfetch成功
+
+> "観点ごとに特化した6体のエージェントを用意し、必要な観点だけを選んで使う「分業型」"
+> ([Anthropic公式プラグイン「pr-review-toolkit」でPRレビューを観点別エージェントに分担する](https://zenn.dev/shirochan/articles/70b01405674957), セクション "プラグイン概要") ※2026-08-06に実際にfetch成功
+
+**バージョン**: Claude Code Plugins（`claude-plugins-official` マーケットプレイス）
+**確信度**: 中（パターン1c: 公式プラグインの導入コマンド・スラッシュコマンドを直接検証した記事）
+**最終更新**: 2026-08-06
+
+---
+
+### 35. AI 生成 PR は「未着手のまま放置」だけを検出し、担当者に一本化通知する
+
+AI エージェント（Autofix 等）が自動生成する修正 PR は人間のレビューが必要だが、母数が増えると「誰が見るか」の空白地帯ができて放置される。Sentry は1時間おきに「開かれてから4時間以上未着手の PR」だけを抽出し、コミット履歴から最適なレビュー担当者をエージェントに特定させ、Slack へ1通の通知で完結させるルーティンを構築した。
+
+**根拠**:
+- 全 PR を毎回通知するのではなく「未着手のまま一定時間放置された PR だけ」に絞ることで通知疲れを防ぐ
+- 担当者特定をエージェント任せにする（GitHub のコミット履歴・blame から対象コードに詳しいエンジニアを推定）ことで、割り当てロジックを人手でメンテしなくて済む
+- 導入後、PR のアクション率が21%向上、48時間以内の対応率が13%向上、マージせずクローズする判断（＝精査した上での意図的な却下）が12.5%増加した——「読まれず放置」から「精査した上で判断」への転換を示す
+
+**コード例（ワークフロー概要）**:
+```text
+1. 1時間おきに Slack フィードを走査し、
+   「PR作成から4時間以上・未着手」の PR を抽出
+2. Claude が Seer エージェントに「このPRのレビューに最適な担当者は誰か」を問い合わせ
+   （GitHub のコミット履歴・blame から特定）
+3. 対象PRがまだ open であることを再検証
+4. 該当エンジニアへ1通の Slack メッセージで通知
+   （レビュー・マージ/クローズ判断・フィードバックを依頼）
+```
+
+**出典引用**:
+> "AI is going to generate a lot of code from here on out, and a lot of bugs along with it."
+> ([How we built an automated debugging workflow at Sentry](https://blog.sentry.io/automated-debugging-workflow-sentry/), セクション "It all starts with knowing what's broken and why") ※2026-08-06に実際にfetch成功
+
+**バージョン**: - (社内ルーティン実装例、特定バージョン非依存)
+**確信度**: 高（公式ブログ由来、パターン1）
+**最終更新**: 2026-08-06
 
 ---

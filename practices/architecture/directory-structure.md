@@ -150,12 +150,24 @@ import { type User } from '@/entities/user';
 import { useAuthStore } from '@/features/auth'; // 上位層への依存 NG
 ```
 
+Next.js App Router では `app/` と `pages/` という名称が Next.js 自身のルーティング機構と衝突するため、FSD 側のレイヤーを `_app/` / `_pages/` のようにアンダースコア付きでリネームし、パスエイリアスを `src/*` に向けて衝突を避ける。また Server/Client Component が混在する構成では、各スライスの公開 API を `index.ts`（クライアントから見える範囲）と `index.server.ts`（サーバー専用モジュールを含む範囲）の2つに分けることで、サーバー専用コードがクライアントバンドルへ混入してビルドエラーになる事故を防げる。
+
+```
+src/
+├── _app/            # FSD App層（Next.js の app/ と名前が衝突するためリネーム）
+├── _pages/           # FSD Pages層（同上）
+│   └── product-details/
+│       ├── index.ts         # クライアントから見える公開API
+│       └── index.server.ts  # サーバー専用モジュールを含む公開API
+```
+
 **出典**:  
 - [Feature-Sliced Design: Reference](https://feature-sliced.design/docs/reference/layers) (Feature-Sliced Design公式 / 2023)
+- [FSD（Feature-Sliced Design）の基本とNext.jsでの使い方](https://qiita.com/uhooi/items/9d63a800a939de66dfbc) (Qiita、Next.js App Router との命名衝突回避と index.ts/index.server.ts によるサーバー/クライアント分離) ※2026-08-06に実際にfetch成功
 
 **バージョン**: Next.js 13+, TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-06
 
 ---
 
