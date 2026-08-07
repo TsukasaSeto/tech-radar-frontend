@@ -707,3 +707,60 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 **バージョン**: Chrome 125+, Firefox 133+, Safari 18.2+（W3C CSS Anchor Positioning Module Level 1 CR）
 **確信度**: 高（W3C Candidate Recommendation + 主要ブラウザ対応済み）
 **最終更新**: 2026-06-04
+
+---
+
+### 12. `will-change` / `transform: translateZ(0)` は子要素の `position: fixed` を壊すことを踏まえて配置する
+
+パフォーマンス最適化のために親要素へ `will-change` や `transform: translateZ(0)` を指定すると、その要素は子孫要素にとっての containing block（包含ブロック）になる。結果として子要素の `position: fixed` がビューポート基準ではなく、その親要素基準で配置されてしまい、意図せず固定表示が壊れる。
+
+**根拠**:
+- CSS 仕様上、`transform` に `none` 以外の値を指定した要素は、すべての子孫要素に対して containing block となり、新しいスタッキングコンテキストを作成する
+- `will-change: transform` も同様の副作用（先行してスタッキングコンテキストを作る挙動）を持ちうるため、GPU アクセラレーションの意図しか無くても `position: fixed` の基準がずれる
+- 対策は3通り: (1) 最適化を本当に必要な要素にのみ適用しコンテナ全体には貼らない、(2) 最適化を `::before` / `::after` 疑似要素に移し子要素の配置に影響させない、(3) アニメーション層と `fixed` 要素を別の DOM 階層に分離する
+- パフォーマンス最適化は「とりあえず全部に付ける」デフォルト運用にせず、計測して必要な箇所にだけ適用する
+
+**コード例**:
+```css
+/* Bad: 親要素全体に will-change を貼り、子要素の position: fixed が親基準になる */
+.card {
+  will-change: transform;
+}
+.card .fixed-badge {
+  position: fixed; /* ビューポートではなく .card 基準で配置されてしまう */
+  top: 8px;
+  right: 8px;
+}
+
+/* Good: 最適化を疑似要素に移し、子要素の配置に影響させない */
+.card {
+  position: relative;
+}
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  will-change: transform;
+  /* アニメーション対象はこの疑似要素側にまとめる */
+}
+.card .fixed-badge {
+  position: fixed; /* ビューポート基準のまま */
+  top: 8px;
+  right: 8px;
+}
+```
+
+**アンチパターン**:
+- 最適化のためだけに親要素全体へ `will-change` や `translateZ(0)` を貼り、意図せず子孫の `fixed` 配置を壊す
+- `position: fixed` が効かなくなった原因調査をせず、`position: absolute` に変更してレイアウトの意味を変えてしまう
+
+**出典引用**:
+> "transformにnone以外の値を指定すると、その要素はすべての子孫要素に対して「包含ブロック（containing block）」となる"
+> ([will-changeとtransform: translateZ(0)の落とし穴 - position:fixedが効かなくなる理由と対策](https://zenn.dev/sarap422/articles/cbdf96f215bbda), セクション 原因の解説) ※2026-08-07に実際にfetch成功
+
+**出典**:
+- [will-changeとtransform: translateZ(0)の落とし穴 - position:fixedが効かなくなる理由と対策](https://zenn.dev/sarap422/articles/cbdf96f215bbda) (Zenn) ※2026-08-07に実際にfetch成功
+
+**バージョン**: CSS仕様（Stacking Context / Containing Block、全モダンブラウザ共通の挙動）
+**確信度**: 中（CSS仕様上の一般的挙動の解説だが、出典は1記事）
+**最終更新**: 2026-08-07

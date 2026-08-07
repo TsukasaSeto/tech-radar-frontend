@@ -447,3 +447,82 @@ export async function generateStaticParams() {
 **最終更新**: 2026-08-02
 
 ---
+
+### 10. `instant()` Playwright ヘルパーでナビゲーションの体感速度を決定的にテストし、Suspense 境界の配置を検証する
+
+「ナビゲーションが速く感じる」というあいまいな性質は、手動確認だけでは回帰検知できない。`@next/playwright` の `instant()` ヘルパーはナビゲーションを一時停止し、ネットワークリクエストなしで表示されているUI部分をアサートできるため、体感速度を CI で回帰検知可能な決定的テストに変換できる。個人化された動的データ取得を `<Suspense>` 境界の内側に移すことで、境界の外側の UI をナビゲーション前にプリレンダリングしてブラウザにキャッシュでき、テストが green になる。
+
+**根拠**:
+- 全ページ静的プリレンダリングは個人化データを持つ動的アプリには非現実的、フルプリフェッチはサーバー負荷が高い。Next.js 16.3 はこの中間として「ユーザーがアプリを操作している間に動的コンテンツを事前レンダリングし、ブラウザ側に丸ごとキャッシュする」方式（Partial Prerendering の実行時版）を提供する
+- `instant()` はナビゲーションを一時停止し、ネットワークリクエストが発生せずに見えている部分をアサートするため、「速い」という主観的な体感を CI 上のテストとして固定できる
+- Vercel 社内の v0（AI コーディングプラットフォーム）への適用では、「検証可能なゴール（失敗するテスト）→ ガードレール（実証済みパターンを持つ Skill）→ 実フィードバック（本番メトリクス）」の3要素でコーディングエージェントによる自動修正ループが成立した
+- 多くの修正は「動的データ取得を Suspense 境界の下に移動するだけ」で完了しており、既存の「Suspense 境界 = Dynamic Content の境界」という設計判断（本ファイル Rule #8 参照）の延長線上にある
+
+**コード例**:
+```ts
+// e2e/navigation.spec.ts - ネットワークなしで表示される部分をアサート
+import { expect, test } from '@playwright/test';
+import { instant } from '@next/playwright';
+
+test('navigating to the chats page is instant', async ({ page }) => {
+  await page.goto('/');
+
+  await instant(page, async () => {
+    await page.getByRole('link', { name: 'Chats' }).click();
+    await expect(page.getByTestId('app-title')).toBeVisible();
+  });
+});
+```
+
+```tsx
+// Good: 動的データ取得を Suspense 境界の下に移動し、外側のシェルは即座に表示
+export default function WorkspacePage() {
+  return (
+    <SettingsPageLayout>
+      <SettingsHeader title="Workspace" />
+      <Suspense fallback={<WorkspaceSkeleton />}>
+        <WorkspaceContent />
+      </Suspense>
+    </SettingsPageLayout>
+  );
+}
+
+async function WorkspaceContent() {
+  const session = await getServerSession();
+  const team = await fetchTeam(session);
+  return <TeamSettings team={team} />;
+}
+
+// Bad: ページ全体を async にし、動的データ取得がナビゲーション全体をブロックする
+export default async function WorkspacePage() {
+  const session = await getServerSession();
+  const team = await fetchTeam(session);
+  return (
+    <SettingsPageLayout>
+      <SettingsHeader title="Workspace" />
+      <TeamSettings team={team} />
+    </SettingsPageLayout>
+  );
+}
+```
+
+**アンチパターン**:
+- 「速くなった気がする」を手動確認だけで済ませ、リグレッションテストとして CI に残さない
+- 動的データ取得を Suspense 境界の外側に置いたまま、キャッシュ機構だけでナビゲーション高速化を狙う
+- テストなしでエージェントに「ナビゲーションを速くして」と依頼し、達成判定を主観に委ねる
+
+**出典引用**:
+> "This helper lets you write tests that pause a navigation and assert which parts of the UI are instantly visible to the user, without any network request."
+> ([Making navigations instant in v0](https://nextjs.org/blog/making-v0-navigations-instant), セクション "A test for \"fast\"") ※2026-08-07に実際にfetch成功
+
+> "A verifiable goal. ... Guardrails. ... Real feedback. Production metrics that confirm a successful loop had the intended effect."
+> ([Making navigations instant in v0](https://nextjs.org/blog/making-v0-navigations-instant), セクション "Using loops to make v0 instant") ※2026-08-07に実際にfetch成功
+
+**出典**:
+- [Making navigations instant in v0](https://nextjs.org/blog/making-v0-navigations-instant) (Next.js 公式ブログ、2026-08-06公開) ※2026-08-07に実際にfetch成功
+
+**バージョン**: Next.js 16.3+, `@next/playwright`
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-08-07
+
+---
