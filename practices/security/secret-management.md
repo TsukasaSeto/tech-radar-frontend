@@ -476,6 +476,7 @@ production 環境では Vercel Environment Variables / AWS Secrets Manager / Dop
 - ローテーションﾈkey rotation）が手動でなく自動化できる
 - Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供ﾈOS の環境変数として渡される）
 - **サーバーレス関数の「環境変数」も要注意**: AWS Lambda 等の platform-level function configuration（Environment Variables 欄への直接設定）は永続的なデプロイメタデータとしてコンソールや IaC 定義に平文で残り、Secret Manager 経由の一時的なプロセスメモリ上の値とは性質が異なる。シークレットは実行時にランタイムで vault / caching extension から取得し、platform-level function configuration には置かない
+- **Google Cloud Run + Secret Manager**: シークレット単位で `roles/secretmanager.secretAccessor` を実行時サービスアカウントに付与し、`--set-secrets` で環境変数としてマウントする。IAM 権限がなければ注入自体が発生しないため、コンテナイメージにもリポジトリにもシークレットの実体が存在しない状態を作れる（プロジェクト全体ではなくシークレット単位の最小権限）
 
 **サーバーレス関数での取得例**:
 ```ts
@@ -509,6 +510,18 @@ vercel env add DATABASE_URL production
 vercel env add DATABASE_URL preview
 vercel env add DATABASE_URL development
 ```
+
+**Google Cloud Run + Secret Manager**:
+```bash
+printf 'sk-live-ABCDEF1234567890' | gcloud secrets create api-key --data-file=-
+
+gcloud secrets add-iam-policy-binding api-key \
+  --member="serviceAccount:<PN>-compute@developer.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud run services update app --set-secrets="API_KEY=api-key:latest"
+```
+アプリ側は `os.Getenv` 等で通常の環境変数として読むだけでよく、注入の可否は IAM バインディングのみが決める。
 
 **AWS Secrets Manager + Next.js**:
 ```ts
@@ -550,11 +563,15 @@ const dbUrl = await getSecret('prod/database/url');
 - [Doppler](https://www.doppler.com/) (Doppler)
 - [Infisical](https://infisical.com/) (Infisical)
 - [OWASP CheatSheetSeries: Serverless secrets - platform config, not env vars](https://github.com/OWASP/CheatSheetSeries/commit/ae0b3f22f5b24381455f742af9b5fa84063ad770) (OWASP 公式、Serverless/FaaS Security Cheat Sheet の改訂コミット。platform-level function configuration と実行時取得の違いを明確化) ※2026-07-16 fetch
+- [アプリに秘密を1文字も書かない ―Secret Manager×Cloud RunをAzure Key Vault目線で](https://zenn.dev/ccie26302/articles/zenn-gcp-secret-manager-cloud-run) (Zenn、Cloud Run への `--set-secrets` 注入とシークレット単位 IAM バインディングの具体例) ※2026-08-08 fetch
 
 **出典引用**:
 > "Fetch secrets at runtime from a vault or caching extension — not from platform-level function configuration (e.g. Lambda Environment Variables)"
 > ([OWASP CheatSheetSeries: Serverless/FaaS Security Cheat Sheet 改訂](https://github.com/OWASP/CheatSheetSeries/commit/ae0b3f22f5b24381455f742af9b5fa84063ad770), セクション "Secrets Management") ※2026-07-16に実際にfetch成功
 
-**バージョン**: パターンﾈ実装依存）
+> "権限（secretAccessor）が無ければ、そもそも秘密を注入できません。秘密は IAM でガードされている。"
+> ([アプリに秘密を1文字も書かない ―Secret Manager×Cloud RunをAzure Key Vault目線で](https://zenn.dev/ccie26302/articles/zenn-gcp-secret-manager-cloud-run), セクション IAM境界) ※2026-08-08に実際にfetch成功
+
+**バージョン**: パターン（実装依存）
 **確信度**: 高
-**最終更新**: 2026-07-16
+**最終更新**: 2026-08-08

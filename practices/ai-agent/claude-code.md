@@ -2239,6 +2239,7 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
 - 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
 - 単一著者の未検証情報だが、v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**という報告がある。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする（公式ドキュメントでの裏取りは未実施）
+- フロントマターで公式に必須なのは `name` と `description` の2フィールドのみで、`tools` / `model` は省略可能（省略時は継承）。新規に `.claude/agents/` ディレクトリを作った直後（そのスコープで初めてサブエージェントを作った直後）や `--disable-slash-commands` 付き起動（ディレクトリ監視自体を行わない）では、定義ファイルを認識させるのにセッション再起動が必要になる
 
 **コード例**:
 ```yaml
@@ -2339,6 +2340,9 @@ tools: Read, Grep, Edit, Write, Bash
 > "サブエージェントのネスト生成がデフォルトで深さ3まで可能に"
 > ([Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830), セクション "影響と対応") ※2026-07-24に実際にfetch成功
 
+> "公式ドキュメント上「必須」なのは `name` と `description` の2つだけで、`tools` と `model` は省略できる"
+> ([Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745), セクション "必須フロントマターフィールド") ※2026-08-08に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
@@ -2346,10 +2350,11 @@ tools: Read, Grep, Edit, Write, Bash
 - [Claude Code (Opus 4.8) が数分固まる問題、188セッション実測したら原因はAPIでもネットワークでもなかった](https://zenn.dev/yuki_fujisawa/articles/a155d388e61acc) (Zenn、188セッション・14,000ターンの実測調査) ※2026-07-05 fetch
 - [サブエージェントを自作したら、description書き忘れはエラーゼロで黙って無視されていた](https://zenn.dev/numarn/articles/claude-code-subagent-definition-handson) (Zenn numarn、description 欠落時のサイレント除外という新しい失敗モード) ※2026-07-06 fetch
 - [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。単著者・未公式検証) ※2026-07-24 fetch
+- [Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745) (Zenn、必須フロントマターフィールドの最小構成と、ディレクトリ新規作成直後/`--disable-slash-commands`起動時の再起動要否) ※2026-08-08 fetch
 
 **バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、未公式検証）
 **確信度**: 高
-**最終更新**: 2026-07-24
+**最終更新**: 2026-08-08
 
 ---
 
@@ -3088,5 +3093,105 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 **バージョン**: - (社内ルーティン実装例、特定バージョン非依存)
 **確信度**: 高（公式ブログ由来、パターン1）
 **最終更新**: 2026-08-06
+
+---
+
+### 36. `permissions.deny` と `sandbox.filesystem.denyRead` を混同しない — 存在しないキーは黙って無視される
+
+`settings.json` の `permissions` オブジェクトは `allow` / `deny` / `ask` / `disableAutoMode` のみを受け付ける。ファイルシステムの読み取り拒否のつもりで `permissions.deny` や未知のキー（例: `denyRead`）を書いても、Claude Code は警告なしに無視する。JSON として壊れていないため、設定ミスに気づく手段がない。
+
+**根拠**:
+- ファイルシステムアクセスの拒否は `sandbox.filesystem.denyRead` に書く必要があり、`permissions` 配下とは別系統の設定である
+- パスの意味も系統ごとに異なる（`sandbox.filesystem` は絶対パス基準、`permissions` はプロジェクト相対）ため、コピペで書き写すと意味が変わる
+- 設定後は実際にそのパスへの読み取りを試し、黙って通ってしまわないか手動検証する必要がある（「0件検出＝安全」とは限らない）
+
+**コード例**:
+```json
+// Bad: permissions配下に書いても黙って無視される
+{
+  "permissions": {
+    "deny": ["Bash(rm -rf:*)"],
+    "denyRead": ["~/.ssh"]
+  }
+}
+
+// Good: ファイルシステム拒否は sandbox.filesystem 配下に書く
+{
+  "permissions": {
+    "deny": ["Bash(rm -rf:*)"]
+  },
+  "sandbox": {
+    "enabled": true,
+    "filesystem": {
+      "denyRead": ["~/.ssh"]
+    }
+  }
+}
+```
+
+**出典引用**:
+> "存在しないキーは、単に無視される。無視されるとき、Claude Code は何も言わない。JSONとして壊れていないからだ。"
+> ([denyに書いたのに読めてしまう——sandbox設定が黙って無効になる条件](https://qiita.com/yurukusa/items/216e41649a628f6feb0f), セクション "存在しないキーは無視される") ※2026-08-08に実際にfetch成功
+
+**バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
+**確信度**: 中
+**最終更新**: 2026-08-08
+
+---
+
+### 37. pre-push 等のフックで `CLAUDE_PROJECT_DIR` を使う場合、worktree 移動後も値が固定されたままである仕様を踏まえる
+
+`CLAUDE_PROJECT_DIR` はセッション開始時点の値で固定され、セッション中に `EnterWorktree` で別の worktree へ移動しても更新されない。そのため `cd "${CLAUDE_PROJECT_DIR:-.}"` と書くフックは、worktree 内で作業していても常に元リポジトリの diff を見てしまい、無関係な差分でブロックされる。
+
+**根拠**:
+- `CLAUDE_PROJECT_DIR` は仕様上セッション開始時点で固定される環境変数であり、`EnterWorktree` はこれを更新しない
+- フックには JSON 形式の入力が渡され、その `cwd` フィールドが実行時点の実ディレクトリを正しく反映する
+
+**コード例**:
+```bash
+# Bad: worktree 移動後も CLAUDE_PROJECT_DIR は元リポジトリのままなので、無関係な差分で誤爆する
+cd "${CLAUDE_PROJECT_DIR:-.}"
+git diff --cached
+
+# Good: フックへのJSON入力の cwd を優先し、無ければ CLAUDE_PROJECT_DIR にフォールバックする
+cwd=$(echo "$HOOK_INPUT" | jq -r '.cwd // empty')
+cd "${cwd:-${CLAUDE_PROJECT_DIR:-.}}"
+git diff --cached
+```
+
+**出典引用**:
+> "CLAUDE_PROJECT_DIRはClaude Codeのセッションが開始した時点の値で固定され、そのセッション中にEnterWorktreeでworktreeへ移動しても値は変わらない仕様です。"
+> ([worktreeを多用していたら、push前フックが無関係な差分でブロックしてきた話](https://zenn.dev/itaraiguma/articles/worktree-claude-project-dir-fixed), セクション "原因") ※2026-08-08に実際にfetch成功
+
+**バージョン**: `EnterWorktree` ツール搭載バージョン全般
+**確信度**: 中
+**最終更新**: 2026-08-08
+
+---
+
+### 38. effort レベルはセッション途中で切り替えず、新規セッション／新規タスクの境界でのみ変更する
+
+effort には `max` / `xhigh` / `high`（デフォルト） / `medium` / `low` の5段階があり、優先順位は 環境変数 `CLAUDE_CODE_EFFORT_LEVEL` > セッション内設定（`/effort`） > モデルデフォルトの順。長時間セッションの途中で effort を切り替えるとプロンプトキャッシュが無効化され、出力トークンが減っても再構築コストで総コストがかえって増えるケースがある。
+
+**根拠**:
+- effort の切り替えはプロンプトキャッシュの前提を変えるため、キャッシュヒットが失われ再構築が発生する
+- コスト削減目的の切り替えが、キャッシュ再構築コストにより逆に高コストになることがある
+
+**コード例**:
+```bash
+# Bad: 長時間セッションの途中でeffortを切り替える → キャッシュ無効化で逆に高コストになりうる
+/effort low
+
+# Good: ワークロードが変わるタイミング（新規セッション/新規タスク）でのみ切り替える
+CLAUDE_CODE_EFFORT_LEVEL=low claude
+```
+
+**出典引用**:
+> "「節約したつもりが高くつく」経路があることは、公式ドキュメントの記述とちゃんと噛み合っています。"
+> ([Claude Code effortとは？5段階の違いと料金の落とし穴](https://zenn.dev/appare/articles/jp-digest-20260731-claude-code-effort), セクション本文) ※2026-08-08に実際にfetch成功
+
+**バージョン**: Claude Code（effort機能搭載バージョン、2026年8月時点）
+**確信度**: 中
+**最終更新**: 2026-08-08
 
 ---
