@@ -660,6 +660,7 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **`permissions.deny` と PreToolUse フックは弱点が異なるため併用が最適**: `permissions.deny`（`Read(.env)` 等）は列挙パターンによる拒否のため例外表現（`.env.example` だけ許可等）が苦手だが、`Bash` コマンド自体も拒否対象にできるため `cat` / `head` / `sed` 経由の間接アクセスも塞げる。PreToolUse フックは任意のロジックで例外を判定できる柔軟性がある一方、フック自体の実装漏れが弱点になる。列挙式の防御は列挙した分しか守らないため、両方を重ねて弱点を補い合う
 - **同じ PreToolUse パターンは「危険コマンド」以外の事故にも展開できる**: 削除コマンドの列挙＋`exit 2`だけでなく、実在しないスキル/ツール名の生成、ディレクトリ境界外アクセス、ブラウザプロファイルの誤認、セッション再開時のコンテキスト欠落など、75日間の運用で観測した複数の事故パターンに同じ「決定論的スクリプトで判定してブロック」の型を横展開できる
 - **`matcher` を単一ツール名だけに絞ると、別ツール経由の迂回が素通りする**: `matcher: "Bash"` だけを対象にしたブロックフックは、`Write` ツールで同じファイル操作を行う迂回を防げない（3 回中 2 回、同一ファイルへの書き込みが素通りした実測あり）。`matcher: "Bash|Write"` のように迂回先のツールも含めて列挙すると、同条件でバイパスは 0 件になった。ブロックされた回も含め、hook を素通りした操作は「成功・エラーなし・終了コード0」で返ってくるため、ログだけでは迂回に気づきにくい点にも注意する
+- **「ブロックして毎回聞く」以外に「操作の性質を可逆に変えてから自動許可する」という戦略もある**: 削除系コマンドを `permissions.ask` に置いたままだと安全だが、都度の承認判断が積み重なり「承認疲れ」で雑な `Yes` が増えるリスクがある。ファイル削除を OS のごみ箱（Windows なら `Microsoft.VisualBasic.FileIO.FileSystem` 等）に送るラッパースクリプトを `permissions.allow` に、素の `rm` / `Remove-Item` を `permissions.ask` に置くことで、「不可逆な操作だけ確認を求める」原則を保ったまま日常的な削除の承認回数を減らせる
 
 **コード例（実践的な PreToolUse パターン）**:
 ```bash
@@ -837,6 +838,7 @@ fi
 - [Claude Codeから.envを守る：permissions.deny vs PreToolUseフック](https://qiita.com/tomada/items/650546e8b9f5e33d5820) (Qiita tomada、列挙式deny拒否とフック例外処理の弱点比較・Bash経由の間接アクセス遮断) ※2026-08-03に実際にfetch成功
 - [Claude Codeの権限確認をスキップする前に置いた7つのフック — 75日運用して踏んだ事故の記録](https://zenn.dev/aiqlabs/articles/2494e9a5abf58d) (Zenn aiqlabs、削除以外（スキル名の作話・境界外アクセス・ブラウザプロファイル誤認等）への横展開事例) ※2026-08-03に実際にfetch成功
 - [AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson) (Zenn numarn、`matcher: Bash` のみでは `Write` ツール経由の迂回を防げない実測とその対策) ※2026-08-05に実際にfetch成功
+- [Claude Codeの「削除の承認疲れ」をごみ箱方式で解消する](https://zenn.dev/hoshiorange/articles/02-claude-code-trash-can-permission) (Zenn ほし、`permissions.allow`にごみ箱ラッパー・`permissions.ask`に素のrm/Remove-Itemを置く可逆化パターン) ※2026-08-09に実際にfetch成功
 
 > "Laravel: migrate:fresh / migrate:reset / db:wipe; Rails: db:drop / db:reset; Django: manage.py flush; Prisma: migrate reset / db push --force-reset — これらは shell 固有の危険コマンドのパターンマッチをすり抜けます"
 > ([`migrate:fresh`で本番DBが消える——Claude Codeの自動承認とフレームワークの破壊コマンド](https://qiita.com/yurukusa/items/a8ba73afd314b7fb822d), セクション "なぜ既存の防御策が効かないのか") ※2026-06-17に実際にfetch成功
@@ -874,9 +876,12 @@ fi
 > "門番の対象を `Bash|Write` と書き換えて迂回先も塞ぐと、今度は 3回中 0回になりました"
 > ([AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson), セクション "対策：matcherを迂回先まで広げる") ※2026-08-05に実際にfetch成功
 
+> "操作の性質そのものを、不可逆から可逆に変えてから許可する。"
+> ([Claude Codeの「削除の承認疲れ」をごみ箱方式で解消する](https://zenn.dev/hoshiorange/articles/02-claude-code-trash-can-permission), セクション "危険だから聞く、をやめる") ※2026-08-09に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-08-05
+**最終更新**: 2026-08-09
 
 ---
 
