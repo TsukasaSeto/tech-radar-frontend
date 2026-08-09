@@ -601,6 +601,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
 - **最も多い失敗は信頼ポリシーの `sub` 条件を絞り込まないこと**: 組織内の任意のワークフロー（フォークされた marketplace action を含む）が role を assume できてしまう。`sub` は `repo:<ORG>/<REPO>:ref:refs/heads/main` のように **リポジトリ＋ブランチ／environment 単位で厳密に**指定し、別ワークフローに権限を広げたい場合は既存ロールを緩めず**別の狭いロールを追加**する
 - 旧クレデンシャルの削除は「新しい経路の疎通確認 → 読み取り専用コマンドで検証 → 本番影響のない操作でテスト → 監査ログ確認」の順で確実に検証してから行う。短命トークンであっても、実行中に奪われた場合の影響範囲は role の権限そのものに比例するため、IAM ロールの権限最小化（`sts:GetCallerIdentity` 相当から段階的に拡張）は OIDC 移行後も引き続き必要
+- **OIDC 導入後も `sub` クレーム自体の形式変更を追う必要がある**: GitHub は 2026-07-15 以降に作成・rename されたリポジトリで `sub` のデフォルト形式を「オーナー名/リポジトリ名（可変）」から「オーナーID/リポジトリID を付加した immutable subject claim」に変更した（例: `repo:octocat/my-repo:ref:refs/heads/main` → `repo:octocat@123456/my-repo@456789:ref:refs/heads/main`）。目的はリポジトリ名の再利用（削除→別オーナーが同名で再作成）によるなりすましを防ぐこと。信頼ポリシーの `sub` 条件を名前ベースで書いている既存環境は、移行時に**新形式を先に追加し旧形式を残したまま切り替え、最後に旧形式を削除する**順序を守らないと、切り替え中に正当なワークフローの認証が失敗する
 
 **コード例**:
 ```yaml
@@ -719,6 +720,8 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [Auditors, OIDC and the trust policy most teams get wrong](https://dev.to/leobaniak/auditors-oidc-and-the-trust-policy-most-teams-get-wrong-4jcb) (dev.to、`sub` 条件を絞らない失敗パターン) ※2026-07-24に実際にfetch成功
 - [GitHub Actionsで長期AWSキーをなくす5ステップ — OIDC移行の安全チェック付き実務レシピ](https://qiita.com/akira_papa_AI/items/9947bb45cf798b4e4d6e) (Qiita、旧クレデンシャル削除前の検証手順) ※2026-07-24に実際にfetch成功
 - [GitHub Actions OIDC連携でGCPデプロイをセキュアに自動化する仕組み](https://zenn.dev/fd_ai_teacher/articles/tech-20260724151323-1) (Zenn、Workload Identity Federationプール作成の`gcloud` CLIコマンド) ※2026-07-25に実際にfetch成功
+- [Immutable subject claims for GitHub Actions OIDC tokens](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/) (GitHub Blog Changelog公式、`sub`のimmutable ID化発表) ※2026-08-09に実際にfetch成功
+- [GitHub Actions OIDCのsubが変わった — 2026年7月15日以降を止めずに移行する](https://zenn.dev/kmn/articles/8e62a62ba08bde) (Zenn KMN、`gh api`での`use_immutable_subject`切替と新旧`sub`併記による無停止移行手順) ※2026-08-09に実際にfetch成功
 
 **出典引用**:
 > "OIDC（OpenID Connect）を使うと、GitHub Actions が実行される際にAWSへの短期トークン（一時的なクレデンシャル）を動的に発行できます。"
@@ -739,12 +742,18 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 > "There is no long-lived Docker token in the repo, in an environment secret, or in an Actions cache."
 > ([Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392), セクション "How OIDC federation eliminates stored PATs") ※2026-08-01に実際にfetch成功
 
+> "If a repository or organization name was recycled, a new owner could mint tokens with the same subject claim, potentially gaining unauthorized access to cloud resources."
+> ([Immutable subject claims for GitHub Actions OIDC tokens](https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens/), セクション "What's changing") ※2026-08-09に実際にfetch成功
+
+> "2026年7月15日より後に作られたrepositoryは新形式を自動的に使う"
+> ([GitHub Actions OIDCのsubが変わった — 2026年7月15日以降を止めずに移行する](https://zenn.dev/kmn/articles/8e62a62ba08bde), セクション "何が変わったのか") ※2026-08-09に実際にfetch成功
+
 **出典（追加）**:
 - [Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392) (dev.to leobaniak、Docker Hub版OIDC federationの`permissions.id-token:write`+`docker/login-action`構成) ※2026-08-01に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）
 **確信度**: 高
-**最終更新**: 2026-08-01
+**最終更新**: 2026-08-09
 
 ---
 
