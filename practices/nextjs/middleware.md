@@ -59,6 +59,9 @@ v16 では `middleware.ts` が非推奨になり、新規プロジェクトで�
 **Proxy（旧 middleware）は楽観的チェックに留め、最終認可は DAL で行う（CVE-2025-29927 の教訓）**:
 2025 年 3 月に Next.js の middleware で **CVE-2025-29927**（CVSS 9.1）が公表され、`x-middleware-subrequest` ヘッダを送るだけで middleware の認証チェックを完全にバイパスできる脆弱性が判明した。教訓は「middleware（v16 では proxy）単独で守られていると考えない」「認可は DAL に必ず置く（defense-in-depth）」。Proxy は楽観的チェック（速い拒否）、`page.tsx` は粗いガード、**DAL は最終的な砦**という三層を守る。
 
+**楽観的チェック（proxy）と厳密チェック（layout/DAL）が「別の真実」を参照すると無限リダイレクトを起こす**:
+三層防御はそれぞれ異なる判定ロジックを持つが、判定に使うデータソースが食い違うと、各層が互いを打ち消し合う無限リダイレクトループに陥ることがある。実例では proxy がクッキーの有無だけを見る楽観的チェックで通過させ、`layout.tsx` が `getServerSession()` でDB上のセッション実体を検証する厳密チェックで弾く構成になっていた。クッキーは残っているがDBセッションが失効している状態では、proxy が `/login` → `/portal` へ通し、layout が `/portal` → `/login` へ差し戻す、という往復が無限に続く。対策は「楽観的チェックと厳密チェックに、同じ質問（＝同じ真偽の答え）をさせない」こと — 各層が判定できる範囲を明確に分離し（例: proxy は「クッキーが存在するか」だけを見て存在しなければ確実に弾き、セッションの有効性判定は必ず一箇所〈DAL〉に一本化する）、複数層が同じ観点で矛盾した判定を出さないようにする。
+
 **コード例**:
 ```ts
 // proxy.ts (v16+)
@@ -81,11 +84,16 @@ export function proxy(request: NextRequest) {
 - [Migrating middleware.ts to proxy.ts in Next.js 16](https://dev.to/dev_encyclopedia/migrating-middlewarets-to-proxyts-in-nextjs-16-heres-what-actually-changes-3gbd) (dev.to、Node.js ランタイム下で個別確認が必要な挙動を追加) ※2026-07-26 fetch
   > "None of these break the migration outright, but each one is worth testing under Node.js before you ship."
   > (セクション "Patterns Requiring Testing")
+- [Next.js 16で無限リダイレクト｜認証チェック二重化の罠](https://zenn.dev/miyoki_labs/articles/optimistic-vs-strict-auth-redirect-loop) (Zenn、楽観的チェックと厳密チェックの不一致による無限リダイレクトの実例) ※2026-08-11に実際にfetch成功
+  > "この2つが永遠に押し問答を続けます"
+  > (セクション "真因：楽観チェックと実チェックが違う答えを出していた")
+  > "楽観チェックと実チェックに、同じ質問をさせない"
+  > (セクション "どう直したか：判定の一本化")
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **確信度**: 既存（高）→ 高
-**最終更新**: 2026-07-26
+**最終更新**: 2026-08-11
 
 ---
 
