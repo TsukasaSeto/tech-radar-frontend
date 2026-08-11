@@ -2729,6 +2729,9 @@ Next.js 16.3 以降、`next dev` 起動時に AGENTS.md へのポインタが自
 - `compile_route` MCP ツールで単一ルートを即時コンパイルし型エラー・バンドル警告を取得できるため、ファイル保存 → CI 待ちのサイクルを省略できる
 - `/docs/llms.txt` と任意の `/docs/...` URL への `.md` サフィックスにより、公式ドキュメントをエージェントがそのまま取り込める（HTML パース不要）
 - `agentRules: false` でオプトアウト可能なため、カスタム AGENTS.md を持つプロジェクトに干渉しない
+- **自動更新は `<!-- BEGIN:nextjs-agent-rules -->` 〜 `END` の管理ブロックだけを書き換える** — マーカーの外側に書いたユーザー独自のルールは `next dev` の再実行後も保持される。自動生成部分と手書き部分を安全に同居させられる
+- **発火条件はエージェント検出ベースで、人間のみの開発では起動しない** — `@vercel/detect-agent` 相当の判定で AI エージェントのセッションを検知した時だけ書き込みが走るため、人間だけで作業している間は AGENTS.md が勝手に生成・更新されることはない
+- **モノレポでは `next` パッケージへの相対パス解決に注意が必要** — AGENTS.md からの相対パスでコンテンツを解決するため、リポジトリルートから `next` が直接見えない構成（ワークスペース跨ぎ）だと解決に失敗しうる。配置場所を検証してから運用に乗せる
 
 **コード例**:
 ```bash
@@ -2772,12 +2775,16 @@ curl https://nextjs.org/docs/llms.txt
 > "In 16.3, `next dev` writes and updates that pointer automatically, so existing projects stay current as you upgrade."
 > ([Next.js 16.3: AI Improvements](https://nextjs.org/blog/next-16-3-ai-improvements), セクション "Automatic AGENTS.md Updates") ※2026-06-26T15:00:00Z 公式ブログ
 
+> "16.2はあくまで「インストールしたNext.jsのバージョンに対応するドキュメントが`node_modules`直下に同梱されるようになった」というステップで、AGENTS.mdへの書き込みはまだ自動化されていない。"
+> ([Next.js 16.3で入ったAGENTS.md自動生成を実際に検証する](https://zenn.dev/orisend/articles/nextjs-agents-md-auto-generation), セクション "16.2と16.3、何が違うのか") ※2026-08-11に実際にfetch成功
+
 **出典**:
 - [Next.js 16.3: AI Improvements](https://nextjs.org/blog/next-16-3-ai-improvements) (Next.js 公式ブログ、2026-06-26)
+- [Next.js 16.3で入ったAGENTS.md自動生成を実際に検証する](https://zenn.dev/orisend/articles/nextjs-agents-md-auto-generation) (Zenn、管理ブロックの保持範囲・エージェント検出ベースの発火条件・モノレポでの相対パス解決を実機検証) ※2026-08-11に実際にfetch成功
 
 **バージョン**: Next.js 16.3+
-**確信度**: 高（公式ブログ一次情報）
-**最終更新**: 2026-06-26
+**確信度**: 高（公式ブログ一次情報 + 実機検証記事）
+**最終更新**: 2026-08-11
 
 ---
 
@@ -3198,5 +3205,94 @@ CLAUDE_CODE_EFFORT_LEVEL=low claude
 **バージョン**: Claude Code（effort機能搭載バージョン、2026年8月時点）
 **確信度**: 中
 **最終更新**: 2026-08-08
+
+---
+
+### 39. 複数組織で Claude Code を使う場合は `CLAUDE_CONFIG_DIR` を組織ごとに分離し、`direnv` で自動切り替えする
+
+業務委託・複数社契約などで複数組織の Claude Code を同一マシンで使うと、MCP サーバーは一度認証すれば透過的に使えてしまうため、切り替え忘れによる接続先の取り違え（別組織の Sentry / Notion 等に誤接続）に気づきにくい。`CLAUDE_CONFIG_DIR` 環境変数でプロジェクトごとに設定ディレクトリ自体を分離し、`direnv` でディレクトリ移動と同時に自動切り替えする。
+
+**根拠**:
+- Claude Code は `CLAUDE_CONFIG_DIR`（未設定時は `~/.claude`）配下に `.claude.json`（メイン設定）・`history.jsonl`（プロンプト履歴）を保持する公式の環境変数であり、値を変えるだけで設定一式が丸ごと切り替わる
+- MCP は認証後は透過的に動くため、誤った組織の設定のまま作業しても即座にはエラーにならず、構造的に取り違えに気づきにくい
+- 個人用ディレクトリに戻す際は `export` で空文字を設定するのではなく `unset` を使う必要がある（`export CLAUDE_CONFIG_DIR=""` は「空文字ディレクトリ」として解釈されうる誤りパターン）
+- MCP サーバー定義は `claude mcp add-json` に `CLAUDE_CONFIG_DIR` を指定した状態で実行することで、既存設定から別の組織用ディレクトリへ個別に移送できる
+
+**コード例**:
+```bash
+# ~/work/company-a/.envrc（direnv）
+export CLAUDE_CONFIG_DIR="$HOME/.claude-a"
+
+# ~/work/personal/.envrc — 既定に戻す場合は unset を使う（export "" ではない）
+unset CLAUDE_CONFIG_DIR
+```
+
+```bash
+# 既存の MCP サーバー定義を company-a 用ディレクトリへ移送する
+env CLAUDE_CONFIG_DIR="$HOME/.claude-a" \
+  claude mcp add-json -s user sentry \
+  "$(jq -c '.mcpServers.sentry' ~/.claude.json)"
+```
+
+**アンチパターン**:
+- `CLAUDE_CONFIG_DIR` を都度手動 `export` で切り替える → 切り替え忘れが起き、MCP は透過的に動くため気づかないまま別組織のリソースにアクセスし続ける
+- 既定に戻すつもりで `export CLAUDE_CONFIG_DIR=""` とする → `unset` ではないため意図通りに既定のディレクトリへ戻らない場合がある
+
+**出典引用**:
+> "既定に戻したいときは export ではなく unset を使うのが正解です。"
+> ([複数社で働くエンジニアのClaude Code環境分離 — CLAUDE_CONFIG_DIR × direnvでMCPの誤連携を防ぐ](https://zenn.dev/shigerufukada/articles/d5d0ea2e7e6dec), セクション "罠1") ※2026-08-11に実際にfetch成功
+
+> "MCPは一度認証すれば透過的に使えるからこそ、接続先の取り違えに気づきにくい構造があります。"
+> ([複数社で働くエンジニアのClaude Code環境分離 — CLAUDE_CONFIG_DIR × direnvでMCPの誤連携を防ぐ](https://zenn.dev/shigerufukada/articles/d5d0ea2e7e6dec), セクション "課題") ※2026-08-11に実際にfetch成功
+
+**バージョン**: Claude Code（`CLAUDE_CONFIG_DIR` 環境変数搭載バージョン全般、2026年8月時点）
+**確信度**: 中
+**最終更新**: 2026-08-11
+
+---
+
+### 40. クロスセッションメッセージングは配送遅延を前提に設計し、macOS/Linux 限定である点を踏まえる
+
+Claude Code のクロスセッションメッセージング（`SendMessage` / `ListAgents` などのツール、`/list-agents` コマンド）は、送信してもすぐには読まれない。受信側エージェントは実行中のツール呼び出しを中断されず、ターン間の空き時間にメッセージを読む仕様のため、複数セッションを協調させる設計では配送遅延を前提にする必要がある。
+
+**根拠**:
+- 受信側は「実行中のツール呼び出しの合間」でのみメッセージを読むため、長時間のツール実行中は届いたメッセージがすぐには処理されない
+- `crossSessionInbound` 設定（`accept` / `hold` / `refuse`）と `dialogExpiry`（デフォルト5分）で受信側の挙動と対話の有効期限を制御できる
+- セッション登録はファイルベースの `peerProtocol` レジストリで行われ、`ListAgents` / `/list-agents` で到達可能な相手を確認できる
+- **ネイティブ Windows では利用できない** — macOS と Linux（WSL 2 内の Linux を含む）でのみ提供され、ネイティブ Windows 環境ではクロスセッションメッセージング自体が使えない
+- 到達不能な相手宛てに送信すると `success: false` のエラーが返るため、送信前に `ListAgents` で存在確認する運用が安全
+
+**コード例**:
+```bash
+# 到達可能なセッションを確認する
+> claude -p "/list-agents"
+```
+
+```json
+// セッション登録レジストリの例（peerProtocol）
+{"pid":6060,"sessionId":"c62c27d6-...","peerProtocol":1,
+ "name":"<repo>-5e","status":"busy"}
+```
+
+```json
+// 到達不能な相手への送信時のエラー例
+{"success":false,
+ "message":"No agent named '<repo>-5e' is reachable..."}
+```
+
+**アンチパターン**:
+- クロスセッションメッセージングを同期的な IPC のように扱い、即時応答を前提にオーケストレーションを組む → 受信側のツール実行中は配送が遅延し、タイムアウトや取りこぼしが起きる
+- ネイティブ Windows 環境でクロスセッション連携前提の運用フローを設計する → 機能自体が存在せず動作しない
+
+**出典引用**:
+> "The receiving Claude reads the message between tool calls during an active turn, so a running tool is never interrupted"
+> ([Claude Code 新機能のセッション間メッセージ、使う前に知ってほしい「即座には読まれない」問題](https://zenn.dev/hoshiorange/articles/22-cross-session-messaging-windows), セクション "2日間で、伝言が4回間に合わなかった") ※2026-08-11に実際にfetch成功
+
+> "available on macOS and Linux, including Linux inside WSL 2. Claude Code doesn't offer cross-session messaging on native Windows."
+> ([Claude Code 新機能のセッション間メッセージ、使う前に知ってほしい「即座には読まれない」問題](https://zenn.dev/hoshiorange/articles/22-cross-session-messaging-windows), セクション "その新機能、ネイティブ Windows では動きません") ※2026-08-11に実際にfetch成功
+
+**バージョン**: Claude Code（クロスセッションメッセージング機能搭載バージョン、2026年8月時点）
+**確信度**: 中
+**最終更新**: 2026-08-11
 
 ---
