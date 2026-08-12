@@ -170,3 +170,43 @@ const prompt = `以下を要約して:\n${externalDoc}`;
 **最終更新**: 2026-07-19
 
 ---
+
+### 4. AI エージェント基盤は「タスク単位で1エージェント」「サンドボックス最小権限」「人間レビューゲート」の3原則で設計する
+
+複数の役割を1つの汎用エージェントに詰め込むのではなく、バグ再現・修正・レビュー・バックポート・ドキュメント生成といったタスクごとに専用エージェントを分離する。各エージェントの実行環境は隔離し、そのタスクに必要なシークレットだけを渡す。Issue・PR・コメントなど外部由来の入力はすべて「信頼できない入力」として扱う。ローカル CLI でプロトタイピングしてから、実運用のマネージドインフラに移行する順序を踏む。
+
+**根拠**:
+- 汎用の多機能エージェントは責務が混在し、保守性・テスト容易性・デバッグ性が下がる。タスク単位で分離すると、それぞれを独立に検証・改善できる
+- エージェントに渡すシークレットを「そのタスクに必要な最小限」に絞ると、1つのエージェントが侵害されても被害範囲がタスク単位に限定される
+- 自動化を「人間を置き換える」のではなく「人間の周辺のライフサイクル作業を自動化する」方向で設計すると、全変更を人間レビューの対象に残したまま生産性を上げられる
+- ローカル CLI での高速なプロトタイピングを経てからクラウド移行することで、本番インフラのコストをかけずに設計を検証できる
+
+**コード例**:
+```
+# タスク単位でエージェントを分離する例（概念）
+agents/
+  reproduce-bug-agent/   # バグ再現専用
+  fix-agent/             # 修正専用
+  review-agent/          # レビュー専用
+  backport-agent/        # バックポート専用
+  docs-agent/            # ドキュメント生成専用
+# 各エージェントは専用の Vercel Sandbox 内で実行され、
+# そのタスクに必要なシークレットのみを注入される
+```
+
+**アンチパターン**:
+- 1つのエージェントに「調査・修正・レビュー・デプロイ」まで全権限を持たせる（侵害時の被害範囲が全体に及ぶ）
+- Issue・PR コメントなど外部入力を「信頼できるユーザー入力」と同列に扱い、サニタイズや境界分離をしない
+
+**出典引用**:
+> "Build one agent per task" — Instead of single agents with multiple skills, create dedicated agents for bug reproduction, fixes, reviews, backports, and documentation.
+> ([Building a software factory for AI SDK](https://vercel.com/blog/building-a-software-factory-for-ai-sdk), セクション "Core Patterns") ※2026-08-12に実際にfetch成功
+
+> "Every agent in `ai-sdk-factory` runs inside an isolated Vercel Sandbox containing its code, its runtime, and only the secrets the agent's specific task needs."
+> ([Building a software factory for AI SDK](https://vercel.com/blog/building-a-software-factory-for-ai-sdk), セクション "Security architecture") ※2026-08-12に実際にfetch成功
+
+**バージョン**: Vercel AI SDK / Vercel Sandbox（2026年8月時点の構成）
+**確信度**: 高（Vercel 公式ブログ）
+**最終更新**: 2026-08-12
+
+---

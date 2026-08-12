@@ -1342,6 +1342,9 @@ Claude Code を組織全体で安全に展開するには、個人設定で上�
   3. **テスト不省略**: deny ルールを書いても実際にサンドボックス環境でテストしないと「効いていない安全策」になる。存在しないパスへの `rm` を試して本当にブロックされるか確認する
   4. **Bash 経由の git コマンドはすり抜ける**: `deny` は `Read` ツールにしか効かない。`git diff HEAD -- <file>`・`git show HEAD:<file>`・`git log -p <file>` のような Bash ツール経由のコマンドは `deny` をバイパスして保護ファイルの内容を読み取れる。保護が必要なファイルは `PreToolUse` フックで Bash コマンドのパスも検査する必要がある
 - **CVE-2026-33068（ワークスペース信頼）**: Claude Code 2.1.53+ では、リポジトリの `.claude/settings.json`（`permissions.allow` を含む）は**明示的な信頼を承認するまで完全に無視される**。未信頼ワークスペースでは警告が表示され `permissions.allow` が機能しない。信頼ダイアログが再表示されない場合は `~/.claude.json` の対象プロジェクトエントリに `hasTrustDialogAccepted: true` を手動設定して解除する
+- **設定ファイルは「起動ディレクトリ」の `.claude/` しか読まれない**: Claude Code はカレントディレクトリ（起動ディレクトリ）直下の `.claude/settings.json` のみを見る。サブディレクトリに `.claude/` を置いても読み込まれないため、モノレポでサブパッケージごとに個別の許可/拒否設定をしたい場合は、そのディレクトリで Claude Code を起動する運用にするか、起動ディレクトリ側の設定に集約する必要がある
+- **Deny リストは credential 系ファイルを網羅的に列挙する**: `Read(./.env)` のような単発パスだけでなく、`Bash(cat *.env)` / `Bash(cat *.pem)` / `Bash(cat ~/.aws/*)` / `Bash(cat ~/.config/gcloud/*)` / `Bash(env)` / `Bash(printenv:*)` のように **Bash 経由のコマンドと Read ツールの両方の経路**を塞ぐ。どちらか一方だけでは cat や env コマンド経由で読み取られる
+- **GitHub 権限を渡す AI エージェントは Read 権限から始める**: 多くの場合は Read だけで十分な作業が始められる。書き込みが必要になった時点で個別に拡張し、本番相当の操作はブランチ作成 → 修正 → PR 作成 → 人間レビューの経路に限定する。DB アクセスのような広いツールも `database.execute_sql` のような万能ツールではなく、`database.read_customer` / `database.get_order_status` のような粒度の細かいツールに分割すると、権限設計と監査ログの両方が扱いやすくなる
 
 **コード例（MCP ツールの最小権限化）**:
 ```json
@@ -1463,10 +1466,19 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 
 **出典（追加）**:
 - [MCP許可リストとコネクタは共存できない？管理設定の落とし穴を実機検証した](https://zenn.dev/dehio3/articles/202607_mcp-allowlist-vs-connector) (Zenn dehio3、allowedMcpServers がコネクタを巻き添えでブロックする実機検証とワイルドカード回避策) ※2026-08-01に実際にfetch成功
+- [Claude Codeの権限設定でハマらないために — settings.jsonの適用範囲と、クレデンシャル漏洩をDenyで止める多層防御](https://zenn.dev/halhalhal1/articles/claude-code-permissions-credential-defense) (Zenn halhalhal1、起動ディレクトリ限定の設定読み込みと cat/env 経由の credential deny 網羅) ※2026-08-12に実際にfetch成功
+- [AI AgentにGitHub権限を渡す前に確認したい5つのこと](https://zenn.dev/kuromame_kun/articles/0358717223b8b4) (Zenn kuromame_kun、Read-first の最小権限とブランチ→PR→人間レビューのワークフロー) ※2026-08-12に実際にfetch成功
+
+**出典引用（追加）**:
+> "Claude Codeが読むのは「起動したディレクトリ」の `.claude/`」だけで、サブディレクトリの `.claude/` は見ない"
+> ([Claude Codeの権限設定でハマらないために — settings.jsonの適用範囲と、クレデンシャル漏洩をDenyで止める多層防御](https://zenn.dev/halhalhal1/articles/claude-code-permissions-credential-defense), セクション "settings.json の適用範囲") ※2026-08-12に実際にfetch成功
+
+> "最初はReadだけでも十分な場合が多い"
+> ([AI AgentにGitHub権限を渡す前に確認したい5つのこと](https://zenn.dev/kuromame_kun/articles/0358717223b8b4), セクション "最初はReadだけでも十分な場合が多い") ※2026-08-12に実際にfetch成功
 
 **バージョン**: Claude Code v2.1.53+（Workspace Trust）、v2.1.172+（ネスト型サブエージェント）、v2.1.178+（Tool(param:value) 構文）、Enterprise Managed Settings 対応環境
 **確信度**: 中
-**最終更新**: 2026-08-01
+**最終更新**: 2026-08-12
 
 ---
 
@@ -3261,6 +3273,7 @@ Claude Code のクロスセッションメッセージング（`SendMessage` / `
 - セッション登録はファイルベースの `peerProtocol` レジストリで行われ、`ListAgents` / `/list-agents` で到達可能な相手を確認できる
 - **ネイティブ Windows では利用できない** — macOS と Linux（WSL 2 内の Linux を含む）でのみ提供され、ネイティブ Windows 環境ではクロスセッションメッセージング自体が使えない
 - 到達不能な相手宛てに送信すると `success: false` のエラーが返るため、送信前に `ListAgents` で存在確認する運用が安全
+- クロスセッションメッセージングのような新しい連携経路は、既存の承認ゲートや hooks による安全策の**外側を通ってしまう可能性がある**。ガバナンスポリシー（何を自動承認し、何を人間確認に回すか）は機能追加のたびに「この経路は既存の防御をすり抜けないか」を能動的に見直す必要がある
 
 **コード例**:
 ```bash
@@ -3291,8 +3304,11 @@ Claude Code のクロスセッションメッセージング（`SendMessage` / `
 > "available on macOS and Linux, including Linux inside WSL 2. Claude Code doesn't offer cross-session messaging on native Windows."
 > ([Claude Code 新機能のセッション間メッセージ、使う前に知ってほしい「即座には読まれない」問題](https://zenn.dev/hoshiorange/articles/22-cross-session-messaging-windows), セクション "その新機能、ネイティブ Windows では動きません") ※2026-08-11に実際にfetch成功
 
+> "新しい経路は、こうした既存のガードの外側を通る可能性があります"
+> ([Claude Code の8月アップデート3点を「エージェント組織の統治」として読む](https://qiita.com/berrylove/items/e5df42c20e0b23b07f71), セクション "セッション間メッセージング") ※2026-08-12に実際にfetch成功
+
 **バージョン**: Claude Code（クロスセッションメッセージング機能搭載バージョン、2026年8月時点）
 **確信度**: 中
-**最終更新**: 2026-08-11
+**最終更新**: 2026-08-12
 
 ---

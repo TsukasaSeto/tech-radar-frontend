@@ -297,6 +297,7 @@ location ~* \.js\.map$ {
 - pre-commit フックで `.env*.local` の commit を機械的に防ぐ
 - Vercel / Cloudflare Pages はダッシュボード経由で環境変数を設定し、リポジトリには入れない
 - AI コーディング環境では作業テンポが速く注意力が有限なため、`.env` ファイルだけでなく Markdown ドキュメントや設定ファイルへの誤混入も gitleaks で機械的に検出する
+- `.gitignore` の否定パターン（`!pattern`）は要注意: マッチ判定は上から順に評価され**最後にマッチした行が勝つ**ため、後続の `!pattern` が意図せず先行する `.env` 等の ignore を打ち消して include に戻すことがある。動作確認に使う `git check-ignore` は既定で index を参照するため、**追跡済みのパスに対しては `.gitignore` が壊れていても「問題なし」を返す**（`--no-index` を付けて未追跡状態から検証する必要がある）。ブラックリスト（否定パターンでの部分許可）よりも、ディレクトリ丸ごと ignore してから必要なファイルだけを明示的に許可するホワイトリスト構成の方が事故りにくい
 
 **標準的な `.gitignore`**:
 ```gitignore
@@ -455,13 +456,17 @@ project/secrets/credentials.json
 - [AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer) (Zenn takna, gitleaks+lefthook+GitHub Push Protection+Claude Hooks による4層防御) ※2026-05-17 fetch
 - [AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686) (Qiita yurukusa、AI deploy での --dir=. 流出事故・.netlifyignore・PreToolUse 防御) ※2026-06-28に実際にfetch成功
 - [gitignore は防御じゃない。Grok Build の repo アップロード事案から、秘密の置き場所を見直す](https://zenn.dev/ishizakahiroshi/articles/20260714-grok-build-repo-upload-timeline) (Zenn ishizakahiroshi、git を経由しないアップロード経路での gitignore 無効化事案) ※2026-07-14に実際にfetch成功
+- [`.gitignore` に否定行を1行足したら、`.env` と秘密鍵まで追跡対象になっていた](https://zenn.dev/rkpg/articles/gitignore-negation-unignores-secrets) (Zenn rkpg、否定パターンの評価順による事故と `git check-ignore` の index 参照による検知漏れ) ※2026-08-12に実際にfetch成功
 
 > "「消したから大丈夫」は、ここでは通用しない"
 > ([AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686), Qiita yurukusa, セクション "事後対応") ※2026-06-28に実際にfetch成功
 
+> "`.gitignore` の照合は上から順で、最後にマッチした行が勝ちます。`.env` は4行目でいったん ignore になり、9行目の `!.claude/skills/logs/**` がそれを上書きして include に戻す。"
+> ([`.gitignore` に否定行を1行足したら、`.env` と秘密鍵まで追跡対象になっていた](https://zenn.dev/rkpg/articles/gitignore-negation-unignores-secrets), セクション "事故") ※2026-08-12に実際にfetch成功
+
 **バージョン**: 一般原則
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-08-12
 
 ---
 
