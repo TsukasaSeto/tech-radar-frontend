@@ -3422,5 +3422,9 @@
   "https://vercel.com/changelog/grok-4-6-now-available-on-ai-gateway",
   "https://vercel.com/blog/how-we-migrated-the-database-behind-every-vercel-build",
   "https://vercel.com/blog/deepseek-overtakes-google-on-volume-cost-per-token-falls",
-  "https://linear.app/now/how-we-built-linear-agent"
+  "https://linear.app/now/how-we-built-linear-agent",
+  "https://blog.sentry.io/claude-routines-agent-triage/",
+  "https://github.com/OWASP/CheatSheetSeries/commit/7deb20b3217026015921ee88293bb7384b30247d",
+  "https://zenn.dev/zenn_content/articles/claude-code-settings-hardening",
+  "https://zenn.dev/zenn_content/articles/claude-md-rules-are-probabilistic"
 ]
