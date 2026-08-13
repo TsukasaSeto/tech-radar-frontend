@@ -324,6 +324,7 @@ function hashToken(token: string): string {
 - OAuth callback など SameSite で守れないエンドポイントは個別対策必要
 - Server Actions（Next.js）は内部で CSRF 対策済み（Origin チェック）
 - OWASP Cheat Sheet が推奨する Signed Double-Submit Cookie は `HMAC(secret, random値 + session_id)` でトークンを署名するため、サーバー側にトークンを保存する必要がなく、ログアウト等でセッションが切れれば同時にトークンも無効化できる
+- OWASP Cheat Sheet Series 本体も 2026-08-13 の改訂で「`SameSite` は CSRF トークンの代替ではなく defense in depth の一層として扱う」と明記を強化した。`SameSite=Strict` は top-level cross-site navigation を除外し、`SameSite=Lax` は safe HTTP メソッドの top-level cross-site navigation のみ許可する、という属性ごとの挙動差を公式ドキュメントが明示的に区別している
 
 **コード例（Double-Submit Cookie パターン）**:
 ```ts
@@ -402,13 +403,17 @@ export async function deletePost(id: string) {
 - [Next.js Docs: Security - Server Actions](https://nextjs.org/blog/security-nextjs-server-components-actions) (Next.js 公式)
 - [web.dev: Schemeful Same-Site](https://web.dev/articles/schemeful-samesite) (web.dev)
 - [OWASP Cheat Sheet に見る CSRF 対策トークンの作り方](https://zenn.dev/natsubate/articles/b2ec11005901a2) (Zenn、Signed Double-Submit Cookie の HMAC 署名によるステートレス実装の解説) ※2026-08-05に実際にfetch成功
+- [OWASP CheatSheetSeries commit: docs: qualify SameSite cookie guidance (#2362)](https://github.com/OWASP/CheatSheetSeries/commit/7deb20b3217026015921ee88293bb7384b30247d) (OWASP 公式リポジトリ、SameSite の位置づけを defense in depth として明文化した改訂) ※2026-08-13に実際にfetch成功
 
 > "この Signed Double-Submit Cookie ではサーバ側で保存する必要がない。"
 > ([OWASP Cheat Sheet に見る CSRF 対策トークンの作り方](https://zenn.dev/natsubate/articles/b2ec11005901a2), セクション "メリット") ※2026-08-05に実際にfetch成功
 
+> "Treat SameSite as defense in depth against CSRF, not as a replacement for a CSRF token."
+> ([OWASP CheatSheetSeries commit #2362](https://github.com/OWASP/CheatSheetSeries/commit/7deb20b3217026015921ee88293bb7384b30247d), セクション "Cross-Site Request Forgery Prevention Cheat Sheet — SameSite 記述の改訂差分") ※2026-08-13に実際にfetch成功
+
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-08-05
+**最終更新**: 2026-08-13
 
 #### 追加根拠 (2026-05-16) — 手動取り込み
 
