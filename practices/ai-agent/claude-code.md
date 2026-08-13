@@ -1827,9 +1827,23 @@ MEMORY.md
 > "毎回、新しい結果だけが送られるわけではありません。それまでの会話、システム指示、ツール定義...が再び入力に含まれます"
 > ([CLAUDE.mdによるClaude Codeの探索コスト削減を実測](https://qiita.com/eiji-noguchi/items/ad30cd311f083cd269d0), セクション "最大の要因は「モデルとツールの往復回数」だった") ※2026-07-16に実際にfetch成功
 
+**CLAUDE.md は「確率的制約」であり「確定的な制約」ではない**: CLAUDE.md のルールはモデルにとって「毎回必ず評価される制約」ではなく「文脈のどこかにある参考情報」に近い。100% 遵守させたい禁止操作は hooks（確定的）に、AI の判断に委ねてよい方針はテキスト（確率的）に書き分ける。これは Rule #9 / #12 の hooks 設計と対になる原則で、CLAUDE.md 単体では「書けば必ず守られる」わけではないことを前提に運用する:
+- **サブエージェントは親セッションの PreToolUse hooks を継承しない**。CLAUDE.md で明示的に禁止していても、サブプロセス経由なら操作が通ってしまうケースが報告されている。禁止操作の強制はサブエージェント実行時にも hooks が有効かを個別に確認する
+- **数値閾値ルールは過剰遵守を誘発しうる**（例:「3ファイル以上ならPlan Mode」）。数値条件だけを機械的に守り、本来必要な状況判断そのものを放棄する挙動が観測されている
+- **`/compact` はルールを消す**: コンテキスト圧縮後は CLAUDE.md の原文が要約に置き換わり、それまで禁止されていた操作が再び通ってしまう場合がある。対策は `/compact` ではなく `/clear` を使い、セッション開始時に CLAUDE.md を再読み込みさせること
+
+**出典**:
+- [CLAUDE.mdは確率的制約——144KBのルールが破られた記録と3層防御](https://zenn.dev/zenn_content/articles/claude-md-rules-are-probabilistic) (Zenn、153件のdenyルール・16個のhooksを持つ実運用設定でのルール逸脱の実測記録) ※2026-08-13に実際にfetch成功
+
+> "CLAUDE.mdのルールは、モデルにとって「毎回必ず評価される制約」ではなく「文脈のどこかにある参考情報」に近い"
+> ([CLAUDE.mdは確率的制約——144KBのルールが破られた記録と3層防御](https://zenn.dev/zenn_content/articles/claude-md-rules-are-probabilistic), セクション "前提") ※2026-08-13に実際にfetch成功
+
+> "100%守らせたいならhook（確定的）、AIの判断で破ってよいならテキスト（確率的）"
+> ([CLAUDE.mdは確率的制約——144KBのルールが破られた記録と3層防御](https://zenn.dev/zenn_content/articles/claude-md-rules-are-probabilistic), セクション "対策") ※2026-08-13に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-16
+**最終更新**: 2026-08-13
 
 ---
 
@@ -3120,7 +3134,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 
 ---
 
-### 36. `permissions.deny` と `sandbox.filesystem.denyRead` を混同しない — 存在しないキーは黙って無視される
+### 36. `permissions.deny` と `sandbox.filesystem.denyRead` を混同しない — 存在しないキーも無効な形式も黙って無視される
 
 `settings.json` の `permissions` オブジェクトは `allow` / `deny` / `ask` / `disableAutoMode` のみを受け付ける。ファイルシステムの読み取り拒否のつもりで `permissions.deny` や未知のキー（例: `denyRead`）を書いても、Claude Code は警告なしに無視する。JSON として壊れていないため、設定ミスに気づく手段がない。
 
@@ -3128,6 +3142,8 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - ファイルシステムアクセスの拒否は `sandbox.filesystem.denyRead` に書く必要があり、`permissions` 配下とは別系統の設定である
 - パスの意味も系統ごとに異なる（`sandbox.filesystem` は絶対パス基準、`permissions` はプロジェクト相対）ため、コピペで書き写すと意味が変わる
 - 設定後は実際にそのパスへの読み取りを試し、黙って通ってしまわないか手動検証する必要がある（「0件検出＝安全」とは限らない）
+- キー名だけでなく **ツール名の形式** も同様に「受理されるが適用されない」ケースがある。`Write()` / `Glob()` / `NotebookEdit()` / `MultiEdit()` 形式の deny ルールはパーサーに受理されるが実際の enforcement では機能しない（有効なのは `Edit()` / `Read()` 形式のみ）。公開されている設定の 16% がこの種のデッドルールを含んでいたという実測報告があり、153件の deny リストを持つ実運用設定でも 26 件のデッドルールが見つかっている
+- deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 
 **コード例**:
 ```json
@@ -3153,13 +3169,24 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 }
 ```
 
+```json
+// Bad: 受理はされるが enforcement では機能しない形式
+"deny": ["Write(~/.ssh/**)", "Glob(~/.aws/**)"]
+
+// Good: 実際に機能する形式
+"deny": ["Edit(~/.ssh/**)", "Read(~/.ssh/**)"]
+```
+
 **出典引用**:
 > "存在しないキーは、単に無視される。無視されるとき、Claude Code は何も言わない。JSONとして壊れていないからだ。"
 > ([denyに書いたのに読めてしまう——sandbox設定が黙って無効になる条件](https://qiita.com/yurukusa/items/216e41649a628f6feb0f), セクション "存在しないキーは無視される") ※2026-08-08に実際にfetch成功
 
+> "受理されるが適用されない"
+> ([そのdenyルール、効いていません——settings.json堅牢化チートシート](https://zenn.dev/zenn_content/articles/claude-code-settings-hardening), セクション "無効なルール形式") ※2026-08-13に実際にfetch成功
+
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-08
+**最終更新**: 2026-08-13
 
 ---
 
@@ -3310,5 +3337,39 @@ Claude Code のクロスセッションメッセージング（`SendMessage` / `
 **バージョン**: Claude Code（クロスセッションメッセージング機能搭載バージョン、2026年8月時点）
 **確信度**: 中
 **最終更新**: 2026-08-12
+
+---
+
+### 41. MCP 連携の Claude Routine で本番エラーの夜間トリアージを自動化する
+
+Sentry は Sentry MCP 経由で接続した Claude Routine を毎日実行し、直近24時間の AI エージェント会話（約800件）を自動分析している。ルーティンは集計統計を照会し、成功・失敗両方の会話をサンプリングし、エラーパターンを特定し、新規の問題は Linear チケットとして起票する——手動トリアージ作業をゼロにする設計。
+
+**根拠**:
+- プロンプトは「データ取得」ではなく「判断」に焦点を絞るほど出力が安定する。MCP でのデータ取得自体は Routine に任せ、プロンプトは「何を異常と判断するか」の基準を記述することに専念させる
+- 失敗した会話だけでなく **成功した会話もサンプリングする** ことで、ツールが「正しく動いているように見えて実は壊れている」ケースの見落としを防げる。エラーが出ていない＝正常とは限らない
+- 新規の知見は Issue トラッカー（Linear 等）に構造化して起票することで、人間のレビューフローに自然に接続できる。Routine の出力を会話ログのまま放置しない
+
+**コード例（Routine プロンプトの骨子）**:
+```text
+Use the Sentry MCP to look at the last 24hr of <product> conversations
+and analyze the results. In particular look for errors that might be
+happening during the <product_stage>, say if our tools are broken. But
+also sample some success conversations as well to see if they look
+correct with secondary inspection.
+
+If you come across new findings/errors, record them in a Linear ticket
+for the <linear_project> project.
+```
+
+**出典引用**:
+> "Sampling both success and failure conversations, not just the ones with tool errors, mattered more than expected."
+> ([Automated Agent Triage with Claude Routines](https://blog.sentry.io/claude-routines-agent-triage/), セクション "Lessons learned") ※2026-08-13に実際にfetch成功
+
+> "Keeping the prompt focused on judgment rather than data retrieval made the output far more consistent."
+> ([Automated Agent Triage with Claude Routines](https://blog.sentry.io/claude-routines-agent-triage/), セクション "Lessons learned") ※2026-08-13に実際にfetch成功
+
+**バージョン**: Claude Routines（Sentry MCP 連携、2026年8月時点）
+**確信度**: 高
+**最終更新**: 2026-08-13
 
 ---
