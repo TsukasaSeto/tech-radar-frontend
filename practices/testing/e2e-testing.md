@@ -555,3 +555,39 @@ playwright-cli screenshot --output screenshots/cart-top.png --session=pc
 **最終更新**: 2026-05-13
 
 ---
+
+### 8. E2E は dev サーバではなく、デプロイする静的ビルド成果物に対して回す
+
+`next dev` に対する E2E は本番挙動を保証しない。`next build` の出力（例: `next export` の `out/`）を `serve` などで配信し、そのサーバーに対して Playwright を実行する。
+
+**根拠**:
+- `generateStaticParams()` の実装が誤っていると、dev サーバでは該当ページが表示できてしまうのに、ビルド成果物にはそのページ自体が生成されていない、という dev と本番で挙動が異なるバグが起こり得る。dev に対する E2E はこの種のバグを一切検出できない
+- ビルドが重い場合は「入力が同じならビルドを省略する」キャッシュを入れてよいが、判定できないときは必ずビルドする側に倒す。省略判定が壊れたまま古い成果物を検証し続けるのが最も気づきにくい失敗パターンになる
+- git worktree 等で並列実行する場合はポートの動的割当てが必要
+- Playwright のワーカー数は CPU コア数の 50% 程度に抑えると安定する
+
+**コード例**:
+```ts
+// playwright.config.ts
+export default defineConfig({
+  webServer: {
+    command: 'npx serve web/out -l 4173',
+    url: 'http://localhost:4173',
+    reuseExistingServer: !process.env.CI,
+  },
+  workers: '50%',
+});
+```
+
+**出典引用**:
+> "ページを増やしたときに `generateStaticParams` の実装が間違っていると、dev では見えるのに `web/out` にファイルが無い、ということが起きます。dev に対する E2E は、これを一切検出できません。"
+> ([dev サーバではなく、デプロイする静的 HTML に対して E2E を回す](https://qiita.com/kodomo-news/items/b2e1222a6e6da1fe2ee0), セクション "Dev と本番で挙動が違うclass がある") ※2026-08-15に実際にfetch成功
+
+> "判定できないときは必ずビルドする側に倒しています。省略の判定が壊れたときに古い成果物を検証し続けるのが、いちばん困る失敗だからです。"
+> ([dev サーバではなく、デプロイする静的 HTML に対して E2E を回す](https://qiita.com/kodomo-news/items/b2e1222a6e6da1fe2ee0), セクション "ビルドが重いので、入力が同じなら省略する") ※2026-08-15に実際にfetch成功
+
+**バージョン**: Next.js 15+（`output: 'export'` を使う構成を想定）, Playwright 1.40+
+**確信度**: 中
+**最終更新**: 2026-08-15
+
+---

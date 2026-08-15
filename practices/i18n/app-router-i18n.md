@@ -193,14 +193,30 @@ function LanguageSwitcher({ current }: { current: string }) {
 - 静的ファイル（画像・OGP）を matcher に含めてリダイレクト → 不要な処理
 - `301`（permanent）でリダイレクト → ユーザーが言語切替しても古いリダイレクトがキャッシュされる
 
+**例外: `output: 'export'`（静的エクスポート）では Middleware が動作しない**:
+静的エクスポートにはサーバーが存在しないため、Middleware による `Accept-Language` 検出・リダイレクトは使えない。ロケール判定を完全に URL パスへ寄せ、`generateStaticParams()` で全ロケール × 全ルートを事前レンダリングする設計に切り替える。
+
+```ts
+// routing.ts（サーバーなし・パスのみでロケールを決定）
+export function generateStaticParams() {
+  return locales.flatMap((locale) =>
+    routes.map((route) => ({ locale, ...route.params })),
+  );
+}
+```
+
+> "On a server you'd typically read `Accept-Language` and pick a locale per request. With static export there's no request to inspect."
+> ([Eight locales and no server: internationalizing a static Next.js site](https://dev.to/coolnico/eight-locales-and-no-server-internationalizing-a-static-nextjs-site-54jh), セクション "Locale from the URL, not the request") ※2026-08-15に実際にfetch成功
+
 **出典**:
 - [Next.js Docs: Internationalization - Routing](https://nextjs.org/docs/app/building-your-application/routing/internationalization#routing-overview) (Next.js 公式)
 - [@formatjs/intl-localematcher](https://formatjs.io/docs/polyfills/intl-localematcher/) (FormatJS)
 - [BCP 47](https://www.rfc-editor.org/info/bcp47) (IETF)
+- [Eight locales and no server: internationalizing a static Next.js site](https://dev.to/coolnico/eight-locales-and-no-server-internationalizing-a-static-nextjs-site-54jh) (dev.to、`output: 'export'` 配下で Middleware が使えない例外の実装パターン) ※2026-08-15に実際にfetch成功
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（`output: 'export'` の例外込みで Next.js 15 で検証）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-15
 
 ---
 

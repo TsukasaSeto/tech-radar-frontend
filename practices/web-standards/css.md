@@ -76,6 +76,10 @@ CSS カスタムプロパティで定義し、テーマ切り替えに対応す�
 - CSS カスタムプロパティはJavaScriptで動的に変更でき、テーマ切り替えが容易
 - プリプロセッサ（Sass）の変数と異なりカスケードとスコープが効く
 - `prefers-color-scheme` メディアクエリと組み合わせてダークモードを実装できる
+- トークンを「色そのもの」ではなく「関係」として設計する。ライトモードで決めた「どちらが手前か」「どちらが暗いか」という視覚的関係は、ダークモードで色を反転すると崩れることがある。個別の例外を色ごとに列挙する設計は、想定していない組み合わせで漏れが発生しやすい
+
+> "トークンに持たせるべきは『色』ではなく『関係』"
+> ([ダークモード対応で同じ穴を2回踏んだ——ライトで決めた「明暗の関係」は逆転する](https://zenn.dev/matsutake_prgrm/articles/dark-mode-contrast-inversion), セクション "一般則") ※2026-08-15に実際にfetch成功
 
 **コード例**:
 ```css
@@ -134,10 +138,11 @@ export default {
 
 **出典**:
 - [MDN: CSS Custom Properties](https://developer.mozilla.org/en-US/docs/Web/CSS/Using_CSS_custom_properties) (MDN Web Docs)
+- [ダークモード対応で同じ穴を2回踏んだ——ライトで決めた「明暗の関係」は逆転する](https://zenn.dev/matsutake_prgrm/articles/dark-mode-contrast-inversion) (Zenn、色の関係を列挙ではなく相対関係としてトークン化する設計指針) ※2026-08-15に実際にfetch成功
 
 **バージョン**: CSS Living Standard
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-08-15
 
 ---
 
