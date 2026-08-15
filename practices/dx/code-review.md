@@ -432,6 +432,27 @@ if (hasSourceChanges && !danger.git.modified_files.some((f) => f.includes('chang
 - 同じ指摘を 3 回以上したら自動化を検討する
 - 機械的に検出できる指摘は人間が書かない（時間の無駄）
 - ただし「自動化のためのスクリプトメンテナンス」が割に合うか定期的に評価
+- 3ヶ月分・200件のレビュー指摘を分類した実測では、format 31% / lint 24% / naming 15% がツールで消せる領域で、合計約68%が自動修正の対象になった。`nit` コメントを書き続けると人間のレビュー観点が「粗探し」モードに固定されやすいため、機械的指摘をコメントで残さず自動修正コミットに置き換える設計が有効
+
+**自動修正を PR コメントで終わらせず、コミットまで自動化する**（Biome の例）:
+```yaml
+# .github/workflows/auto-fix.yml
+- name: Biome check with safe fixes
+  run: npx @biomejs/biome check --write .
+
+- name: Commit if changed
+  run: |
+    git config user.name "github-actions[bot]"
+    git diff --quiet || (
+      git add -A &&
+      git commit -m "chore: auto-fix format and lint" &&
+      git push
+    )
+```
+AI 支援ツール（CodeRabbit 等）による修正は完全自動適用にせず、手動承認チェックボックスを挟むと安全。
+
+> "指摘を書くのをやめて、直すのを機械にやらせる。"
+> ([レビュー指摘を200件分類したら、7割は自動修正で消えるものだった](https://zenn.dev/kenimo49/articles/code-review-200-fixes-autofix-8-in-10), セクション "はじめに") ※2026-08-15に実際にfetch成功
 
 **AI agent が作成した PR にも同じ自動ゲートを適用する**:
 AI agent が生成した PR だからといって人間の PR よりレビューを簡略化しない。
@@ -446,10 +467,11 @@ AI agent が生成した PR だからといって人間の PR よりレビュー
 - [reviewdog](https://github.com/reviewdog/reviewdog) (reviewdog)
 - [Danger.js](https://danger.systems/js/) (Danger)
 - [AI agent が作ったコードを公開する前に、PR 経路へ security gate を差し込む](https://qiita.com/heftykoo/items/2ad35a96389a8d9897a4) (Qiita heftykoo、AI agent PR 向け3段階ゲート) ※2026-06-30に実際にfetch成功
+- [レビュー指摘を200件分類したら、7割は自動修正で消えるものだった](https://zenn.dev/kenimo49/articles/code-review-200-fixes-autofix-8-in-10) (Zenn、200件分類の実測データと Biome 自動修正コミット化パターン) ※2026-08-15に実際にfetch成功
 
 **バージョン**: reviewdog v0.20+, Danger.js v12+
 **確信度**: 高
-**最終更新**: 2026-06-30
+**最終更新**: 2026-08-15
 
 ---
 

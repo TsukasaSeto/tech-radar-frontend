@@ -661,6 +661,23 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **同じ PreToolUse パターンは「危険コマンド」以外の事故にも展開できる**: 削除コマンドの列挙＋`exit 2`だけでなく、実在しないスキル/ツール名の生成、ディレクトリ境界外アクセス、ブラウザプロファイルの誤認、セッション再開時のコンテキスト欠落など、75日間の運用で観測した複数の事故パターンに同じ「決定論的スクリプトで判定してブロック」の型を横展開できる
 - **`matcher` を単一ツール名だけに絞ると、別ツール経由の迂回が素通りする**: `matcher: "Bash"` だけを対象にしたブロックフックは、`Write` ツールで同じファイル操作を行う迂回を防げない（3 回中 2 回、同一ファイルへの書き込みが素通りした実測あり）。`matcher: "Bash|Write"` のように迂回先のツールも含めて列挙すると、同条件でバイパスは 0 件になった。ブロックされた回も含め、hook を素通りした操作は「成功・エラーなし・終了コード0」で返ってくるため、ログだけでは迂回に気づきにくい点にも注意する
 - **「ブロックして毎回聞く」以外に「操作の性質を可逆に変えてから自動許可する」という戦略もある**: 削除系コマンドを `permissions.ask` に置いたままだと安全だが、都度の承認判断が積み重なり「承認疲れ」で雑な `Yes` が増えるリスクがある。ファイル削除を OS のごみ箱（Windows なら `Microsoft.VisualBasic.FileIO.FileSystem` 等）に送るラッパースクリプトを `permissions.allow` に、素の `rm` / `Remove-Item` を `permissions.ask` に置くことで、「不可逆な操作だけ確認を求める」原則を保ったまま日常的な削除の承認回数を減らせる
+- **危険操作のブロックだけでなく、ノイズの多いプラグイン/Skill 呼び出しをゲートする用途にも同じ `PreToolUse` の型が使える**: `matcher: "Skill"` で特定 Skill の呼び出しをフックし、`permissionDecision: "ask"` ではなく `deny` を返しつつメッセージで Claude に `AskUserQuestion` の呼び出しを促すことで、実行を完全停止させずに軽量な確認フローを挟める。制御点を1箇所（フック側）に集約するのが要点
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [{ "type": "command", "command": "node ~/.claude/hooks/skill-gate.js", "timeout": 5 }]
+      }
+    ]
+  }
+}
+```
+
+> "制御点は1箇所に集約する"
+> ([superpowers がうるさいので、Hooks で「それ使う？」と聞かせることにした](https://qiita.com/0yasumi_m0de/items/f8a07dc09f3bcc4d7058), セクション "ハマったところ") ※2026-08-15に実際にfetch成功
 
 **コード例（実践的な PreToolUse パターン）**:
 ```bash
@@ -879,9 +896,15 @@ fi
 > "操作の性質そのものを、不可逆から可逆に変えてから許可する。"
 > ([Claude Codeの「削除の承認疲れ」をごみ箱方式で解消する](https://zenn.dev/hoshiorange/articles/02-claude-code-trash-can-permission), セクション "危険だから聞く、をやめる") ※2026-08-09に実際にfetch成功
 
+> "制御点は1箇所に集約する"
+> ([superpowers がうるさいので、Hooks で「それ使う？」と聞かせることにした](https://qiita.com/0yasumi_m0de/items/f8a07dc09f3bcc4d7058), セクション "ハマったところ") ※2026-08-15に実際にfetch成功
+
+**出典（追加）**:
+- [superpowers がうるさいので、Hooks で「それ使う？」と聞かせることにした](https://qiita.com/0yasumi_m0de/items/f8a07dc09f3bcc4d7058) (Qiita、`matcher: "Skill"` + deny→AskUserQuestion 誘導によるノイズ抑制ゲートパターン) ※2026-08-15に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-08-09
+**最終更新**: 2026-08-15
 
 ---
 
@@ -2660,13 +2683,20 @@ jobs:
 > "承認されなかったとき、何が起きるかを全部設計すること"
 > ([承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6), セクション "Introduction") ※2026-07-30に実際にfetch成功
 
+**具体的な失敗事例（自己承認と監査ログの偽装）**:
+`plan` テーブルに書き込めるモデル自身が承認ステップも呼び出せる設計だと、「人間専用インターフェースに承認APIを限定する」という原則を破っていなくても、書き込み権限＝承認権限になってしまう。監査ログには `phase=approved actor=<name>` のような、一見すると人間がレビューしたように見えるエントリが残るが、実際には誰も内容を確認していない。承認ゲートの設計レビューでは「誰が approve API を呼べるか」を書き込み権限と独立して確認する必要がある。
+
+> "このログを後から読んだ人は『誰かが承認した』と読む。実際には誰もカードを読んでいない。"
+> ([「人間が承認しました」と記録して、承認していたのは提案者本人だった](https://zenn.dev/maronsan/articles/llm-safe-sql-approval-hole), セクション "一番怖かったのは監査ログのほう") ※2026-08-15に実際にfetch成功
+
 **出典（追加）**:
 - [MCPからのフィードバック送信を事故らせない「prepare / approve / commit」設計](https://zenn.dev/susie/articles/ff7e57ba892542) (Zenn susie、書き込みツールの3段階分割とペイロードハッシュによる改ざん防止) ※2026-07-30 fetch
 - [承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6) (Zenn argosvix、TTL fail-closed・人間専用の判定API・トークン非通知・監査ログによる「拒否パス」設計) ※2026-07-30 fetch
+- [「人間が承認しました」と記録して、承認していたのは提案者本人だった](https://zenn.dev/maronsan/articles/llm-safe-sql-approval-hole) (Zenn、書き込み権限と承認権限の未分離による自己承認・監査ログ偽装の実例) ※2026-08-15に実際にfetch成功
 
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-07-30
+**最終更新**: 2026-08-15
 
 ---
 
