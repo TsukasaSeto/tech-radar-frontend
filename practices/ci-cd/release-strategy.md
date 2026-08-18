@@ -236,15 +236,54 @@ Vercel Analytics の閾値で自動 rollback は現時点（2026）では UI ベ
 
 両者は併用可能だが目的が違うので変数も分ける。
 
+**CloudFront Functions + KeyValueStore でのカナリア（Vercel を使わない静的配信構成）**:
+S3 + CloudFront で静的アセットを配信する構成では、Vercel の `alias set --percent` は使えない。同等のことを CloudFront Function（`viewer-request`）+ KeyValueStore（KVS）で実現できる。S3 側を slot1/slot2 の2オリジンに分け、KVS の `active_origin`（本番スロット）・`canary_weight`（カナリア比率 0-100）をエッジ側から低レイテンシで参照してルーティングする。AWS 標準の「CloudFront Continuous Deployment」機能を使わない理由は、それが Distribution 本体の状態を直接書き換えるため、CloudFormation 管理下では IaC ドリフトを起こすから。クライアントの IP ハッシュで振り分けを決定的にし、同一クライアントがセッション中に新旧バージョンを行き来しないようにする。キャッシュ汚染を避けるため、Function が付与した `x-canary-slot` レスポンスヘッダーをキャッシュポリシーのキャッシュキーに含め、スロットごとにキャッシュを分離する:
+```javascript
+// CloudFront Function（viewer-request）
+import cf from 'cloudfront';
+
+async function handler(event) {
+  try {
+    const kvsHandle = cf.kvs();
+    const activeOrigin = await kvsHandle.get('active_origin');
+    const canaryWeight = await kvsHandle.get('canary_weight');
+
+    if (canaryWeight > 0) {
+      const canaryOrigin = activeOrigin === 'slot1' ? 'slot2' : 'slot1';
+      const hash = simpleHash(event.viewer.ip);
+      if (hash % 100 < canaryWeight) {
+        event.request.headers['x-canary-slot'] = { value: canaryOrigin };
+        cf.selectRequestOriginById(canaryOrigin);
+        return event.request;
+      }
+    }
+
+    event.request.headers['x-canary-slot'] = { value: activeOrigin };
+    cf.selectRequestOriginById(activeOrigin);
+  } catch (e) {
+    // KVS障害時は安全側のデフォルトスロットにフォールバック
+    event.request.headers['x-canary-slot'] = { value: 'slot1' };
+    cf.selectRequestOriginById('slot1');
+  }
+  return event.request;
+}
+```
+KVS の更新は `aws cloudfront-keyvaluestore put-key --if-match "${etag}"` で ETag による楽観ロックを効かせ、GitHub Actions を「カナリアへデプロイ（`canary_weight` を10に設定）」「本番昇格（承認ゲート付き、`active_origin` を切替＆`canary_weight` を0に戻す）」「ロールバック（承認却下時に `if: failure()` で `canary_weight` のみ0に戻し、`active_origin` は変更しない）」の3ジョブに分ける。
+
 **出典**:
 - [Vercel: Atomic Deployments](https://vercel.com/docs/deployments/atomic-deployments) (Vercel)
 - [GrowthBook Docs](https://docs.growthbook.io/) (GrowthBook)
 - [LaunchDarkly: Progressive Delivery](https://launchdarkly.com/blog/progressive-delivery-a-history-condensed/) (LaunchDarkly)
 - [Google SRE Book: Canarying Releases](https://sre.google/workbook/canarying-releases/) (Google)
+- [CloudFront Functions × KeyValueStoreで実現するCloudFront + S3のカナリアリリース](https://techblog.zozo.com/entry/cloudfront-functions-kvs-canary-release) (ZOZO TECH BLOG、S3 + CloudFront 静的配信構成でのIPハッシュ決定的ルーティングとキャッシュキー分離の実装) ※2026-08-18に実際にfetch成功
+
+**出典引用**:
+> "CloudFront KeyValueStore（以下、KVS）は、CloudFront Functionsから低レイテンシで参照できるkey-value形式のデータストアです。値の更新はDistributionのデプロイなしに、通常数秒でエッジに反映されます。"
+> ([CloudFront Functions × KeyValueStoreで実現するCloudFront + S3のカナリアリリース](https://techblog.zozo.com/entry/cloudfront-functions-kvs-canary-release), セクション "CloudFront Functions + KeyValueStoreの採用理由") ※2026-08-18に実際にfetch成功
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-18
 
 ---
 
