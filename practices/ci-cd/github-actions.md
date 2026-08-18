@@ -1040,6 +1040,8 @@ GitHub Actions の課金は「ジョブ単位」で発生し、実行時間は**
 - 実処理が数秒でも、ワークフローを分割している数だけ「1分」が積み上がる（例: 4 ワークフローがそれぞれ 3 秒の curl を実行 → 実処理合計 12 秒でも課金は 1分 × 4 = 4分）
 - 無料枠（月 2,000 分）を使い切ると、GitHub は新規ジョブの起動を静かにブロックする。メール通知等の明示的な警告なしに失敗するため、無関係な他のスケジュールジョブ（バックアップ・デプロイ等）も巻き添えで停止し、気づくまで数日かかることがある
 - 同じ処理を行うなら、ワークフロー／ジョブを分割せず 1 ジョブ内に複数ステップとしてまとめる方が、切り上げ回数を減らせる
+- 組織全体で無料枠が尽きかけている場合は「実行時間を削る」前に効く順にコストを絞る: (1) `paths` フィルタとジョブのゲーティングでトリガー条件自体を絞る（最も効果が大きい）、(2) 課金単位（ジョブ単位・1分未満切り上げ）に処理の粒度を合わせて端数の無駄を減らす、(3) それでも足りない場合にキャッシュ・並列化で実処理時間を削る、という順で着手する
+- Settings 側の自動実行（dependency graph の自動ジョブ等）も無料枠を消費するため、必要な場合のみワークフローから明示的に呼び出す形に倒し、常時自動発火は無効化する
 
 **コード例（課金分の再現計算）**:
 ```javascript
@@ -1049,13 +1051,30 @@ const m = Math.max(1, Math.ceil(secs / 60)); // 1分未満切り上げを再現
 minutes += m;
 ```
 
+**コード例（組織全体の消費内訳を可視化する）**:
+```bash
+# 直近の run 群からジョブ単位の消費分数を合算する
+gh api "repos/{owner}/{repo}/actions/runs/{run_id}/jobs?per_page=100" \
+  --jq '[.jobs[] | select(.started_at != null and .completed_at != null)
+         | ((.completed_at|fromdateiso8601)-(.started_at|fromdateiso8601))
+         | select(.>0) | (./60|ceil)] | add // 0'
+
+# トリガーイベント別の実行回数内訳（絞り込み対象の特定に使う）
+gh api "repos/{owner}/{repo}/actions/runs?created=2026-08-01..2026-08-10&per_page=100" \
+  --paginate --jq '.workflow_runs[].event' | sort | uniq -c | sort -rn
+```
+
 **出典引用**:
 > "4ワークフロー × 3秒 = 実処理12秒 → 課金は 1分 × 4ジョブ = 4分"
 > ([GitHub Actionsの無料枠が「3秒のcurl」で溶けた話 — 課金はジョブ単位・1分未満切り上げ](https://qiita.com/my-agent-works/items/8d99600d1185938a375d), セクション "3秒のcurlが4分に化ける") ※2026-08-15に実際にfetch成功
 
+> "課金対象はジョブごとの実行時間を分単位に切り上げた合計"
+> ([GitHub Actions の無料枠が枯れた日：org 全体の分を数え直す](https://zenn.dev/propagandist/articles/0025-github-actions-org-minutes-budget), セクション "手順1") ※2026-08-18に実際にfetch成功
+
 **出典**:
 - [GitHub Actionsの無料枠が「3秒のcurl」で溶けた話 — 課金はジョブ単位・1分未満切り上げ](https://qiita.com/my-agent-works/items/8d99600d1185938a375d) (Qiita、無料枠2,000分の36%を12秒相当の処理で消費した実例と静的失敗の挙動) ※2026-08-15に実際にfetch成功
+- [GitHub Actions の無料枠が枯れた日：org 全体の分を数え直す](https://zenn.dev/propagandist/articles/0025-github-actions-org-minutes-budget) (Zenn、PROPAGANDIST CORPORATION所属著者、org全体の消費内訳可視化と3段階の絞り込み戦略) ※2026-08-18 fetch
 
 **バージョン**: GitHub Actions（全プラン共通の課金モデル）
 **確信度**: 中
-**最終更新**: 2026-08-15
+**最終更新**: 2026-08-18

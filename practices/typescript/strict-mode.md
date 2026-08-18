@@ -463,6 +463,7 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 - ベンダー側は「10倍高速」を謳うが、独自ベンチマーク記事では型チェックのみで実測 3.3〜4.1倍にとどまったと報告されており、公称値と実測値に乖離がある。マーケティング数値をそのまま採用せず自プロジェクトで計測する
 - 別の独立ベンチマーク（約10.5万行の実プロジェクト）でも tsc 6.0.3 の 2,457ms に対し tsc 7.0.2 は 535ms（4.6倍）、Go バイナリを直接叩く `tsgo` は 524ms（4.7倍、Node.js 起動オーバーヘッド約86ms を除く）と、複数ソースで「公称10倍」と「実測4〜5倍」の乖離が再現している
 - 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）
+- TypeScript 7.0 の `require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開し、Compiler API がそこから消える。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。`package.json` で `typescript` を TS 6.x 系にエイリアスし、実体の TS 7 系は別名で入れる回避策がある
 
 **コード例**:
 ```json
@@ -480,6 +481,17 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 # 並列型チェックのワーカー数を明示する（CPUコア数を目安に）
 tsc --checkers 4
 ```
+```json
+// package.json - typescript-eslint が TS7.0 を拒否する場合の package alias 回避策
+{
+  "devDependencies": {
+    // Compiler API が必要な typescript-eslint 等には TS6系実体を "typescript" として渡す
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    // 実体の TS7 ネイティブコンパイラは別名で導入する
+    "@typescript/native": "npm:typescript@^7.0.2"
+  }
+}
+```
 
 **出典引用**:
 > "error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher."
@@ -494,8 +506,14 @@ tsc --checkers 4
 > "10倍はemitまで含むフルビルドを、VS Codeのような巨大な実アプリで測った値"
 > ([TypeScript 7が来たので、自分のプロジェクトで型チェック時間を測ってみた](https://zenn.dev/var/articles/typescript-7-tsgo-benchmark), セクション "公式の10倍と、実測4.6倍の差はどこから来るか") ※2026-07-24に実際にfetch成功
 
+> "typescript-eslint does not support TS 7.0. Please see https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0"
+> ([TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6), セクション "エラー確認") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6) (Zenn、`typescript-eslint` の TS7.0拒否と package alias による回避策の実機検証) ※2026-08-18 fetch
+
 **バージョン**: TypeScript 7.0+
 **確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
-**最終更新**: 2026-07-24
+**最終更新**: 2026-08-18
 
 ---

@@ -580,3 +580,55 @@ const dbUrl = await getSecret('prod/database/url');
 **バージョン**: パターン（実装依存）
 **確信度**: 高
 **最終更新**: 2026-08-08
+
+---
+
+### 5. サーバーレス関数の JWT 署名は、秘密鍵を配布せず KMS の署名 API 経由で行う
+
+サーバーレス/エッジ関数が JWT に署名する場合、秘密鍵そのものを環境変数やコードに持たせるのではなく、マネージド鍵管理サービス（KMS）の署名 API を呼び出す設計にする。秘密鍵は KMS 側から一度も出ないため、関数インスタンス間でのローテーション・漏洩リスクを構造的に排除できる。
+
+**根拠**:
+- 秘密鍵を各関数インスタンスの環境変数に配布する方式は、インスタンスごとのローテーション漏れや環境変数経由の漏洩リスクを抱える
+- KMS 側で署名すれば、検証側は発行者ごとに公開される JWKS（OpenID Connect Discovery）から公開鍵を取得でき、秘密鍵を一切配布せずに外部サービスとの相互検証が成立する
+- 認証は基盤側の OIDC トークンで行われるため、アプリケーションコードが鍵のライフサイクル管理を持つ必要がない
+
+**コード例**:
+```typescript
+// 署名側（サーバーレス関数）
+import { signToken } from '@vercel/kms';
+
+export async function GET() {
+  const token = await signToken({
+    issuerId: '123e4567-e89b-42d3-a456-426614174000',
+    claims: { sub: 'user_123', scope: 'read:data' },
+    ttl: 300,
+  });
+  const res = await fetch('https://api.example.com/data', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return new Response(await res.text(), { status: res.status });
+}
+```
+```typescript
+// 検証側（外部サービス） — JWKS は issuerId ごとに公開される
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+
+const JWKS = createRemoteJWKSet(
+  new URL(`https://kms.vercel.com/${issuerId}/jwks.json`)
+);
+const { payload } = await jwtVerify(token, JWKS);
+```
+
+**出典引用**:
+> "private keys never live in your code or environment variables"
+> ([Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys), セクション "Overview") ※2026-08-18に実際にfetch成功
+
+> "Verify signed tokens anywhere. Each issuer publishes a public OpenID Connect Discovery document"
+> ([Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys), セクション "Capabilities") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys) (Vercel 公式changelog、Vercel KMS による署名API・JWKS配布の仕組み) ※2026-08-18 fetch
+
+**バージョン**: Vercel KMS（`@vercel/kms`、2026年8月時点）
+**確信度**: 高
+**最終更新**: 2026-08-18
