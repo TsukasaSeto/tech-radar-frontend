@@ -59,7 +59,7 @@ const { data } = await client.GET('/users/{id}', {
 
 ---
 
-### 2. Zod でAPIレスポンスをランタイム検証する
+### 2. Zod でAPIレスポンスをランタイム検証する（v4 はトップレベルバリデータ + 高速パース）
 
 TypeScript の型は実行時に消えるため、外部APIのレスポンスを信用しない。
 Zod でランタイム検証を行い、期待と異なるデータを早期に検出する。
@@ -69,6 +69,9 @@ Zod でランタイム検証を行い、期待と異なるデータを早期に�
 - APIのバックエンドが予期せずデータ形式を変更した場合にランタイムエラーが起きる
 - Zod は型推論と組み合わさり、定義が1箇所で済む（TypeScript型 + ランタイム検証）
 - `safeParse` はエラーをスローせずに Result 型で返し、エラー処理が明示的になる
+- Zod v4 は文字列パースが約14倍、配列パースが約7倍高速化し、バンドルサイズも約2.3倍小さくなった。`z.string().email()` → `z.email()` のようにバリデータがトップレベル関数に昇格し、`error.flatten()` → `z.flattenError(result.error)` もグローバル関数に変更された
+- `z.uuid()` は v4 で RFC 9562/4122 準拠の厳格な検証になった（非準拠UUIDを拒否する場合があるため、ゆるい検証が必要なら `z.guid()` を使う）
+- `safeParse` の結果を型ガード関数でラップすると二重parseと `transform` 効果の損失が起きるため、結果はラップせず直接使う。外部データの検証はAPIクライアント層（アプリ境界）で1回だけ行い、以降は型安全として扱う
 
 **コード例**:
 ```ts
@@ -78,7 +81,7 @@ import { z } from 'zod';
 export const UserSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(100),
-  email: z.string().email(),
+  email: z.email(), // v4: z.string().email() から昇格
   role: z.enum(['admin', 'member', 'viewer']),
   createdAt: z.string().datetime(),
   profile: z.object({
@@ -117,10 +120,16 @@ const user = await res.json() as User;  // ランタイムで壊れる可能性�
 
 **出典**:
 - [Zod Docs](https://zod.dev) (Zod公式)
+- [TypeScript 5.5の型ガードとZod v4で、APIレスポンスを安全に扱おう](https://zenn.dev/lv/articles/214f22bbc6df17) (Zenn lv、v4破壊的変更と推奨パターン) ※2026-05-06 fetch
+- [ゼロから構築！Zod v4で叶える型安全なスキーマ駆動開発](https://zenn.dev/fd_ai_teacher/articles/tech-20260816020131-1) (Zenn fd_ai_teacher、パース速度・バンドルサイズの改善幅) ※2026-08-16 fetch
 
-**バージョン**: Zod 3+
+**出典引用**:
+> "TypeScriptの型はコンパイル時にのみ存在し、ランタイムでは消滅します。"
+> ([ゼロから構築！Zod v4で叶える型安全なスキーマ駆動開発](https://zenn.dev/fd_ai_teacher/articles/tech-20260816020131-1), セクション "型安全性の限界") ※2026-08-16に実際にfetch成功
+
+**バージョン**: Zod 4+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-08-16
 
 ---
 
@@ -468,14 +477,3 @@ function UserProfile({ id }: { id: string }) {
 - [`api-client/graphql.md`](./graphql.md) - GraphQL Code Generator
 - [`api-client/grpc.md`](./grpc.md) - Protocol Buffers 型生成（Buf）
 - [`typescript/generics.md`](../typescript/generics.md) - TypeScript ジェネリクス活用
-
----
-
-#### 追加根拠 (2026-05-06) — ルール2「Zod でAPIレスポンスをランタイム検証する」
-
-新たに以下の記事でZod v4の破壊的変更と推奨パターンが示された:
-- [TypeScript 5.5の型ガードとZod v4で、APIレスポンスを安全に扱おう](https://zenn.dev/lv/articles/214f22bbc6df17) (Zenn lv / 2026) ※2026-05-06に実際にfetch成功
-
-Zod v4 の主要変更点: (1) `z.string().email()` → `z.email()`（バリデータがトップレベル関数に昇格）。(2) `error.flatten()` → `z.flattenError(result.error)`（グローバル関数に変更）。(3) `z.uuid()` が RFC 9562/4122 を厳密に検証するようになった（非準拠UUIDを拒否する場合あり。ゆるい検証が必要なら `z.guid()` を使用）。実装原則として「`safeParse` の結果を型ガード関数にラップせず直接使う」ことが推奨される — ラップすると二重parseと `transform` 効果の損失が起きる。外部データの検証はAPIクライアント層（アプリ境界）で1回だけ行い、以降は型安全として扱うアーキテクチャも確認された。
-
-**確信度**: 既存（高）→ 高（Zod v4 API変更で根拠強化）
