@@ -190,3 +190,45 @@ export async function getUserUnsafe(id: number) {
 **バージョン**: Next.js 16+
 **確信度**: 高（v16 公式相当の知見）
 **最終更新**: 2026-05-16
+
+---
+
+### 5. 接続断時は `useOffline` フックで自動リトライ中の UI を出す（実験的機能）
+
+Next.js 16.3 の実験的機能 `experimental.useOffline` を有効にすると、RSC フェッチ・prefetch・Server Actions がオフライン/接続断で失敗した際に自動的にリトライされる。アプリ側は `useOffline` フックの戻り値を見て「再接続中」等のフィードバック UI を出す責務だけを持てばよい。本番運用は非推奨の実験的機能である点に注意する。
+
+**根拠**:
+- 接続断のハンドリングを各 fetch 呼び出し側で個別に実装せず、フレームワーク側の自動リトライに委譲できる
+- `useOffline` はリトライの実施有無ではなく「現在オフライン状態かどうか」の可視化に専念させる設計になっている。UI 側の責務を再接続中インジケータの表示だけに絞れる
+
+**コード例**:
+```ts
+// next.config.ts
+const nextConfig = {
+  experimental: {
+    useOffline: true,
+  },
+};
+```
+```tsx
+// Good: useOffline で再接続中のフィードバックのみを担当する
+'use client';
+import { useOffline } from 'next/navigation';
+
+export function ReconnectingBanner() {
+  const isOffline = useOffline();
+  if (!isOffline) return null;
+  return <div role="status">再接続しています…</div>;
+}
+```
+
+**出典引用**:
+> "Offline support is currently experimental and subject to change, and is not recommended for production."
+> ([Building App-like Experiences with Next.js 16.3](https://nextjs.org/blog/building-app-like-experiences-with-nextjs-16-3), セクション "Handling connection drops") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [Building App-like Experiences with Next.js 16.3](https://nextjs.org/blog/building-app-like-experiences-with-nextjs-16-3) (Next.js 公式ブログ、`useOffline` フックと `experimental.useOffline` 設定の解説) ※2026-08-18 fetch
+
+**バージョン**: Next.js 16.3+（`experimental.useOffline`、本番非推奨）
+**確信度**: 高
+**最終更新**: 2026-08-18

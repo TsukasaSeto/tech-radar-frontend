@@ -79,6 +79,14 @@ npx audit-ci --config audit-ci.json
 | **Moderate** | 次の sprint で対応 |
 | **Low** | バージョン上げのタイミングで吸収 |
 
+**深刻度だけでは優先度が決まらない場合の補助スコア**:
+CVSS 深刻度だけで判断すると、年間約2万件が High/Critical 相当になり優先順位付けとして機能しない。実際に悪用される CVE は全体の約6%に留まるため、「悪用の事実（KEV: 既知悪用カタログ）」と「悪用の予測（EPSS: 悪用確率スコア）」を重く重み付けした補助スコアで絞り込む:
+```python
+def priority_score(epss: float, kev: bool, cvss: float, exposed: bool) -> float:
+    return 0.35 * epss + 0.30 * kev + 0.20 * (cvss / 10) + 0.15 * exposed
+```
+KEV・Exposure（外部露出の有無）は 1/0 のブール、CVSS は 0〜1 に正規化して合成する。
+
 **`npm audit fix --force` を無条件に使わない**:
 `--force` は semver の保護を外すオプションであり、脆弱性を安全に直す魔法のコマンドではない。メジャーバージョンを跨いだ破壊的更新や、無関係な上位パッケージ（フレームワーク・ビルドツール）の大規模変更を許可してしまう。CI で fail した場合は `--force` に飛びつく前に、次の順で検証する:
 
@@ -116,9 +124,15 @@ git diff package-lock.json
 > "しかし、--forceは「強力な修復コマンド」ではありません。互換性を守るための制限を外し、破壊的変更を含むアップデートを許可するオプションです。"
 > ([npm auditで脆弱性が出たとき、すぐ`--force`してはいけない理由](https://zenn.dev/zzzzzzz/articles/02c21ea0a1e677), セクション 冒頭) ※2026-07-11に実際にfetch成功
 
+> "CVSS単独では年間約2万件がHigh/Critical扱いになり、優先度付けが機能しない"
+> ([KEV 30%・EPSS 35%――脆弱性優先度付けスコアの重み設計と、その理由](https://zenn.dev/lumen/articles/vuln-priority-weights-kev-epss), セクション "材料となる4つのシグナル - CVSS") ※2026-08-18に実際にfetch成功
+
+**出典（追加）**:
+- [KEV 30%・EPSS 35%――脆弱性優先度付けスコアの重み設計と、その理由](https://zenn.dev/lumen/articles/vuln-priority-weights-kev-epss) (Zenn、KEV/EPSS を重み付けした優先度スコアの計算式) ※2026-08-18 fetch
+
 **バージョン**: npm 8+, pnpm 8+
 **確信度**: 高
-**最終更新**: 2026-07-11
+**最終更新**: 2026-08-18
 
 ---
 

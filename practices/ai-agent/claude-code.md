@@ -3174,6 +3174,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - 設定後は実際にそのパスへの読み取りを試し、黙って通ってしまわないか手動検証する必要がある（「0件検出＝安全」とは限らない）
 - キー名だけでなく **ツール名の形式** も同様に「受理されるが適用されない」ケースがある。`Write()` / `Glob()` / `NotebookEdit()` / `MultiEdit()` 形式の deny ルールはパーサーに受理されるが実際の enforcement では機能しない（有効なのは `Edit()` / `Read()` 形式のみ）。公開されている設定の 16% がこの種のデッドルールを含んでいたという実測報告があり、153件の deny リストを持つ実運用設定でも 26 件のデッドルールが見つかっている
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
+- allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
 
 **コード例**:
 ```json
@@ -3214,9 +3215,15 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 > "受理されるが適用されない"
 > ([そのdenyルール、効いていません——settings.json堅牢化チートシート](https://zenn.dev/zenn_content/articles/claude-code-settings-hardening), セクション "無効なルール形式") ※2026-08-13に実際にfetch成功
 
+> "Bash permission patterns that try to constrain command arguments are fragile."
+> ([allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818), セクション "設計の前提") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
+
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-13
+**最終更新**: 2026-08-18
 
 ---
 
@@ -3378,6 +3385,9 @@ Sentry は Sentry MCP 経由で接続した Claude Routine を毎日実行し、
 - プロンプトは「データ取得」ではなく「判断」に焦点を絞るほど出力が安定する。MCP でのデータ取得自体は Routine に任せ、プロンプトは「何を異常と判断するか」の基準を記述することに専念させる
 - 失敗した会話だけでなく **成功した会話もサンプリングする** ことで、ツールが「正しく動いているように見えて実は壊れている」ケースの見落としを防げる。エラーが出ていない＝正常とは限らない
 - 新規の知見は Issue トラッカー（Linear 等）に構造化して起票することで、人間のレビューフローに自然に接続できる。Routine の出力を会話ログのまま放置しない
+- クラウド側で起動する Routine は別マシン上で動くため、ローカル PC のファイルシステムを前提にした素材（手元で更新するつもりだったドキュメント等）には手が届かない。素材の更新経路自体を Routine 到達可能な場所に統一しないと、古い内容のまま処理され続ける
+- push 成否の自動判定にシェルのリダイレクトを使う場合、`git` は正常時の進捗表示も stderr に書くため、`2>&1` で stderr をまとめて「エラー文字列の有無」で判定するラッパーは **成功した push を失敗と誤判定する**。終了コードで判定するか、stdout/stderr を分離して扱う
+- 実行中に新規インストールした CLI ツールは、同一プロセス内では `PATH` 解決が起動時点で固定されているため見つからない。ツール追加後はプロセスを再起動するまで存在しないものとして扱われる
 
 **コード例（Routine プロンプトの骨子）**:
 ```text
@@ -3398,8 +3408,91 @@ for the <linear_project> project.
 > "Keeping the prompt focused on judgment rather than data retrieval made the output far more consistent."
 > ([Automated Agent Triage with Claude Routines](https://blog.sentry.io/claude-routines-agent-triage/), セクション "Lessons learned") ※2026-08-13に実際にfetch成功
 
+> "クラウド側で立ち上がるエージェントは別のマシンの上にいるので、ローカルPCのファイルシステムには手が届きません。"
+> ([毎日無人でPRを作らせる ― 人間が押すのは公開ボタンだけ、踏んだ罠は4つ](https://zenn.dev/hoshiorange/articles/11-claude-code-cloud-routine-plumbing), セクション "クラウドのエージェントは別のマシンにいる") ※2026-08-18に実際にfetch成功
+
+> "git は進捗表示を stderr に書くので、push が成功しているときほど"エラー"が多いという理屈です。"
+> ([毎日無人でPRを作らせる ― 人間が押すのは公開ボタンだけ、踏んだ罠は4つ](https://zenn.dev/hoshiorange/articles/11-claude-code-cloud-routine-plumbing), セクション "成功した push を失敗と判定していた犯人は 2>&1 だった") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [毎日無人でPRを作らせる ― 人間が押すのは公開ボタンだけ、踏んだ罠は4つ](https://zenn.dev/hoshiorange/articles/11-claude-code-cloud-routine-plumbing) (Zenn、クラウド無人 Routine 運用で踏んだ4つの実装罠) ※2026-08-18 fetch
+
 **バージョン**: Claude Routines（Sentry MCP 連携、2026年8月時点）
 **確信度**: 高
-**最終更新**: 2026-08-13
+**最終更新**: 2026-08-18
+
+---
+
+### 42. サブエージェントに永続メモリを持たせるときは `memory: project` を使い、起動時ロード量（先頭200行 or 25KB）を前提に書く
+
+サブエージェントの frontmatter に `memory: project` を指定すると、`.claude/agent-memory/<name>/` 配下にプロジェクトスコープの永続メモリディレクトリが割り当てられ、セッションを跨いで読み書きできる。ただし起動時に読み込まれるのは「先頭200行」または「25KB」のうち小さい方までなので、書き込む内容はこの制約を前提に設計する。
+
+**根拠**:
+- セッションごとに消える通常のコンテキストと異なり、`memory: project` はプロジェクト単位でサブエージェントの知見を永続化できる
+- 起動時ロードが先頭部分に限定されるため、後から呼び出し側が使える情報になるかどうかは「次回の仕事で安全に使える情報が冒頭に整理されているか」で決まる。詳細ログを際限なく追記する設計は機能しない
+
+**コード例**:
+```yaml
+---
+name: code-reviewer
+description: Review project code and record durable findings
+tools: Read, Grep, Glob
+model: inherit
+memory: project
+---
+```
+```text
+.claude/agent-memory/code-reviewer/
+├── MEMORY.md            # 起動時に読まれる要約（先頭200行 or 25KBまで）
+├── architecture.md
+└── recurring-issues.md
+```
+
+**出典引用**:
+> "起動時に含まれるのは、先頭200行または25KBのうち小さい方までです"
+> ([Claude Codeのサブエージェントに何を記憶させるべきか：memory: projectの設計と検証](https://zenn.dev/kai_ai/articles/b27c2647bd0f60), セクション "サブエージェントメモリの仕組み") ※2026-08-18に実際にfetch成功
+
+> "次回の仕事で安全に使える情報が整理されているかで決まります"
+> ([Claude Codeのサブエージェントに何を記憶させるべきか：memory: projectの設計と検証](https://zenn.dev/kai_ai/articles/b27c2647bd0f60), セクション "まとめ") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [Claude Codeのサブエージェントに何を記憶させるべきか：memory: projectの設計と検証](https://zenn.dev/kai_ai/articles/b27c2647bd0f60) (Zenn、`memory: project` frontmatter の実機検証と起動時ロード上限の実測) ※2026-08-18 fetch
+
+**バージョン**: Claude Code（サブエージェント `memory: project`、2026年8月時点）
+**確信度**: 中（公式ツールの frontmatter スキーマを直接検証した単独記事によるパターン1c採用）
+**最終更新**: 2026-08-18
+
+---
+
+### 43. Claude Code にコード intelligence を持たせるには LSP プラグインを明示的にインストール・有効化する
+
+Claude Code はデフォルトでは LSP（Language Server Protocol）による go-to-definition・find-references・型エラー検出を持たない。言語サーバーのバイナリをインストールし、対応プラグインを `/plugin install` してから `/reload-plugins` する、という3ステップが必要になる。
+
+**根拠**:
+- LSP 連携はエージェントハーネス側の標準機能ではなく、明示的なプラグイン導入を前提とする設計になっている
+- 言語サーバー本体（例: `typescript-language-server`）とハーネス側プラグインは別物であり、両方揃って初めてコード intelligence が有効になる
+
+**コード例**:
+```bash
+# 1. 言語サーバー本体をインストール
+npm install -g typescript-language-server
+
+# 2. Claude Code 公式プラグインを導入
+/plugin install typescript-lsp@claude-plugins-official
+
+# 3. プラグインを再読み込みして反映
+/reload-plugins
+```
+
+**出典引用**:
+> "エージェントハーネス(agentic harness)として機能し、言語モデルを有能なコーディングエージェントへと変換するためのツール、コンテキスト管理、および実行環境を提供します。"
+> ([エージェントハーネスのLSP統合機能の調査](https://zenn.dev/netai/articles/20260818-agent-harness-lsp), セクション "Claude Code") ※2026-08-18に実際にfetch成功
+
+**出典**:
+- [エージェントハーネスのLSP統合機能の調査](https://zenn.dev/netai/articles/20260818-agent-harness-lsp) (Zenn、Claude Code / OpenCode 双方の LSP 有効化手順の実機比較) ※2026-08-18 fetch
+
+**バージョン**: Claude Code Plugins（`claude-plugins-official` マーケットプレイス、2026年8月時点）
+**確信度**: 中（公式プラグイン導入手順を直接示す単独記事によるパターン1c採用）
+**最終更新**: 2026-08-18
 
 ---
