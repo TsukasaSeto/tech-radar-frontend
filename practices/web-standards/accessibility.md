@@ -91,6 +91,7 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 - コントラスト比が低いと視力の弱いユーザーがテキストを読めない
 - WCAG 2.1 Success Criterion 1.4.1（Use of Color）と 1.4.3（Contrast）で要求される
 - コントラスト比の計算式（相対輝度から `(明るい方 + 0.05) / (暗い方 + 0.05)`）は外部ライブラリなしでも実装できる。デザイントークンの検証や lint スクリプトに組み込めば、色の組み合わせを機械的にチェックできる
+- **例外**: WCAG のコントラスト比基準を数値上満たしていても、実際の可読性が確保されるとは限らない。ダークモードで明朝体（serif）の本文テキストは、①細い横画が小サイズで潰れる、②irradiation錯視で明るい文字が実際より太く見える、③ `-webkit-font-smoothing: antialiased` がダーク背景では逆に線を細く見せる、という3つの要因が重なり、コントラスト比の数値には出ない読みにくさが生じる。見出しは大きく分量も少ないため影響が小さいが、本文は影響を受けやすい。本文はシステムフォント（sans-serif）を使う、または `font-variation-settings` の `GRAD` 軸でダークモード時のウェイトを調整するなど、コントラスト比の担保とは別の対策が必要
 
 **コード例**:
 ```tsx
@@ -141,9 +142,14 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 > "const brightest = Math.max(lum1, lum2); const darkest = Math.min(lum1, lum2); return Math.round(((brightest + 0.05) / (darkest + 0.05)) * 100) / 100;"
 > ([HEX/RGB/HSL変換とWCAGコントラスト比をライブラリなしで実装する](https://zenn.dev/a1221/articles/color-utils-introduction), Zenn, セクション "ステップ2：コントラスト比") ※2026-07-27に実際にfetch成功
 
+> "見出しは大きいので細い線が保つし、量が少ないので滲みも問題にならない。本文は逆です。"
+> ([ダークモードで明朝体の本文が読みにくくなる理由——コントラスト比には出ない](https://zenn.dev/matsutake_prgrm/articles/mincho-dark-mode-readability), Zenn, セクション本文) ※2026-08-19に実際にfetch成功
+
+- [ダークモードで明朝体の本文が読みにくくなる理由——コントラスト比には出ない](https://zenn.dev/matsutake_prgrm/articles/mincho-dark-mode-readability) (Zenn、細線消失・irradiation錯視・font-smoothingの3要因とfont-variation-settings GRAD軸による対策) ※2026-08-19 fetch
+
 **バージョン**: WCAG 2.1 / 2.2
 **確信度**: 高
-**最終更新**: 2026-07-27
+**最終更新**: 2026-08-19
 
 ---
 

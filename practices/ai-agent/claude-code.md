@@ -924,6 +924,9 @@ fi
 - **worktree が守るのは「実行」であって「着地（マージ）」ではない**: 物理的なファイル競合が起きなくても、エージェントA がヘルパー関数のシグネチャを変更し、エージェントB が別の worktree でその呼び出し側を書き換えていた場合、両方の PR は個別に CI を通過し git 上のコンフリクトも起きない。しかし順番にマージすると意味的に噛み合わなくなり、実行時に初めて壊れる。対策は worktree 隔離だけでは不十分で、共有 API・関数シグネチャに触れる変更は PR 説明に明記させ、マージ前に呼び出し側への影響を人間または統合テストでレビューするステップを挟む
 - **個人開発で複数案件の worktree を並走させる場合は「公開前ゲート」を fail-closed で設計する**: 案件ごとに独立した worktree を割り当てても、機密情報混入チェックを「読み込みに失敗したら通す」設計にすると事故る。NGワードリストの読み込みに失敗した場合は例外を握りつぶさず**ブロック側にフォールバックする**（`except OSError: return None` → 呼び出し側で `None` は「公開不可」として扱う）。worktree ごとに `.claude/settings.local.json` の `model` フィールドを変えることで、案件の複雑度に応じたモデル使い分けも並走運用に組み込める
 - **名前付き起動（named launch）特有の破綻**: `isolation: "worktree"` は名前を指定しない起動でのみ安定して機能し、`git worktree move` によるリネームが失敗すると agent の作業ディレクトリごと消失するなど、実行のたびに壊れ方が変わる不安定さが報告されている。対策として worktree 作成・シンボリックリンク・非トラッキングファイルのコピー・フックの再生成・ポート割当てを1本の決定論的シェルスクリプトに切り出し、「LLM の判断が必要な作業（実装）」と「LLM の判断が不要な作業（環境構築）」を明確に分離すると再現性が上がる。この分離は `isolation: "worktree"` オプション自体・関連 Hooks・命名リネームを丸ごと不要にする選択肢でもある
+- **手動移動による worktree 破損**: worktree ディレクトリを `mv` 等で手動移動すると、worktree 側 `.git` ファイルと主リポジトリのメタデータ間の相互絶対パス参照が崩れる。この状態で `git worktree prune` を実行すると復旧不能になるため、**必ず `git worktree move <old> <new>` を使い、手動 `mv` は避ける**。prune 前には `git worktree prune --dry-run -v` で対象を確認してから実行する
+- **「ファイルが存在しない」という AI の誤検知**: worktree が別ブランチをチェックアウトしている状態でサブエージェントに作業させると、目的のファイルがそのブランチに存在しない場合エージェントは（自分の視界内では正しく）「存在しない」と報告する。ここで確認を挟まず新規に重複実装してしまうケースが多い。「AIは自分に見えている作業ディレクトリの中しか探索しない」ため、ファイル欠落を報告された場合は先に `git cat-file -e <branch>:<path>` 等で対象ブランチ側の実在を確認させ、無ければブランチ指定の誤りを疑わせる運用にする
+- **放置 worktree の蓄積**: 完了した worktree は明示的に `git worktree remove` するまで残り続け、ディスクを消費し続けるだけでなく元ブランチの削除もブロックする。タスク完了時の後片付けフローに `git worktree remove` を組み込む
 
 **コード例**:
 ```bash
@@ -1015,14 +1018,18 @@ exit 0
 > "改名した瞬間、エージェントが動かなくなりました"
 > ([【並列開発】isolation: worktreeやめました 〜決定論と認知を分けてAIと仕事する〜](https://zenn.dev/rakko_inc/articles/2da36c0abe4dbe), セクション "起動のたびに壊れ方が変わった") ※2026-08-06に実際にfetch成功
 
+> "3層は独立している。ファイルシステムを分けても台帳の同時書き込みは防げないし、台帳を守っても作業ディレクトリの踏み合いは防げない" / "AIは自分に見えている作業ディレクトリの中しか探索しない"
+> ([1つのリポジトリでAIを並行作業させる — worktree 運用の設計と、踏んだ事故3種](https://zenn.dev/tejunya/articles/a038_worktree-heiretsu), セクション "アーキテクチャ的な分離") ※2026-08-19に実際にfetch成功
+
 **出典**（追加）:
 - [worktrees でエージェントを分けたのに、結局 main でぶつかった話](https://zenn.dev/veripsa/articles/worktrees-not-enough-parallel-agents) (Zenn veripsa、意味的マージコンフリクト・worktree 隔離では防げない実行時の噛み合わせ崩れ) ※2026-07-03 fetch
 - [1人で8プロジェクトを並列開発する「業務OS」— Claude Code worktree × Skill × 公開前ゲート × Obsidianミラーvault](https://qiita.com/TaichiEndoh/items/ad15d1fcf838decc3c8a) (Qiita TaichiEndoh、fail-closed な公開前ゲートと worktree 単位のモデル使い分け) ※2026-07-06 fetch
 - [【並列開発】isolation: worktreeやめました 〜決定論と認知を分けてAIと仕事する〜](https://zenn.dev/rakko_inc/articles/2da36c0abe4dbe) (Zenn rakko_inc、named launch でのリネーム失敗と決定論的セットアップスクリプトへの置き換え) ※2026-08-06 fetch
+- [1つのリポジトリでAIを並行作業させる — worktree 運用の設計と、踏んだ事故3種](https://zenn.dev/tejunya/articles/a038_worktree-heiretsu) (Zenn tejunya、手動移動によるworktree破損・ブランチ不一致による偽陽性「ファイル無し」報告・放置worktreeの3事故) ※2026-08-19 fetch
 
 **バージョン**: Claude Code + Git（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-06
+**最終更新**: 2026-08-19
 
 ---
 
@@ -2761,6 +2768,31 @@ jq -rs '
 **アンチパターン**:
 - ラッパーで `exit "$exit_code"` を省略する（フックのエラー戻り値を Claude Code が受け取れなくなる）
 - 平均値だけを見て「速い」と判断する（外れ値が平均を引き下げ、日常的な遅延を隠す）
+- p95 が高いフックを「言語を変えれば速くなる」と決めつけて全面書き換えする（下記の通り、真因はライブラリの import コストであって言語選択そのものではない場合が多い）
+
+**根拠に追加（root cause 診断）**:
+- p95 でボトルネックのフックを特定した後は、`python3 -X importtime` でインポート時間を可視化し、フレームワーク/バリデーションライブラリ（例: pydantic）の import コストが起動時間の大半を占めていないか確認する。実測では 108ms の起動コストのうち約84msが pydantic import で、regex 処理や file I/O ではなかった
+- 「言語をGo/Rustにすれば速い」のではなく、「プロセスを毎回新規起動するか常駐させるかのプロセスモデル」が本質。Python でも pydantic を使わなければ約40msまで縮む
+- Go 等のコンパイル済みバイナリへの移植は、起動コストが支配的な高頻度フック（1日あたり数万回呼ばれるようなもの）でのみ investment に見合う。移植前後で12ケースの同値性検証を行い、フックの判定結果が変わっていないことを確認してから本番投入する
+
+**コード例（root cause 診断）**:
+```bash
+# import コストの内訳を可視化する
+python3 -X importtime -c "from pydantic import BaseModel" 2>&1 | tail -20
+```
+```go
+// Go移植後: 正規表現マッチのみの軽量フック（起動コスト ~23ms）
+pattern := regexp.MustCompile(`(Apps Script|clasp)`)
+if pattern.MatchString(line) {
+    fmt.Println("matched")
+}
+```
+
+| 実装 | 起動コスト | 備考 |
+|---|---|---|
+| Python + pydantic | ~108ms | pydantic import だけで ~84ms |
+| Python（pydantic無し） | ~40ms | ライブラリを削るだけでも大幅改善 |
+| Go / Rust / bash バイナリ | ~23-25ms | プロセス常駐しない前提でも十分速い |
 
 **出典引用**:
 > "hookが同期実行の場合、完了するまでClaude Codeはブロックします"
@@ -2769,9 +2801,19 @@ jq -rs '
 > "p95は『100回に95回がこの時間以内』なので、日常の遅さを正直に示します"
 > ([Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling), セクション "なぜ p95 か") ※2026-06-22に実際にfetch成功
 
-**バージョン**: Claude Code（全バージョン）、bash 5+
+> "起動コストの大部分（108msのうち約84ms）はregexパターンやfile I/Oではなく、pydanticのimportに由来していた"
+> ([Claude Code hookが遅い原因はpydanticだった ― 起動コストを実測してGoに移植したら約8割削減できた話](https://qiita.com/nomurasan/items/c227b092ba30d18aa8a1), セクション "原因調査") ※2026-08-19に実際にfetch成功
+
+> "重要なのは言語選択ではなく、プロセスモデル ― プロセスを毎回新規起動するか、常駐させ続けるか"
+> ([Claude Code hookが遅い原因はpydanticだった ― 起動コストを実測してGoに移植したら約8割削減できた話](https://qiita.com/nomurasan/items/c227b092ba30d18aa8a1), セクション "設計面での学び") ※2026-08-19に実際にfetch成功
+
+**出典**:
+- [Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling) (Zenn)
+- [Claude Code hookが遅い原因はpydanticだった ― 起動コストを実測してGoに移植したら約8割削減できた話](https://qiita.com/nomurasan/items/c227b092ba30d18aa8a1) (Qiita、`python3 -X importtime` によるroot cause診断とGo移植による約80%削減の実測。39日間・244万回のフック呼び出しで年間約550 CPU時間の削減) ※2026-08-19 fetch
+
+**バージョン**: Claude Code（全バージョン）、bash 5+ / Python 3 / Go
 **確信度**: 中
-**最終更新**: 2026-06-22
+**最終更新**: 2026-08-19
 
 ---
 
