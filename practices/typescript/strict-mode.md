@@ -451,11 +451,12 @@ function processInput(value: unknown): string {
 
 ---
 
-### 9. TypeScript 7.0（ネイティブ Go コンパイラ）移行時は削除された `target` / `moduleResolution` オプションを事前に置き換える
+### 9. TypeScript 7.0（ネイティブ Go コンパイラ）移行時は削除された `target` / `moduleResolution` オプションを事前に置き換える（6.0 時点で既にビルドが止まる点に注意）
 
 TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target: "es5"` と `moduleResolution: "node"` / `"classic"` が廃止される。
 移行前に `tsconfig.json` の対象オプションを確認し、`target: "ES2015"` 以上・`moduleResolution: "bundler"` に置き換える。
 高速化を謳う宣伝文句（「10倍高速」等）はソースによって数値が大きく異なるため、鵜呑みにせず自プロジェクトで実測する。
+**この非推奨化は 7.0 を待たず、6.0 の時点で既に `error`（終了コード2）としてビルドを止める。** `ignoreDeprecations: "6.0"` で 6.0 では黙らせられるが、この設定自体が 7.0 では削除され黙って無視される。
 
 **根拠**:
 - `target: "es5"` を指定したままアップグレードすると `error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher.` でビルドが失敗する
@@ -464,6 +465,7 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 - 別の独立ベンチマーク（約10.5万行の実プロジェクト）でも tsc 6.0.3 の 2,457ms に対し tsc 7.0.2 は 535ms（4.6倍）、Go バイナリを直接叩く `tsgo` は 524ms（4.7倍、Node.js 起動オーバーヘッド約86ms を除く）と、複数ソースで「公称10倍」と「実測4〜5倍」の乖離が再現している
 - 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）
 - TypeScript 7.0 の `require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開し、Compiler API がそこから消える。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。`package.json` で `typescript` を TS 6.x 系にエイリアスし、実体の TS 7 系は別名で入れる回避策がある
+- 6.0.3 / 6.0.beta の実測検証では、非推奨オプションは「警告」ではなく `error TS5107` として即座にビルドを止める。`ignoreDeprecations: "6.0"` を指定すれば 6.0 では抑制できるが、7.0.2 ではこのオプション自体が削除されており、指定しても怒られもせず単に効かなくなる（`error TS5108` で「削除済みなので設定から除去せよ」と表示される）。「7.0 が来るまでは 6.0 で猶予がある」という前提は成立しない
 
 **コード例**:
 ```json
@@ -509,11 +511,15 @@ tsc --checkers 4
 > "typescript-eslint does not support TS 7.0. Please see https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6.0"
 > ([TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6), セクション "エラー確認") ※2026-08-18に実際にfetch成功
 
+> "6.0 は警告ではなく `error` を出して終了コード2で落ちます。TypeScript 7 を待たずに、6.0 の時点でもうビルドが止まっていました。"
+> ([TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error), セクション "TypeScript 6.0 は「警告」ではなく落ちる") ※2026-08-19に実際にfetch成功
+
 **出典**:
 - [TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6) (Zenn、`typescript-eslint` の TS7.0拒否と package alias による回避策の実機検証) ※2026-08-18 fetch
+- [TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error) (Zenn、5.9.3/6.0.3/7.0.2 の実機検証で `ignoreDeprecations: "6.0"` が7.0で削除され無効化される点を確認) ※2026-08-19 fetch
 
-**バージョン**: TypeScript 7.0+
+**バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化）/ 7.0（`ignoreDeprecations` 自体が削除）
 **確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
-**最終更新**: 2026-08-18
+**最終更新**: 2026-08-19
 
 ---

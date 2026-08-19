@@ -257,6 +257,38 @@ v16 の Cache Components 環境では、関数・コンポーネント単位で 
 - v16 では `revalidateTag(tag)` の 1 引数版は非推奨。profile（`"max"` 推奨）を渡すか `updateTag` に置き換える必要がある。`updateTag` は更新を即時反映、`revalidateTag(..., "max")` は stale-while-revalidate セマンティクス
 - `cacheLife('seconds')` や `expire` が 5 分未満の短命キャッシュは **自動的に prerender から除外され「dynamic hole」として扱われる**ため、`<Suspense>` で囲んでフォールバックを提供する設計が必要
 - layout 全体に `"use cache"` を貼ると配下が全部キャッシュされ、後から細かい dynamic 部分を入れにくくなる
+- **`cacheComponents` は「段階的に効いてくる」機能ではなく、ビルド時の強制ゲートである**。`cacheComponents: true` を有効にすると、ルート内の各データは「ストリームする」「キャッシュする」「blocking にする」のいずれかを明示しないと**ビルド自体が失敗する**。特に `params` を `<Suspense>` で囲まずに参照する最小構成のルートでもこのゲートに引っかかる。「一部のページだけ試験導入」という運用は成立せず、有効化した時点でルート全体の見直しが必要になる
+
+**cacheComponents 有効化時のビルド失敗例**:
+```typescript
+// next.config.ts
+const nextConfig: NextConfig = {
+  cacheComponents: true,
+  partialPrefetching: true,
+};
+
+// Bad: params を Suspense で囲まずに参照 → ビルドエラー
+// "Next.js encountered uncached or runtime data during prerendering.
+//  `params`...accessed outside of `<Suspense>`"
+export default async function ProductPage({
+  params,
+}: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const product = await getProduct(id);
+  return <h1>{product.name}</h1>;
+}
+
+// Good: Suspense で囲み、Partial Prerendering に委ねる
+export default function ProductPage({
+  params,
+}: { params: Promise<{ id: string }> }) {
+  return (
+    <Suspense fallback={<ProductSkeleton />}>
+      <ProductDetail paramsPromise={params} />
+    </Suspense>
+  );
+}
+```
 
 **コード例**:
 ```typescript
@@ -304,14 +336,22 @@ revalidateTag("posts"); // 将来削除予定
 - `revalidateTag(tag)` の 1 引数版を使い続ける（v16 で非推奨）
 - 短命キャッシュ（5 分未満の `expire`）を `<Suspense>` で囲まずに配置し、ポップコーン UI / CLS を引き起こす
 
+**出典引用**:
+> "Next.js encountered uncached or runtime data during prerendering. `params`...accessed outside of `<Suspense>`"
+> ([I Turned On Cache Components in Next.js 16.3. It Refused to Build My Simplest Page.](https://dev.to/shubhradev/i-turned-on-cache-components-in-nextjs-163-it-refused-to-build-my-simplest-page-3ak0), セクション本文) ※2026-08-19に実際にfetch成功
+
+> "It's not gradual. It's a build gate."
+> ([I Turned On Cache Components in Next.js 16.3. It Refused to Build My Simplest Page.](https://dev.to/shubhradev/i-turned-on-cache-components-in-nextjs-163-it-refused-to-build-my-simplest-page-3ak0), セクション本文) ※2026-08-19に実際にfetch成功
+
 **出典**:
 - [Next.jsの考え方 / 3.4 "use cache" ディレクティブ](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [I Turned On Cache Components in Next.js 16.3. It Refused to Build My Simplest Page.](https://dev.to/shubhradev/i-turned-on-cache-components-in-nextjs-163-it-refused-to-build-my-simplest-page-3ak0) (dev.to、`cacheComponents: true` + `partialPrefetching: true` 有効化時に `params` を Suspense 外で参照するとビルドが失敗する実機検証) ※2026-08-19 fetch
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（Cache Components 前提・`cacheComponents: true`）
 **確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-19
 
 ---
 

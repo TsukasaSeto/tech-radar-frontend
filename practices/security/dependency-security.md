@@ -1086,3 +1086,42 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 **バージョン**: Next.js 16.2+ / 15.5+
 **確信度**: 高
 **最終更新**: 2026-07-14
+
+---
+
+### 11. pnpm 11 の `minimumReleaseAge` は `.npmrc` ではなく `pnpm-workspace.yaml` で設定する（デフォルト24時間の公開直後パッケージインストール制限）
+
+pnpm 11 はデフォルトで `minimumReleaseAge: 1440`（分単位、24時間）が有効になり、公開されたばかりのパッケージバージョンのインストールを一定時間ブロックする supply chain attack 対策機能を持つ。ただし pnpm 11 では非 auth 系設定が `.npmrc`（INI形式）ではなく `pnpm-workspace.yaml`（YAML形式）に分離されたため、**従来通り `.npmrc` に書いても警告なく無視される**。
+
+**根拠**:
+- 公開直後のパッケージは「乗っ取られたメンテナアカウントによる悪意あるバージョン」である可能性が統計的に高く、一定時間待ってからインストールすることで多くの supply chain attack を回避できる（本ファイル Rule #4 の install script 対策とは異なる、時間差による防御レイヤー）
+- pnpm 11 は設定を「認証・レジストリ関連（INI形式 `.npmrc`）」と「pnpm 固有設定（YAML形式 `pnpm-workspace.yaml`）」に分離した。`minimumReleaseAge` は後者に属するため `.npmrc` に書いても**エラーにも警告にもならず、単に無視される**
+- ローカル開発でバージョン固定（exact version）指定をすると、pnpm が自動的に `pnpm-workspace.yaml` へ `minimumReleaseAgeExclude` エントリを生成することがある。これを未コミットのまま CI で `--frozen-lockfile` を使うと、同じ lockfile が `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` で失敗する（ローカルでは通り CI だけ落ちる典型パターン）
+- バージョン範囲指定（`^` 等）の場合は、新しいバージョンが age 制限に引っかかると**警告なく古い適合バージョンにフォールバックする**。意図しない古いバージョンが入っていないか lockfile の diff で確認する必要がある
+
+**設定例**:
+```yaml
+# pnpm-workspace.yaml（pnpm 11 での正しい配置場所）
+minimumReleaseAge: 0            # 0 で無効化（pre-11 相当の挙動に戻す）
+minimumReleaseAgeStrict: true
+minimumReleaseAgeExclude:
+  - '@types/node@26.2.0'        # 個別に除外したいパッケージ@バージョン
+blockExoticSubdeps: false
+allowBuilds:
+  esbuild: true
+```
+```ini
+# Bad: .npmrc に書いても pnpm 11 では黙って無視される
+minimum-release-age=0
+```
+
+**出典引用**:
+> "pnpm no longer reads non-auth settings from `.npmrc`. Configuration is split into two categories: auth/registry in INI format, pnpm-specific settings in YAML."
+> ([pnpm 11のminimumReleaseAge既定24hを踏みに行ったら、手元では通ってCIだけ落ちた](https://zenn.dev/clopy/articles/pnpm11-minimum-release-age-ci-only-failure), セクション本文) ※2026-08-19に実際にfetch成功
+
+**出典**:
+- [pnpm 11のminimumReleaseAge既定24hを踏みに行ったら、手元では通ってCIだけ落ちた](https://zenn.dev/clopy/articles/pnpm11-minimum-release-age-ci-only-failure) (Zenn、`pnpm-workspace.yaml`/`.npmrc` の設定分離とCI専用エラーの実機検証) ※2026-08-19 fetch
+
+**バージョン**: pnpm 11+
+**確信度**: 中（単一記事だが公式ツールの設定ファイル形式・エラーコードを直接示す実機検証のためパターン1c扱い）
+**最終更新**: 2026-08-19

@@ -632,3 +632,55 @@ const { payload } = await jwtVerify(token, JWKS);
 **バージョン**: Vercel KMS（`@vercel/kms`、2026年8月時点）
 **確信度**: 高
 **最終更新**: 2026-08-18
+
+---
+
+### 6. ローカル開発のシークレットは種類別に保管場所を分離する（アプリ用 / CLI ログイン用 / CI 用）
+
+`.env.local` に何でも詰め込むのではなく、①アプリケーションシークレット（Vercel 等のランタイムシークレットストア）、②ローカル CLI の認証情報（各 CLI がネイティブに使う Keychain 等の暗号化ストレージ）、③CI トークン（GitHub Environment Secrets 等、権限を絞った専用トークン）の3種類に分けて保管場所を選ぶ。
+
+**根拠**:
+- `.env.local` を Git 管理から除外していても、エディタ・バックアップツール・検索インデックス・AI コーディングエージェントなど「読める範囲」は Git 管理の有無とは無関係に広がる。Rule #3 の gitignore 徹底だけでは、ファイルシステム上に平文で存在するという根本的なリスクは残る
+- CLI のログイン情報（`vercel login` 等でローカルに保存される認証情報）とアプリへ渡す API キーは性質が異なる。前者は開発者個人の権限、後者はアプリケーションの実行時権限であり、同じ `.env.local` にまとめると権限の境界が曖昧になる
+- macOS では `security` コマンドで Keychain にサービス単位のエントリを作成でき、Preview/Production 用に別エントリを分ければ環境ごとの取り違えも防げる
+- CI トークンは個人の認証情報を使い回さず、権限を絞った専用トークンを発行する
+
+**命名規約**: `<app>-<purpose>-<environment>`（例: `comic-app-openai-preview`）
+
+**コード例**:
+```bash
+# macOS Keychain へ API キーを保存する
+security add-generic-password \
+  -U \
+  -a "$(id -un)" \
+  -s "comic-app-openai-preview" \
+  -w
+
+# Keychain から取得して Vercel の環境変数へ渡す（ローカルにも .env にも平文で残さない）
+security find-generic-password \
+  -a "$(id -un)" \
+  -s "comic-app-openai-preview" \
+  -w \
+  | vercel env add OPENAI_API_KEY preview --sensitive
+
+# 各 CLI のネイティブなログイン方式を使う（.env に手動転記しない）
+vercel login
+neon auth
+wrangler login --use-keyring
+```
+
+**出典引用**:
+> "Git管理から除外していても、エディタ、バックアップ、検索、AIコーディングエージェントなどから読める範囲が広がるため"
+> ([シークレットはどこに置く？ .env、Keychain、CLIログイン、Secretストアを整理した](https://zenn.dev/optimisuke/articles/d7a4c2e91f6b30), セクション本文) ※2026-08-19に実際にfetch成功
+
+> "CLIのログイン情報は、アプリへ渡すAPIキーとは別物です"
+> ([シークレットはどこに置く？ .env、Keychain、CLIログイン、Secretストアを整理した](https://zenn.dev/optimisuke/articles/d7a4c2e91f6b30), セクション本文) ※2026-08-19に実際にfetch成功
+
+**出典**:
+- [シークレットはどこに置く？ .env、Keychain、CLIログイン、Secretストアを整理した](https://zenn.dev/optimisuke/articles/d7a4c2e91f6b30) (Zenn、アプリ/CLI/CIの3分類とmacOS Keychainへの実際の保存・取得コマンド) ※2026-08-19 fetch
+
+**バージョン**: 一般原則（例は macOS `security` コマンド + Vercel CLI）
+**確信度**: 中（単一記事だが各CLIの実際のコマンド・フラグを直接示す実機検証のためパターン1c扱い）
+**最終更新**: 2026-08-19
+
+---

@@ -92,6 +92,8 @@ E2E テストの操作ロジックを Page Object クラスに抽出し、テス
 - UIの変更（ボタンのテキスト変更など）があっても Page Object だけ修正すればよい
 - テストコードが「何をするか」に集中し、「どうやるか」が隠蔽される
 - Page Object の再利用で複数テスト間の重複を削減できる
+- **規模が大きくなると Page Object 1層だけでは変更が散る**。「UI要素の定義」「複数画面をまたぐ業務操作」「アサーション」「環境設定・定数」の4種類の変更はそれぞれ異なる頻度・理由で発生するため、責務ごとに層を分けると変更の影響範囲が層内に閉じる: ①Page Object（ロケータと基本操作のみ）②Actions（複数画面にまたがる業務フロー、`expect()` は使わず成否を `boolean` で返す）③Tests（アサーションのみ。UI構造を知らない）④Config/Env（環境設定・定数）
+- Actions 層が `expect()` を持たず boolean を返す設計にすると、「操作の成否判定」と「テストとしての合否判定」が分離され、同じ Actions を複数のテストパターン（正常系・異常系）で再利用しやすくなる
 
 **コード例**:
 ```ts
@@ -137,12 +139,47 @@ test('正しい認証情報でログインできる', async ({ page }) => {
 });
 ```
 
+**4層構造のコード例（大規模プロジェクト向け拡張）**:
+```ts
+// Layer 1: Page Object — ロケータと基本操作のみ
+export class SearchPage {
+  readonly searchButton: Locator;
+  async search(keyword: string): Promise<void> {
+    await this.keywordInput.fill(keyword);
+    await this.searchButton.click();
+  }
+}
+
+// Layer 2: Actions — 複数画面をまたぐ業務操作。expect() は使わず boolean を返す
+export class SearchAction {
+  async isProductDetailVisible(): Promise<boolean> {
+    try {
+      await this.productPage.detailPanel.waitFor({ state: 'visible' });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Layer 3: Tests — アサーションのみ。UI構造を一切知らない
+test('商品を検索して詳細を開く', async ({ searchAction }) => {
+  await searchAction.searchAndOpenFirst('ノート');
+  expect(await searchAction.isProductDetailVisible()).toBe(true);
+});
+```
+
+**出典引用**:
+> "継続性は意志や体制で維持するものではなく、「捨てる」が合理的にならない構造を保つこと"
+> ([Structured Playwright —— 継続性から設計するE2Eテストの4層構造とハーネス](https://zenn.dev/mov_ish/articles/structured-playwright-e2e), セクション本文) ※2026-08-19に実際にfetch成功
+
 **出典**:
 - [Playwright Docs: Page Object Models](https://playwright.dev/docs/pom) (Playwright公式)
+- [Structured Playwright —— 継続性から設計するE2Eテストの4層構造とハーネス](https://zenn.dev/mov_ish/articles/structured-playwright-e2e) (Zenn、Page Object/Actions/Tests/Config の4層分離とActions層のboolean返却パターン) ※2026-08-19 fetch
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-08-19
 
 ---
 

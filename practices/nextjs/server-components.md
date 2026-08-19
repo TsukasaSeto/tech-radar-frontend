@@ -101,6 +101,7 @@ Server Components から Client Components への props は JSON シリアライ
 **根拠**:
 - Server と Client の境界を越えるデータは React によってシリアライズされる
 - シリアライズできない値を渡すとエラーになる
+- **よくある誤解**: `Event handlers cannot be passed to Client Component props` エラーが出た際、受け取り側の Client Component に既に `'use client'` を付けているのに直らないケースがある。原因はコンポーネントではなく、渡している**関数がどこで生成されたか**。Server Component の中で定義したインライン関数（`onClick={() => ...}`）はその時点で「サーバー側の値」であり、`'use client'` は境界を越えた後の話でしかない。「文字に書き起こせる値だけが渡せる」と覚え、関数は Client Component 側で定義するか Server Actions（`'use server'`）にする
 
 **コード例**:
 ```tsx
@@ -171,13 +172,18 @@ async function ProductPage({ id }: { id: string }) {
 }
 ```
 
+**出典引用**:
+> "関数は書き起こせません" / "渡せるのは「文字に書き起こせる値」だけと覚えるのが実用的です"
+> ([「Event handlers cannot be passed to Client Component props」は 'use client' を付けても直らない](https://qiita.com/kai_kou/items/31edab0b35b2ce93f1e1), セクション "なぜ関数だけ渡せないのか") ※2026-08-19に実際にfetch成功
+
 **出典**:
 - [Next.js Docs: Passing Props from Server to Client Components](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#passing-props-from-server-to-client-components-serialization) (Next.js公式)
 - [React Docs: Server Components - Serialization](https://react.dev/reference/rsc/server-components#serializable-types) (React公式)
+- [「Event handlers cannot be passed to Client Component props」は 'use client' を付けても直らない](https://qiita.com/kai_kou/items/31edab0b35b2ce93f1e1) (Qiita、'use client' を付けても直らない理由と2つの修正方法の実機検証) ※2026-08-19 fetch
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-05-05 / 補強 2026-05-16 / 2026-08-19
 
 ---
 
@@ -284,5 +290,61 @@ export default async function DashboardPage() {
 **バージョン**: Next.js 15+
 **確信度**: 高
 **最終更新**: 2026-05-06
+
+---
+
+### 6. レンダー中にブラウザ専用 API へ直接アクセスしない — サーバーでは `window` は存在せず、失敗は静かに起きる
+
+Server Component / SSR 実行パスのレンダー本体で `window` / `document` 等のブラウザ専用 API に直接触れると、サーバーには存在しないためレンダーが失敗する。しかもブラウザで検証しても再現しないため気づきにくい。ブラウザ API が必要な値は `useEffect` 内でのみ読み、初期値は SSR で決定可能な値（またはサーバーから渡された値）にする。
+
+**根拠**:
+- サーバーには `window` オブジェクトが存在しない。レンダー本体（コンポーネント関数のトップレベル）で参照すると `ReferenceError: window is not defined` でそのページのサーバーレンダリングが失敗する
+- ブラウザで動作確認しても「ブラウザには `window` がある」ため問題が再現せず、CI やローカル開発では見つかりにくい。本番のクローラー/SSR 経路でのみ症状が出る
+- 症状は派手なエラー画面ではなく「サーバーレンダリングが黙って無効化され、ソフト404やインデックス漏れとして現れる」形を取りうるため、影響範囲に気づくまでに時間がかかる
+- `useEffect` はマウント後（クライアント側）にのみ実行されるため、ブラウザ API を安全に読める。初期値は SSR で決定できる値にしておき、マウント後に実測値で更新する
+
+**コード例**:
+```tsx
+// Bad: レンダー本体で window に直接アクセス（サーバーで ReferenceError）
+function Banner() {
+  const isMobile = window.innerWidth < 640;
+  return <div>{isMobile ? <MobileBanner /> : <DesktopBanner />}</div>;
+}
+
+// Good: useEffect 内でのみ window を読み、初期値はSSRで決定可能な値にする
+function Banner() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setIsMobile(window.innerWidth < 640);
+    sync();
+    window.addEventListener('resize', sync);
+    return () => window.removeEventListener('resize', sync);
+  }, []);
+
+  return <div>{isMobile ? <MobileBanner /> : <DesktopBanner />}</div>;
+}
+
+// Good: サーバー側で取得したデータを Client Component に渡す構成にする
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const show = await getShow(id);
+  return <ShowDetailsClient initialShow={show} />;
+}
+```
+
+**出典引用**:
+> "On the server there is no `window`. That line throws `ReferenceError: window is not defined`"
+> ([One line of JavaScript disabled server rendering on 190 pages](https://dev.to/eugen_taranowski/one-line-of-javascript-disabled-server-rendering-on-190-pages-5akb), セクション本文) ※2026-08-19に実際にfetch成功
+
+> "Touching a browser API during render doesn't fail loudly. It fails by turning off the thing you can't see from a browser."
+> ([One line of JavaScript disabled server rendering on 190 pages](https://dev.to/eugen_taranowski/one-line-of-javascript-disabled-server-rendering-on-190-pages-5akb), セクション本文) ※2026-08-19に実際にfetch成功
+
+**出典**:
+- [One line of JavaScript disabled server rendering on 190 pages](https://dev.to/eugen_taranowski/one-line-of-javascript-disabled-server-rendering-on-190-pages-5akb) (dev.to、`window.innerWidth` の直接参照が190ページのSSRを無効化した実例と `useEffect` への修正) ※2026-08-19 fetch
+
+**バージョン**: Next.js 13+（App Router SSR 全般）
+**確信度**: 中（単一記事だが Next.js/React 公式の SSR 実行モデル — サーバーにブラウザグローバルが存在しない — を直接示す再現コード付き検証のためパターン1c扱い）
+**最終更新**: 2026-08-19
 
 ---
