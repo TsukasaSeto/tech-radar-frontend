@@ -210,3 +210,41 @@ agents/
 **最終更新**: 2026-08-12
 
 ---
+
+### 5. Claude Managed Agents は「エージェントループ・ツール実行・サンドボックス」を Anthropic 側に委譲し、Sessions API で呼び出す
+
+Claude の Managed Agents は、エージェントの実行ループ・ツール呼び出し・実行サンドボックスまで含めて Anthropic 側でホストする。自前でエージェントランタイムを実装せず、Sessions API にエージェント定義（モデル・MCP サーバー・ツール）を渡して呼び出す形になる。
+
+**根拠**:
+- エージェントループやサンドボックスの実装・運用コストを自前で持たずに済む
+- MCP サーバー定義をエージェント定義 JSON に含めることで、ツール構成をコードではなく宣言的に管理できる
+- Slack 発の問い合わせなどを GitHub Actions からトリガーする運用など、既存の CI/CD 基盤と組み合わせやすい
+
+**コード例**:
+```bash
+curl https://api.anthropic.com/v1/sessions \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "anthropic-beta: managed-agents-2026-04-01" \
+  -H "content-type: application/json" \
+  -d '{
+    "agent": {
+      "model": "claude-...-5",
+      "mcp_servers": [{ "type": "url", "url": "https://..." }],
+      "tools": ["..."]
+    }
+  }'
+```
+
+**出典引用**:
+> "預けられる範囲は広く、エージェントのループ、ツールの実行、それが動くサンドボックスまで含まれます"
+> ([Claude Managed Agentsで作る問い合わせ調査エージェント — 全体構成とAgent定義の管理](https://tech.findy.co.jp/entry/2026/08/21/070000), セクション "Managed Agentsとは") ※2026-08-21に実際にfetch成功
+
+**出典**:
+- [Claude Managed Agentsで作る問い合わせ調査エージェント — 全体構成とAgent定義の管理](https://tech.findy.co.jp/entry/2026/08/21/070000) (Findy Tech Blog、実際の Sessions API エンドポイント・ヘッダー・エージェント定義スキーマを提示) ※2026-08-21 fetch
+
+**バージョン**: Anthropic Sessions API（`anthropic-beta: managed-agents-2026-04-01`、2026年8月時点）
+**確信度**: 中（Anthropic公式ドキュメントでの直接確認ができておらず、サードパーティ企業ブログ単独の報告）
+**最終更新**: 2026-08-21
+
+---

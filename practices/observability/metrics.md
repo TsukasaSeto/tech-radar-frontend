@@ -435,6 +435,43 @@ async function processOrder(order: Order) {
 
 ---
 
+### 7. Vercel Functions のカスタムメトリクスを `metric()` API で計測し、組み込み Observability データと並べて分析する
+
+Vercel Functions 内で任意のアプリケーションメトリクスを `@vercel/functions` の `metric()` で送信し、Vercel Observability の組み込みデータ（デプロイ元・関数リージョン等のコンテキスト属性が自動付与される）と並べてクエリ・可視化できる。DB クエリ時間やキャッシュヒット率など、トレースだけでは追いにくい業務メトリクスを Observability 基盤に統合できる。
+
+**根拠**:
+- Vercel Observability の Query builder / Notebooks / CLI (`vc metrics`) から組み込みデータと同じ基盤でカスタムメトリクスを参照できる
+- デプロイソースや関数リージョンなどのコンテキスト属性が Vercel 側で自動付与されるため、タグ設計の手間が減る
+- Pro/Enterprise の Observability Plus プランが前提で、メトリクスは observability イベントとして課金される
+
+**コード例**:
+```ts
+import { metric } from "@vercel/functions";
+
+export async function GET() {
+  const start = Date.now();
+  const rows = await db.query("SELECT * FROM my-table");
+  metric("database.query_ms", Date.now() - start, {
+    table: "my-table",
+    db: "my-database",
+  });
+  return Response.json(rows);
+}
+```
+
+**出典引用**:
+> "You can now emit your own metrics directly from your Vercel Functions and analyze them alongside Vercel's built-in observability data."
+> ([Custom metrics are now supported in Vercel Observability](https://vercel.com/changelog/custom-metrics-are-now-supported-in-vercel-observability), 本文冒頭) ※2026-08-21に実際にfetch成功
+
+**出典**:
+- [Custom metrics are now supported in Vercel Observability](https://vercel.com/changelog/custom-metrics-are-now-supported-in-vercel-observability) (Vercel公式changelog) ※2026-08-21 fetch
+
+**バージョン**: @vercel/functions（2026年8月時点、Observability Plus プラン）
+**確信度**: 高（Vercel公式changelog）
+**最終更新**: 2026-08-21
+
+---
+
 ## 関連プラクティス
 
 - [`observability/tracing.md`](./tracing.md) - OpenTelemetry のトレース設定
