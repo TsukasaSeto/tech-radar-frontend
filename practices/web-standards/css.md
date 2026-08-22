@@ -769,3 +769,49 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 **バージョン**: CSS仕様（Stacking Context / Containing Block、全モダンブラウザ共通の挙動）
 **確信度**: 中（CSS仕様上の一般的挙動の解説だが、出典は1記事）
 **最終更新**: 2026-08-07
+
+---
+
+### 13. `oklch()` などの CSS カスタムプロパティに対するフォールバックは `@supports` で分岐する（`var()` 側では失敗しない）
+
+CSS カスタムプロパティ（`--foo: oklch(...)`）はほぼ任意のトークン列を受理し、ブラウザが `oklch()` を解釈できなくても文字列としてそのまま保持してしまう。値を実際に使う `color` などのプロパティで初めて無効値として扱われるため、`var()` 側にフォールバック値を書いても機能しない。`@supports (color: oklch(...))` でブロックごと分岐させる必要がある。
+
+**根拠**:
+- カスタムプロパティは型を持たず、パース可能かどうかのチェックは「値を消費する側」で初めて行われる
+- そのため「未対応ブラウザでは前の宣言にフォールバックする」という期待通りの挙動にならず、無効値が保持されたまま `color` に渡って描画が壊れる
+- `@supports` でカスタムプロパティの再定義自体を丸ごとガードすれば、未対応ブラウザには不正なトークン列を渡さずに済む
+
+**コード例**:
+```css
+/* Bad: var() 側にフォールバックを書いても機能しない */
+:root {
+  --brand: #6d28d9;
+}
+:root {
+  --brand: oklch(50% 0.2 300); /* 未対応ブラウザでも文字列として保持されてしまう */
+}
+.button {
+  background: var(--brand, #6d28d9); /* フォールバックは発火しない */
+}
+
+/* Good: @supports でブロックごと分岐する */
+:root {
+  --brand: #6d28d9;
+}
+@supports (color: oklch(50% 0 0)) {
+  :root {
+    --brand: oklch(50% 0.2 300);
+  }
+}
+```
+
+**出典引用**:
+> "A custom property accepts almost any token sequence. A browser can preserve `oklch(...)` as the value of `--brand` even if it cannot use that function as a color."
+> ([Why OKLCH CSS variables need @supports for a real fallback](https://dev.to/ivan_kulkin_1522025957eee/why-oklch-css-variables-need-supports-for-a-real-fallback-2fgp), 本文) ※2026-08-21に実際にfetch成功
+
+**出典**:
+- [Why OKLCH CSS variables need @supports for a real fallback](https://dev.to/ivan_kulkin_1522025957eee/why-oklch-css-variables-need-supports-for-a-real-fallback-2fgp) (dev.to) ※2026-08-21 fetch
+
+**バージョン**: CSS Custom Properties（CSS Variables）仕様、全モダンブラウザ共通の挙動
+**確信度**: 中（CSS仕様上の一般的挙動の解説だが、出典は1記事）
+**最終更新**: 2026-08-21

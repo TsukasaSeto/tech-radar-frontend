@@ -233,7 +233,7 @@ const nextConfig = {
 - キーが粗すぎると（lockfile だけ）、ソース変更でキャッシュが再利用されない
 - キーが細かすぎると（全ファイル hash）、毎回 cache miss してキャッシュの意味がない
 - `restore-keys` で複数の fallback を指定し、最も近い古いキャッシュから差分ビルド
-- 異なる用途（lint / test / build）にはそれぞれ別キャッシュを切る
+- 異なる用途（lint / test / build）にはそれぞれ別キャッシュを切る — GitHub Actions のキャッシュは同じキーへ上書き保存できないため、複数ジョブが同じキーを共有すると先に保存したジョブのキャッシュだけが残り続け、後続ジョブのビルド結果は永遠に保存されないまま毎回フルビルドになる（実例: lint と test が同じキーを共有し、test 側のコンパイル結果が一度も永続化されていなかったケース）
 
 **設計パターン**:
 ```yaml
@@ -303,13 +303,18 @@ gh cache list -L 50
 gh cache delete <cache-id>  # 不要なキャッシュを削除
 ```
 
+**出典引用**:
+> "GitHub Actionsのキャッシュは同じキーへ上書き保存できないため、`lint`ジョブが先に保存すると、`test`ジョブのコンパイル結果はいつまでもキャッシュに保存されません"
+> ([GitHub ActionsのGoテストを8分→3分弱に短縮 —— setup-goのキャッシュ共有を見直す](https://zenn.dev/remitaid/articles/fa94cb567f5d1d), セクション "なぜ毎回フルコンパイルになっていたのか") ※2026-08-21に実際にfetch成功
+
 **出典**:
 - [GitHub Actions: Cache best practices](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows#matching-a-cache-key) (GitHub Docs)
 - [hashFiles function](https://docs.github.com/en/actions/learn-github-actions/expressions#hashfiles) (GitHub Docs)
+- [GitHub ActionsのGoテストを8分→3分弱に短縮 —— setup-goのキャッシュ共有を見直す](https://zenn.dev/remitaid/articles/fa94cb567f5d1d) (Zenn、lint/testジョブ間のキャッシュキー衝突の実例) ※2026-08-21 fetch
 
 **バージョン**: actions/cache v4
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-21
 
 ---
 

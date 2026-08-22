@@ -343,6 +343,7 @@ Zod スキーマを「型定義の唯一の正」として扱い、
 - フォームバリデーション（React Hook Form + Zod）やAPIレスポンス検証に同一スキーマを再利用できる
 - `z.discriminatedUnion` や `z.transform` を活用してレスポンスの正規化も型安全に行える
 - スキーマをファイル分割してフロント・バック（tRPC 等）で共有できる
+- 「型が付いている」と「実行時に検証されている」を混同しない： `@hono/zod-openapi` の `responses[...].content['application/json'].schema` は OpenAPI ドキュメント生成と TypeScript の型推論にしか使われず、実行時には一切検証されない。`c.json(dbRow)` のように DB の生データをそのまま返すと、型上は正しく見えても余分なカラムが漏洩しうるため、`satisfies z.infer<typeof Schema>` や `schema.parse(data)` を通す実装側の一手間が別途必要になる
 
 **コード例**:
 ```ts
@@ -399,13 +400,18 @@ interface Post { title: string; status: string }  // Zod スキーマとズレ�
 const titleSchema = z.string().min(1);              // 型と分離して管理
 ```
 
+**出典引用**:
+> "`responses`スキーマは**OpenAPIドキュメント生成とTypeScriptの型推論にしか使われておらず、ランタイムでは一切検証されていない**"
+> ([hono/zod-openapiでレスポンススキーマを静的に検証する方法](https://qiita.com/natsugure/items/4b592c94752a473160e7), セクション "なぜ防げなかったか") ※2026-08-21に実際にfetch成功
+
 **出典**:
 - [Zod: Type Inference](https://zod.dev/?id=type-inference) (Zod公式)
 - [React Hook Form: Zod Resolver](https://react-hook-form.com/docs/useform#resolver) (React Hook Form公式)
+- [hono/zod-openapiでレスポンススキーマを静的に検証する方法](https://qiita.com/natsugure/items/4b592c94752a473160e7) (Qiita、`@hono/zod-openapi` のレスポンススキーマがランタイム未検証である実例と `satisfies`/`typedJson()` による対策) ※2026-08-21 fetch
 
 **バージョン**: Zod 3+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-21
 
 ---
 
