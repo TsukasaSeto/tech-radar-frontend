@@ -252,6 +252,8 @@ function EmailField() {
 - `:focus-visible` はキーボード操作時のみフォーカスリングを表示し、マウス操作時は非表示にできる
 - Focus Trap がないモーダルではユーザーが Tab キーでモーダル外に出てしまい操作不能になる
 - WCAG 2.1 SC 2.4.7（Focus Visible）はフォーカスインジケータの視認性を要求する
+- モバイルファーストで開発し、タッチデバイスのみで確認していると `:hover` に相当する操作状態が存在しないため、実装漏れに永久に気づけない構造的盲点がある。PC での確認を開発フローに組み込む必要がある
+- 独自に `outline: none` を指定する必要は本来ない: モダンブラウザは `:focus-visible` の仕様に沿って、マウスクリック等ポインタ操作によるフォーカスではアウトラインを表示しない挙動を標準で持つ。素の `outline: none` は `:focus-visible` 未対応環境向けの互換コードでない限り不要になっている
 
 **コード例**:
 ```css
@@ -355,10 +357,18 @@ function Drawer({ isOpen, onClose, children }: DrawerProps) {
 - [MDN: :focus-visible](https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible) (MDN Web Docs)
 - [WCAG 2.1 SC 2.4.7: Focus Visible](https://www.w3.org/TR/WCAG21/#focus-visible) (W3C WCAG)
 - [WAI-ARIA Authoring Practices: Managing Focus](https://www.w3.org/WAI/ARIA/apg/practices/managing-focus/) (W3C WAI)
+- [モバイルファーストで作ったらhoverが0件だった——PCで触るまで気づけない欠陥](https://zenn.dev/matsutake_prgrm/articles/mobile-first-hover-focus-blindspot) (Zenn、モバイルファースト開発の構造的盲点と outline:none の要否) ※2026-08-22に実際にfetch成功
+
+**出典引用**:
+> "マウスにしかない「押す前」という状態を、スマホで確認している限り、永久に思い出せない"
+> ([モバイルファーストで作ったらhoverが0件だった——PCで触るまで気づけない欠陥](https://zenn.dev/matsutake_prgrm/articles/mobile-first-hover-focus-blindspot), セクション "見落としではなく、構造的に気づけない") ※2026-08-22に実際にfetch成功
+
+> "ブラウザが「キーボードで到達した」と判断したときだけ効くので、マウスのクリックではもう出ません"
+> ([モバイルファーストで作ったらhoverが0件だった——PCで触るまで気づけない欠陥](https://zenn.dev/matsutake_prgrm/articles/mobile-first-hover-focus-blindspot), セクション "outline-none はそもそも要らなかった") ※2026-08-22に実際にfetch成功
 
 **バージョン**: Chrome 86+, Firefox 85+, Safari 15.4+（:focus-visible）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-08-22
 
 ---
 

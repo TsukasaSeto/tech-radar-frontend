@@ -572,6 +572,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - `AGENTS.md` は「恒久的なルール」のみを置き肥大化を防ぐ：手順は SOP へ、設計決定は `_docs/decisions/` へ、作業ログは `_docs/logs/` へ分離する。重要な規則が大量の作業メモに埋もれると遵守率が下がる
 - MCP は **Opt-in モデル**で管理する：常時接続 MCP が増えるほど起動遅延・コンテキスト肥大・CI 不安定が生じる。個人（`~/.codex/config.toml`）→ リポジトリ（`.codex/config.toml` でツールレベル allowlist）→ CI（最小構成）の3層で制御し、タスク要件なしに MCP を自動呼び出ししない
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
+- **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -615,6 +616,16 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 # 例: .claude/settings.json の hooks.PostToolUse から shared/hooks/ruff-format.sh を呼ぶ
 ```
 
+```json
+// .claude/settings.json で意図しない CLAUDE.md 連結を除外する（解決規則の違いへの対策）
+{
+  "claudeMdExcludes": [
+    "**/monorepo/CLAUDE.md",
+    "/home/user/monorepo/other-team/.claude/rules/**"
+  ]
+}
+```
+
 **出典引用**:
 > "共通正本 + 薄いアダプタ。両ツールに守ってほしい情報を1箇所に集約し、各ツール固有の機構をその上に薄く乗せる"
 > ([Claude Code × Codex 共存セットアップ — ルール・Skills・hooks を一元管理する](https://qiita.com/kirozero/items/aec53be56a5427475969), セクション "設計原則") ※2026-05-13に実際にfetch成功
@@ -634,9 +645,12 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 > "symlink は「1実体に束ねる」は解くが、「宣言」と「検証」は解かない"
 > ([AGENTS.md / CLAUDE.md / copilot-instructions.md の増殖を、宣言で終わらせる](https://qiita.com/takashi-matsuyama/items/52cca442efe77ec84f70), セクション "symlink の限界") ※2026-07-11に実際にfetch成功
 
+> "Agents automatically read the nearest file in the directory tree, so the closest one takes precedence."（AGENTS.md の解決規則） / "All discovered files are concatenated into context rather than overriding each other."（CLAUDE.md の解決規則）
+> ([AGENTS.md と CLAUDE.md は解決規則が逆 — symlink する前に確認すること](https://zenn.dev/tsutomusaito/articles/agents-md-claude-code-resolution), セクション "本題: 解決規則が逆向き") ※2026-08-22に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-07-11
+**最終更新**: 2026-08-22
 
 ---
 

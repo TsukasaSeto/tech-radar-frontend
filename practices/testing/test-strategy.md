@@ -543,6 +543,7 @@ AST 解析でテストコードのパターンを静的に検出し、ミラー�
 - グリーン CI は「コードとテストが一致する」ことを示すにすぎず、「コードが正しい」ことを証明しない
 - 同じ書き手が実装とテストを同時に作ると、期待値が実装から導かれ独立した検証にならない
 - 静的解析（実行前の AST パターン照合）でミラーパターンを実行前に検出できる
+- 同じ構造の見落としは E2E/ブラウザ操作テストでも起きる: 固定秒数の `wait` で要素の出現有無を確認せず処理を続けると、要素が見つからないまま「成功」扱いになる。AI が生成した E2E テストは assertion 自体は存在しても、正しい対象を assert しているとは限らない — 「PASS した」は結果であって正しさの証明ではない
 
 **ミラーパターンの4種類**:
 ```python
@@ -584,9 +585,15 @@ python mirror_audit.py tests/ --max-mirror-ratio 0.30 || {
 > "A test asserts that the code does what the test expects. If the same author writes both...the expectation is shaped by the code."
 > ([Audit AI-Generated Tests: Half of Green CI Proves Nothing](https://dev.to/alex_spinov/audit-ai-generated-tests-half-of-green-ci-proves-nothing-4bmb), セクション "Main Problem") ※2026-06-22に実際にfetch成功
 
+> "短い本文では、4秒後には公開設定画面に移動していたため、このコードでも動いているように見えました。"
+> ([Playwrightで「固定秒数待ち」がタグ入力を黙って飛ばした話](https://qiita.com/SciCos/items/1f3bb4610838bdc51f9e), セクション "起きたこと") ※2026-08-22に実際にfetch成功
+
+> "assertionがあることと、正しいものをassertしていることは違います。"
+> ([AIにPlaywrightのE2Eテストを書かせたら、「PASSしたテスト」ほど疑うべきだった話](https://qiita.com/locolisu/items/4c0cb461776f129581bb), セクション "PASSした は結果であって、正しさの証明ではない") ※2026-08-22に実際にfetch成功
+
 **バージョン**: CI 非依存（AST 解析は言語・フレームワーク問わず適用可）
 **確信度**: 中
-**最終更新**: 2026-06-22
+**最終更新**: 2026-08-22
 
 ---
 
