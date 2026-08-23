@@ -523,6 +523,8 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
   意図しない外部通信を行うリスクがある
 - 多層防御（ネットワーク分離 + パッケージ検証 + ファイル権限制限）により、
   コンテナエスケープやゼロデイ攻撃の被害をホストOSへ波及させないことが目標
+- `docker.sock` をコンテナにそのままマウントする構成は、コンテナ内から docker CLI を叩けることがホスト特権への抜け道になりうる。ネストした rootless な代替コンテナランタイム経由にする、またはソケットを一切マウントしない設計にする
+- `~/.claude` 等の設定ディレクトリをホストと共有マウントすると、複数プロジェクトを横断してエージェントの設定・認証情報が露出しうる。プロジェクト単位でスコープした設定ディレクトリ（Rule #39 の `CLAUDE_CONFIG_DIR` 分離と同じ考え方）を read-only overlay でマウントする
 
 **コード例**:
 ```json
@@ -550,9 +552,15 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 > "Dev Containersはデフォルトのbridge ネットワークでは、外向き通信は NAT 経由で素通しになります"
 > ([Claude Codeとサプライチェーン攻撃（npm＆バイナリ）を隔離するdevcontainer.json](https://zenn.dev/isosa/articles/971ab0b2281f53), セクション "ネットワーク分離の背景") ※2026-05-13に実際にfetch成功
 
+> "エージェントに「好き放題」させる自由は、境界の設計と引き換えに手に入る。"
+> ([AIエージェントに「好き放題」させるためのコンテナ信頼境界設計](https://zenn.dev/crandim_r_and_d/articles/260822_a1_container_trust_boundary_for_ai_agents), 本文) ※2026-08-23に実際にfetch成功
+
+**出典（追加）**:
+- [AIエージェントに「好き放題」させるためのコンテナ信頼境界設計](https://zenn.dev/crandim_r_and_d/articles/260822_a1_container_trust_boundary_for_ai_agents) (Zenn、docker.sock マウントによるホスト特権漏洩とネスト rootless podman・`~/.claude` 共有マウントの露出パターン) ※2026-08-23 fetch
+
 **バージョン**: Claude Code（全バージョン）, Dev Containers（全バージョン）
 **確信度**: 中
-**最終更新**: 2026-05-13
+**最終更新**: 2026-08-23
 
 ---
 
@@ -2704,6 +2712,9 @@ jobs:
 > "承認されなかったとき、何が起きるかを全部設計すること"
 > ([承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6), セクション "Introduction") ※2026-07-30に実際にfetch成功
 
+> "信頼性はモデルの性質ではなく、運用の構造で作る必要があります"
+> ([AIに全部任せて、4箇所だけ止める](https://zenn.dev/zenn_content/articles/claude-code-intention-guardrail), 本文) ※2026-08-23に実際にfetch成功
+
 **具体的な失敗事例（自己承認と監査ログの偽装）**:
 `plan` テーブルに書き込めるモデル自身が承認ステップも呼び出せる設計だと、「人間専用インターフェースに承認APIを限定する」という原則を破っていなくても、書き込み権限＝承認権限になってしまう。監査ログには `phase=approved actor=<name>` のような、一見すると人間がレビューしたように見えるエントリが残るが、実際には誰も内容を確認していない。承認ゲートの設計レビューでは「誰が approve API を呼べるか」を書き込み権限と独立して確認する必要がある。
 
@@ -2714,10 +2725,11 @@ jobs:
 - [MCPからのフィードバック送信を事故らせない「prepare / approve / commit」設計](https://zenn.dev/susie/articles/ff7e57ba892542) (Zenn susie、書き込みツールの3段階分割とペイロードハッシュによる改ざん防止) ※2026-07-30 fetch
 - [承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6) (Zenn argosvix、TTL fail-closed・人間専用の判定API・トークン非通知・監査ログによる「拒否パス」設計) ※2026-07-30 fetch
 - [「人間が承認しました」と記録して、承認していたのは提案者本人だった](https://zenn.dev/maronsan/articles/llm-safe-sql-approval-hole) (Zenn、書き込み権限と承認権限の未分離による自己承認・監査ログ偽装の実例) ※2026-08-15に実際にfetch成功
+- [AIに全部任せて、4箇所だけ止める](https://zenn.dev/zenn_content/articles/claude-code-intention-guardrail) (Zenn、L1テキスト指示/L2 `permissions.deny`/L3 PreToolUse hook の3層と「決裁パケット」形式による承認可視化) ※2026-08-23 fetch
 
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-15
+**最終更新**: 2026-08-23
 
 ---
 
@@ -3595,5 +3607,43 @@ server.tool(
 **バージョン**: Claude Code（MCP対応バージョン全般、2026年8月時点の挙動）
 **確信度**: 中（単独記事の再現実験によるパターン1c採用）
 **最終更新**: 2026-08-21
+
+---
+
+### 45. Codex CLI の `--ignore-user-config` / `--ignore-rules` はユーザースキル（`$HOME/.agents/skills` 等）を隔離しない
+
+Codex CLI（他 CLI エージェント全般の類推参考として Claude Code のスキル分離設計にも当てはまる）は `--ignore-user-config` と `--ignore-rules` を渡しても、ユーザーレベルのスキル定義（ホームディレクトリ配下のスキルファイル）の発見・実行までは抑止しない。`HOME` を空のディスポーザブルディレクトリに差し替えても `CODEX_HOME` が既存のまま残っていると、フラグが「ユーザー設定を無視した」ように見えても実際にはスキルが読み込まれる。CI やマルチテナント環境で「ユーザー設定を無視するフラグを渡したのでスキルからも隔離できた」と誤判定しないこと。
+
+**根拠**:
+- `HOME` を空にしても `CODEX_HOME` を既存のまま渡す構成では、2つの ignore flag を付けてもユーザースキルが発見・実行された（再現実験で確認）
+- 「ユーザー設定の無視」と「ユーザースキルの隔離」は Codex CLI の設計上別のスコープであり、フラグ名から前者が後者も含むと類推するのは誤り
+
+**コード例**:
+```bash
+# 再現実験コマンド（codex-cli 0.147.0）
+HOME=<DISPOSABLE_HOME> CODEX_HOME=<EXISTING_CODEX_HOME> \
+codex -a never exec \
+  --sandbox read-only \
+  --ephemeral \
+  --ignore-user-config \
+  --ignore-rules \
+  --skip-git-repo-check \
+  -C <EMPTY_WORKSPACE> \
+  -c sandbox_workspace_write.network_access=false \
+  '<COMMON_PROMPT>'
+# → --ignore-user-config / --ignore-rules を付けても $HOME/.agents/skills 相当のユーザースキルが発見・実行された
+```
+
+**アンチパターン**:
+- CI やサンドボックス環境で `--ignore-user-config` / `--ignore-rules` だけを根拠に「ユーザースキルからも隔離できた」と判定する
+- `HOME` だけを差し替え、`CODEX_HOME`（またはツール固有の設定ディレクトリ変数）を差し替え忘れる
+
+**出典引用**:
+> "記録した条件では2つのignore flagがtreatmentのユーザースキルの発見と明示的な実行を抑止しなかった"
+> ([Codexのignore flagsだけではユーザースキルを隔離できない](https://zenn.dev/clopy/articles/codex-ignore-flags-user-skill-boundary), セクション "treatmentだけがスキル本文のマーカーを返した") ※2026-08-23に実際にfetch成功
+
+**バージョン**: Codex CLI 0.147.0（2026-08-15時点で記録された挙動）
+**確信度**: 中（公式CLIフラグの実測検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-08-23
 
 ---
