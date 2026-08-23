@@ -386,3 +386,59 @@ test('does not work', async () => {
 **バージョン**: Next.js 16+
 **確信度**: 高（v16 公式相当の知見）
 **最終更新**: 2026-05-16
+
+---
+
+### 7. Playwright 1.62 のコンポーネントテストは「stories & galleries」モデルに移行しており、`mount()` の返り値が変わったことを踏まえて構成する
+
+Playwright のコンポーネントテスト（Component Testing）は 1.62 で「stories & galleries」モデルに再設計された。旧方式では Playwright 自身がバンドラを持ち JSX を直接マウントしていたが、新方式では JSX がアプリ側の `*.story.tsx` に移り、Playwright は「バンドラを持つ側」をやめて、アプリ自身の dev server が配信する1枚の HTML（gallery）を叩くだけになる。`playwright.config.ts` の `webServer` / `baseURL` を gallery の URL に向け、gallery 側で `window.mount()` / `window.unmount()` の契約を実装する必要がある。1.62.0 にはリグレッションが報告されているため、`1.62.1` 以降を使う。
+
+**根拠**:
+- 新方式では Playwright がバンドラを持たなくなり、アプリ自身の dev server（Vite 等）が配信する gallery HTML を経由してコンポーネントをマウントするため、`playwright.config.ts` の `webServer` / `baseURL` を gallery URL に向ける設定が必須になる
+- `fixtures.mount()` は gallery に遷移して story id でマウントし、story のルート要素にスコープした `Locator` を返す設計になっている
+- 1.62.0 自体にリグレッションが報告されているため、導入時は `1.62.1` 以降を明示的に指定する
+
+**コード例**:
+```typescript
+// playwright.config.ts
+const GALLERY_URL = 'http://localhost:5173/playwright/gallery/index.html';
+
+export default defineConfig({
+  // ...
+  use: { baseURL: GALLERY_URL },
+  webServer: {
+    command: 'npm run dev',
+    url: GALLERY_URL,
+    reuseExistingServer: !process.env.CI,
+  },
+});
+```
+
+```typescript
+// gallery 側（index.html から読み込まれるスクリプト）が実装する mount/unmount 契約
+window.mount = async ({ story, props }) => {
+  const Story = await resolveStory(story);
+  if (!Story) throw new Error(`Unknown story: ${story}`);
+  root ??= createRoot(rootEl);
+  flushSync(() => {
+    root!.render(<StrictMode><Story {...props} /></StrictMode>);
+  });
+};
+
+window.unmount = async () => {
+  root?.unmount();
+  root = undefined;
+};
+```
+
+**アンチパターン**:
+- 旧方式（Playwright 自身がバンドラを持ちJSXを直接マウントする）のドキュメント・記事を参照して `playwright.config.ts` を構成し、`webServer` / `baseURL` を gallery URL に向け忘れる
+- リグレッションが報告されている `1.62.0` をそのまま使う
+
+**出典引用**:
+> 「Component testing が stories and galleries モデルに移った。`fixtures.mount()` は gallery に遷移して story id で mount し、story の root 要素にスコープした `Locator` を返す」
+> ([Playwright 1.62 の stories & galleries でコンポーネントテストを最小構成から作ってみた](https://zenn.dev/clopy/articles/playwright162-ct-stories-galleries), セクション "何が変わったのか（1.62.0 のリリースノート）") ※2026-08-23に実際にfetch成功
+
+**バージョン**: Playwright 1.62.1+
+**確信度**: 中（公式ツールのバージョン固有機能を検証した単独記事、パターン1c採用）
+**最終更新**: 2026-08-23

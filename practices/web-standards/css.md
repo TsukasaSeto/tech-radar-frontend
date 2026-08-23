@@ -815,3 +815,42 @@ CSS カスタムプロパティ（`--foo: oklch(...)`）はほぼ任意のトー
 **バージョン**: CSS Custom Properties（CSS Variables）仕様、全モダンブラウザ共通の挙動
 **確信度**: 中（CSS仕様上の一般的挙動の解説だが、出典は1記事）
 **最終更新**: 2026-08-21
+
+---
+
+### 14. Tailwind CSS v4 では `leading-*` がレスポンシブな `text-*` に勝つ（v3 とカスケード優先順位が逆転している）
+
+Tailwind CSS v3 では `text-{size}` ユーティリティが行間（line-height）を直接 CSS プロパティとして出力していたため、レスポンシブバリアント（`md:text-5xl` 等）が後から出力されて `leading-*` を上書きすることがあった。v4 では `text-*` の line-height が `var(--tw-leading, var(--text-*--line-height))` というカスタムプロパティ経由のフォールバック形式に変わり、`leading-*` が明示的に `--tw-leading` を設定するため、宣言順に関わらず `leading-*` が常に優先される。バージョンアップ時にこの優先順位の逆転に気づかず「効かなくなった」と誤診しないよう注意する。
+
+**根拠**:
+- v3 は `text-{size}` が `line-height` を直接代入するため、CSSの宣言順（レスポンシブバリアントが後に出力される）で上書きが発生していた
+- v4 は `text-{size}` の line-height が `var(--tw-leading, var(--text-{size}--line-height))` というフォールバック形式になり、`leading-*` が `--tw-leading` カスタムプロパティを明示的に設定することで、宣言順ではなく変数の有無で優先順位が決まる構造に変わった
+
+**コード例**:
+```html
+<h1 class="text-4xl font-bold leading-tight md:text-5xl lg:text-6xl">…</h1>
+```
+```css
+/* Tailwind v4 が生成する CSS（抜粋） */
+.text-6xl {
+  font-size: var(--text-6xl);
+  line-height: var(--tw-leading, var(--text-6xl--line-height));
+}
+.leading-tight {
+  --tw-leading: var(--leading-tight);
+  line-height: var(--leading-tight);
+}
+```
+
+**アンチパターン**:
+- Tailwind v3→v4 移行時に「`leading-*` が効かなくなった／急に効くようになった」を Tailwind のバグと誤診し、実際にはカスケード優先順位の仕様変更であることに気づかない
+
+**出典引用**:
+> "v4 では `leading-*` がレスポンシブな `text-*` に勝つ。v3 は逆で、後から出力されるレスポンシブ変種が行間を上書きしていた"
+> ([Tailwind v4 で leading-* が勝つようになった](https://zenn.dev/ukintech/articles/tailwind-v4-leading-vs-responsive-text), セクション "なぜ変わったのか — 生成 CSS を見ると分かる") ※2026-08-23に実際にfetch成功
+
+**バージョン**: Tailwind CSS v4+
+**確信度**: 中（公式ツールのバージョン間挙動差を検証した単独記事、パターン1c採用）
+**最終更新**: 2026-08-23
+
+---

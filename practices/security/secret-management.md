@@ -644,6 +644,7 @@ const { payload } = await jwtVerify(token, JWKS);
 - CLI のログイン情報（`vercel login` 等でローカルに保存される認証情報）とアプリへ渡す API キーは性質が異なる。前者は開発者個人の権限、後者はアプリケーションの実行時権限であり、同じ `.env.local` にまとめると権限の境界が曖昧になる
 - macOS では `security` コマンドで Keychain にサービス単位のエントリを作成でき、Preview/Production 用に別エントリを分ければ環境ごとの取り違えも防げる
 - CI トークンは個人の認証情報を使い回さず、権限を絞った専用トークンを発行する
+- git の remote URL や `.git/config` に PAT を直接埋め込む（`https://<token>@github.com/...`）と平文で残り続ける。`gh auth login` 等 CLI ネイティブの credential helper 方式に切り替えれば、OS のクレデンシャルストア経由でトークンを扱え、`.git/config` には平文トークンが残らない
 
 **命名規約**: `<app>-<purpose>-<environment>`（例: `comic-app-openai-preview`）
 
@@ -667,6 +668,11 @@ security find-generic-password \
 vercel login
 neon auth
 wrangler login --use-keyring
+
+# git/GitHub: remote URL に PAT を平文で埋め込む代わりに credential helper を使う
+gh auth login
+gh auth setup-git
+git config --global --get credential.https://github.com.helper
 ```
 
 **出典引用**:
@@ -678,9 +684,10 @@ wrangler login --use-keyring
 
 **出典**:
 - [シークレットはどこに置く？ .env、Keychain、CLIログイン、Secretストアを整理した](https://zenn.dev/optimisuke/articles/d7a4c2e91f6b30) (Zenn、アプリ/CLI/CIの3分類とmacOS Keychainへの実際の保存・取得コマンド) ※2026-08-19 fetch
+- [【GitHub】セキュリティ強化のためPAT を卒業する](https://qiita.com/kura13/items/78073e51eac9a4e72383) (Qiita、`.git/config` への PAT 平文埋め込みから `gh auth login` の credential helper への切り替え手順) ※2026-08-23 fetch
 
-**バージョン**: 一般原則（例は macOS `security` コマンド + Vercel CLI）
+**バージョン**: 一般原則（例は macOS `security` コマンド + Vercel CLI + GitHub CLI）
 **確信度**: 中（単一記事だが各CLIの実際のコマンド・フラグを直接示す実機検証のためパターン1c扱い）
-**最終更新**: 2026-08-19
+**最終更新**: 2026-08-23
 
 ---

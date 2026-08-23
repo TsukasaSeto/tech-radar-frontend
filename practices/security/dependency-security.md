@@ -343,6 +343,13 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - lockfile-lint で lockfile の整合性（resolved URL・integrity hash）も検証する
 - `npm audit` / `pnpm audit` は CVE 登録済みの既知脆弱性のみを検出する。Socket のような行動解析型スキャナーは install script 実行可否・ネットワーク接続要求・ファイルシステム操作を静的解析し、CVE に存在しない新種マルウェアや公開直後の zero-day 汚染を検知できる
 - 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: `!=3.0` で難読化された特定バージョンを除外）を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
+- 個人のローカル開発環境でも、行動解析型スキャナーを `npm`/`pnpm` コマンド自体に shell alias でかぶせておくと「実行するたびに」検査が効く。指示や記憶に頼る運用（「怪しいパッケージは手動で確認する」）は忘れられるが、alias と pre-commit フックは忘れない
+
+**個人開発環境でのエイリアス例**:
+```bash
+# ~/.zshrc 等
+alias npm='sfw npm'   # Socket Firewall 経由で install を検査してから実行
+```
 
 **`--ignore-scripts` の運用**:
 ```bash
@@ -523,6 +530,7 @@ updates:
 - [npm サプライチェーン攻撃対策として pnpm v11 を導入した話](https://zenn.dev/onthebakery/articles/8060f23d1f948c) (Zenn、minimumReleaseAge 7日間延長・除外リスト承認期限 CI チェックの実践) ※2026-06-22に実際にfetch成功
 - [Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn) (dev.to、direct Poisoned Pipeline Execution・弱いブランチ保護の悪用) ※2026-07-14に実際にfetch成功
 - [When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b) (Medium、警告を「インストール後の報告」から「インストール前の非バイパスゲート」に転換した実例) ※2026-07-25に実際にfetch成功
+- [サプライチェーン攻撃への多層防御を「個人の開発環境」に組み込む](https://zenn.dev/crandim_r_and_d/articles/260822_a3_supply_chain_defense_personal) (Zenn、`npm`/`pnpm` を shell alias で行動解析スキャナー経由に固定する個人開発環境向けパターン) ※2026-08-23に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -563,7 +571,7 @@ snyk test
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-07-25
+**最終更新**: 2026-08-23
 
 ---
 
