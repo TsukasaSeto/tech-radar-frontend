@@ -10,6 +10,7 @@ Next.js の App Router、Server Components、Server Actions、ルーティング
 - `caching.md` - キャッシュ戦略
 - `server-actions.md` - Server Actions の活用
 - `middleware.md` - Middleware の運用
+- `security-headers.md` - `headers()` API による静的セキュリティヘッダー設定
 - `../architecture/data-access-layer.md` - DAL（データアクセスの単一出入り口）
 
 ## 設計判断の優先順位
