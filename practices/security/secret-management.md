@@ -691,3 +691,40 @@ git config --global --get credential.https://github.com.helper
 **最終更新**: 2026-08-23
 
 ---
+
+### 7. Vercel の環境変数は Secret 種別 + 「本番シークレット値分離」ポリシーで管理する
+
+Vercel は環境変数の「Sensitive」トグルを廃止し、Config（保存後も値を閲覧可能）と Secret（保存後は誰も値を閲覧・取得できず、デプロイからのみ参照可能）の2種別に分離した。あわせて、Secret 型の本番環境の値が Preview / Development / カスタム環境と同一であることを禁止する新ポリシー「Separate Production Secret Values」が提供されている。
+
+**根拠**:
+- Config は公開してよい非機密設定（例: 公開フレームワーク変数）向けで、保存後もメンバーが値を閲覧できる
+- Secret はパスワード・APIキー・トークン向けで、保存後はメンバーが値を閲覧・取得できない（デプロイからのみ参照可能）
+- 既存の Sensitive フラグ付き変数は自動的に Secret 扱いとなり、移行作業は不要（後方互換）
+- 旧ポリシー「Enforce Sensitive Environment Variables」は廃止され、新ポリシー「Separate Production Secret Values」に置き換えられた。このポリシーは Secret 型の本番値が Preview/Development/カスタム環境の値と異なることを強制する
+- レガシーの `--sensitive` / `--no-sensitive` CLI フラグは引き続き動作し、それぞれ Secret / Config にマッピングされる
+- Rule #4（Secret Manager 採用）とは補完関係にある: #4 は「本番で平文 `.env` を使わない」というプラットフォーム非依存の原則、本ルールは Vercel 自身の環境変数システムが提供する write-only な値保護と環境間の値分離強制という、プラットフォーム固有の具体的な実装手段
+
+**コード例**:
+```bash
+# Config: 公開してよい設定値（保存後も値を閲覧可能）
+vercel env add API_URL production --value "https://api.example.com" --visibility config --yes
+
+# Secret: 機密値（保存後は誰も閲覧・取得できない）
+vercel env add API_KEY production --value "sk_live_..." --visibility secret --yes
+```
+
+**出典引用**:
+> "The value remains available to your deployments and can be replaced, but members cannot view or retrieve it after saving."
+> ([Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types), セクション本文) ※2026-08-24に実際にfetch成功
+
+> "the Production value for a Secret must differ from the values used for the same key in Preview, Development, and custom environments."
+> ([Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types), セクション "Separate Production Secret Values") ※2026-08-24に実際にfetch成功
+
+**出典**:
+- [Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types) (Vercel 公式 changelog) ※2026-08-24 fetch
+
+**バージョン**: Vercel（環境変数 Config/Secret 種別、2026-08時点）
+**確信度**: 高
+**最終更新**: 2026-08-24
+
+---

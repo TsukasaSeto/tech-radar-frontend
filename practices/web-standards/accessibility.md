@@ -780,3 +780,58 @@ function ComparisonTable() {
 **最終更新**: 2026-07-29
 
 ---
+
+### 10. alt 属性は「有無」だけでなく、ファイル名・プレースホルダー・汎用語・視覚的重複を機械的に検知し、画像の役割に応じて内容を書き分ける
+
+自動チェックは alt 属性の有無しか検証できず、`alt="IMG_2847.png"` や `alt="image"` のような無意味な文字列も通過してしまう。文字列だけで判定できる決定的ルール（ファイル名・プレースホルダー・汎用語・重複）と、画像内容や周辺文脈（見出し・figcaption・周辺テキスト）を使う推測的な判定を分離し、後者はオプトインの「提案」として扱う設計が有効。重複判定は DOM 順ではなく画面上の視覚的近接性（bounding box）で行う。
+
+**根拠**:
+- Web の主要サイトで、画像の4枚に1枚以上が alt 欠落・曖昧・隣接画像からのコピーであるという実態調査がある
+- 文字列のみで機械的に検出可能な5パターンを定義できる: 空/欠落、ファイル名（`hero.png` 等）、プレースホルダー（`TODO`, `tbd`）、媒体名を述べただけの汎用語（`image`, `logo`, `chart`）、視覚的に近い画像間での同一 alt の繰り返し
+- 重複検知は「レイアウトの問題であって DOM の問題ではない」。ドキュメント順で判定すると、たまたまコード上隣接しているだけの無関係な画像（例: ヘッダーとフッターのロゴ）を誤検知するため、画面上の視覚的近接性で判定すべき
+- 画像内容を見るモデル判定は「decorative → redundant with caption → functional → informative」の順で最初に一致した段階で判定を止める手順にすると、既に十分な alt テキストに無限に改善提案を出し続けることを防げる
+- モデル判定はデフォルト無効・オプトインとし、画像URL・リンク先の署名付きトークンやセッションIDの漏洩を防ぐためクエリ文字列とフラグメントを redact してから文脈情報として渡す
+- 決定的ルールと推測的（モデル）ルールを明確に分離し、前者は「安く・予測可能・デフォルト有効」、後者は「オプトイン・提案として提示」という異なるデフォルトを与えるべき
+- ツールの限界: `aria-label` は評価不可、認証必須の画像は検査不可、SVG/`role="img"`/CSS背景/canvas は非対応、最終的な alt 文言の提案はしない、静音（フラグが立たない）ことはカバレッジの証明にはならない
+
+**コード例**:
+```
+機械的（決定的）に検出できる悪い alt テキストのパターン:
+alt="" または alt 属性なし          → 欠落
+alt="hero.png" / alt="IMG_2847.jpg" → ファイル名
+alt="TODO" / alt="tbd"              → プレースホルダー
+alt="image" / alt="logo" / alt="chart" → 媒体名のみ（内容を説明していない）
+alt="3/5 stars"（星アイコン5個で同一文字列が繰り返される） → 視覚的に近接した重複
+
+# Bad
+alt="image"
+# Good
+alt="image of the login screen with the SSO button highlighted"
+```
+
+画像の役割判定の決定手順（上から順に最初に一致した段階で確定）:
+```
+1. decorative（装飾的）
+2. redundant with a caption（キャプションと重複）
+3. functional（機能的・操作対象）
+4. informative（情報伝達）
+```
+
+**出典引用**:
+> "Repetition is a layout problem, not a DOM problem."
+> ([Your alt text passes automated checks. That doesn't mean it's any good.](https://github.blog/engineering/user-experience/your-alt-text-passes-automated-checks-that-doesnt-mean-its-any-good/), セクション "Repetition is a layout problem, not a DOM problem") ※2026-08-24に実際にfetch成功
+
+> "The prompt walks four ordered steps, stops at the first that matches, and emits that step's verdict: decorative, redundant with a caption, functional, or informative."
+> ([Your alt text passes automated checks. That doesn't mean it's any good.](https://github.blog/engineering/user-experience/your-alt-text-passes-automated-checks-that-doesnt-mean-its-any-good/), セクション "Getting a model to act like a reviewer, not a critic") ※2026-08-24に実際にfetch成功
+
+> "Separate what you can prove from what you can only suspect, and give them different defaults."
+> ([Your alt text passes automated checks. That doesn't mean it's any good.](https://github.blog/engineering/user-experience/your-alt-text-passes-automated-checks-that-doesnt-mean-its-any-good/), セクション "What we'd tell you if you're building something similar") ※2026-08-24に実際にfetch成功
+
+**出典**:
+- [Your alt text passes automated checks. That doesn't mean it's any good.](https://github.blog/engineering/user-experience/your-alt-text-passes-automated-checks-that-doesnt-mean-its-any-good/) (GitHub Engineering Blog 公式) ※2026-08-24 fetch
+
+**バージョン**: 一般原則（GitHub 公式ブログの alt テキスト自動レビュー設計事例）
+**確信度**: 高
+**最終更新**: 2026-08-24
+
+---

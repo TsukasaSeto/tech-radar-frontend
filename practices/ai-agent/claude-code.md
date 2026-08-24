@@ -1397,6 +1397,7 @@ Claude Code を組織全体で安全に展開するには、個人設定で上�
 - **設定ファイルは「起動ディレクトリ」の `.claude/` しか読まれない**: Claude Code はカレントディレクトリ（起動ディレクトリ）直下の `.claude/settings.json` のみを見る。サブディレクトリに `.claude/` を置いても読み込まれないため、モノレポでサブパッケージごとに個別の許可/拒否設定をしたい場合は、そのディレクトリで Claude Code を起動する運用にするか、起動ディレクトリ側の設定に集約する必要がある
 - **Deny リストは credential 系ファイルを網羅的に列挙する**: `Read(./.env)` のような単発パスだけでなく、`Bash(cat *.env)` / `Bash(cat *.pem)` / `Bash(cat ~/.aws/*)` / `Bash(cat ~/.config/gcloud/*)` / `Bash(env)` / `Bash(printenv:*)` のように **Bash 経由のコマンドと Read ツールの両方の経路**を塞ぐ。どちらか一方だけでは cat や env コマンド経由で読み取られる
 - **GitHub 権限を渡す AI エージェントは Read 権限から始める**: 多くの場合は Read だけで十分な作業が始められる。書き込みが必要になった時点で個別に拡張し、本番相当の操作はブランチ作成 → 修正 → PR 作成 → 人間レビューの経路に限定する。DB アクセスのような広いツールも `database.execute_sql` のような万能ツールではなく、`database.read_customer` / `database.get_order_status` のような粒度の細かいツールに分割すると、権限設計と監査ログの両方が扱いやすくなる
+- **クラウド側 IAM は Google Cloud PAM で JIT（Just-In-Time）昇格にする**: Claude Code 自体の `permissions.deny`/MCP 許可リストは「ツールに何をさせるか」を制御する層だが、AI エージェントが人間の認証情報を使って GCP を操作する場合、実行できる操作はその人が持つ IAM 権限の範囲まで広がってしまう。Google Cloud PAM の `entitlement`（対象 IAM ロール・最大利用時間・承認フロー）で恒常権限を Viewer 相当に絞り、必要な操作だけを時限的（例: 最大24時間）に承認制で昇格させると、Claude Code 側のツール許可リストを、エージェントが実際に操作するクラウド側 IAM の JIT 昇格層で補完できる。期限後は自動剥奪され、申請〜付与のイベントは Cloud Audit Logs に記録される。ただし Slack 通知には申請理由の詳細が乗らず承認にコンソール操作が必要になるなど、通知と承認アクションの間に運用上の摩擦が残る点は導入前に把握しておく
 
 **コード例（MCP ツールの最小権限化）**:
 ```json
@@ -1450,6 +1451,37 @@ Claude Code を組織全体で安全に展開するには、個人設定で上�
 ```bash
 # OTel 監査（初日から有効化）
 export CLAUDE_CODE_ENABLE_TELEMETRY=1
+```
+
+**コード例（Google Cloud PAM による JIT 昇格、Terraform）**:
+```hcl
+locals {
+  entitlements = {
+    spanner-migration = {
+      max_request_duration = "86400s"
+      role_bindings = [
+        { role = "roles/spanner.databaseAdmin" },
+      ]
+    }
+  }
+}
+
+eligible_users {
+  principals = ["group:engineers@example.com"]
+}
+
+approval_workflow {
+  manual_approvals {
+    require_approver_justification = true
+    steps {
+      approvals_needed          = 1
+      approver_email_recipients = ["pam-approvals@example.com"]
+      approvers {
+        principals = ["group:platform-admins@example.com"]
+      }
+    }
+  }
+}
 ```
 
 **最小権限チェックリスト**:
@@ -1528,9 +1560,15 @@ export CLAUDE_CODE_ENABLE_TELEMETRY=1
 > "最初はReadだけでも十分な場合が多い"
 > ([AI AgentにGitHub権限を渡す前に確認したい5つのこと](https://zenn.dev/kuromame_kun/articles/0358717223b8b4), セクション "最初はReadだけでも十分な場合が多い") ※2026-08-12に実際にfetch成功
 
+> "AI エージェントが人間の認証情報を使って操作する場合、コマンドはその人が持つ権限の範囲で実行されます。" / "付与する権限の単位を entitlement として定義し、申請できる利用者、IAM ロール、最大利用時間、申請理由、承認フロー、通知先を設定します。...期限後は自動剥奪され、申請から付与までのイベントは Cloud Audit Logs に記録されます。"
+> ([AIエージェントにGoogle Cloudの操作を任せるためのガードレール ─ Google Cloud PAMの導入](https://developers.cyberagent.co.jp/blog/archives/65362/), セクション "Privileged Access Manager とは") ※2026-08-24に実際にfetch成功
+
+**出典（追加2）**:
+- [AIエージェントにGoogle Cloudの操作を任せるためのガードレール ─ Google Cloud PAMの導入](https://developers.cyberagent.co.jp/blog/archives/65362/) (CyberAgent Developers Blog、Terraform による entitlement 定義と JIT 昇格の実運用・導入後の課題) ※2026-08-24 fetch
+
 **バージョン**: Claude Code v2.1.53+（Workspace Trust）、v2.1.172+（ネスト型サブエージェント）、v2.1.178+（Tool(param:value) 構文）、Enterprise Managed Settings 対応環境
 **確信度**: 中
-**最終更新**: 2026-08-12
+**最終更新**: 2026-08-24
 
 ---
 
@@ -2321,7 +2359,8 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - `CLAUDE_CODE_SUBAGENT_MODEL` 環境変数でデフォルトモデルを一括設定できる
 - 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
 - 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
-- 単一著者の未検証情報だが、v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**という報告がある。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする（公式ドキュメントでの裏取りは未実施）
+- v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする。別著者（haruhiro1020, 2026-08-24 Zenn）が公式 changelog（code.claude.com/docs/en/changelog, v2.1.212/217/219）を出典として同じ変更を確認し、実機検証で「メインは深さの数に入らず、最初のサブエージェントが depth 1」という数え方も確定させた
+- **深さ3を使わない設計判断もある**: デフォルトが3になっても、全サブエージェントを depth 1 に固定し `Agent` ツールを一切付与しない運用例がある。階層を深める前のチェック項目として「(1) 子はなぜ親のコンテキストを汚さないために存在するのか (2) 戻り値は親が検証可能か (3) tools 権限は本当に最小か (4) 再構成後、人間承認はどこに残るか」を確認する。根拠は「権限では縛りきれないものがある」（例: `Bash` を渡した時点で `Write` を渡さないことによる保証は消えている）という定義レベル/プロンプトレベル/実行時レベルの三層区別で、深さを増やすと人間承認ゲートを失うリスクが主な障壁になる
 - フロントマターで公式に必須なのは `name` と `description` の2フィールドのみで、`tools` / `model` は省略可能（省略時は継承）。新規に `.claude/agents/` ディレクトリを作った直後（そのスコープで初めてサブエージェントを作った直後）や `--disable-slash-commands` 付き起動（ディレクトリ監視自体を行わない）では、定義ファイルを認識させるのにセッション再起動が必要になる
 
 **コード例**:
@@ -2426,6 +2465,12 @@ tools: Read, Grep, Edit, Write, Bash
 > "公式ドキュメント上「必須」なのは `name` と `description` の2つだけで、`tools` と `model` は省略できる"
 > ([Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745), セクション "必須フロントマターフィールド") ※2026-08-08に実際にfetch成功
 
+> "以下は[Claude Code の公式 changelog](https://code.claude.com/docs/en/changelog)の記載です。" / "メインを 1 と数えているなら、`=1` の時点で親自体が拒否されるはずですが、そうはなりませんでした。よってメインは数に入らず、最初のサブエージェントが depth 1です。"
+> ([サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38), セクション "v2.1.219 で変わった5つと、深さの数え方") ※2026-08-24に実際にfetch成功
+
+> "Bash を渡した時点で、Write を渡さないことによる保証は消えている"
+> ([サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38), セクション "権限では縛りきれないものがある") ※2026-08-24に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
@@ -2434,10 +2479,11 @@ tools: Read, Grep, Edit, Write, Bash
 - [サブエージェントを自作したら、description書き忘れはエラーゼロで黙って無視されていた](https://zenn.dev/numarn/articles/claude-code-subagent-definition-handson) (Zenn numarn、description 欠落時のサイレント除外という新しい失敗モード) ※2026-07-06 fetch
 - [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。単著者・未公式検証) ※2026-07-24 fetch
 - [Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745) (Zenn、必須フロントマターフィールドの最小構成と、ディレクトリ新規作成直後/`--disable-slash-commands`起動時の再起動要否) ※2026-08-08 fetch
+- [サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38) (Zenn haruhiro1020、公式 changelog を出典に深さ1→3変更を裏取り、深さの数え方の実機検証、深さ3を使わない設計判断の具体例) ※2026-08-24 fetch
 
-**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、未公式検証）
+**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、公式 changelog で裏取り済み）
 **確信度**: 高
-**最終更新**: 2026-08-08
+**最終更新**: 2026-08-24
 
 ---
 
