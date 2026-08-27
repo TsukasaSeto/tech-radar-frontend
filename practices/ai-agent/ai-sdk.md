@@ -15,6 +15,7 @@ Vercel AI SDK v7（2026-06-25 GA）は、フロントエンド・Next.js アプ�
 - v7 以前の `generateText` / `streamText` はプロセス終了でエージェントの状態が失われた。`WorkflowAgent` はワークフローベースのストリーミングで状態を永続化する
 - `reasoning` は各プロバイダー固有の推論設定（Anthropic の thinking、OpenAI の o1 推論量など）をプロバイダー非依存の単一オプションに統一する。マルチプロバイダー構成でも推論強度を一貫して制御できる
 - テレメトリが 1 回の登録でグローバル適用（従来の per-call コールバック方式から刷新）。Node.js トレーシングチャネルによる構造化診断でパフォーマンス統計（レスポンス時間・トークンスループット・TTFO）を本番計測できる
+- `WorkflowAgent` の設計思想は「専用プラットフォームを新設する」のではなく「既存インフラ（DB・キュー・アプリサーバー）の上で動くライブラリとして提供する」こと。ワークフローを DAG 図で明示的に組むのではなく、通常の逐次コードとして書かせ、コンパイラが制御フローからグラフを導出する構成にすることで、ステップ呼び出しを通常の関数呼び出しと同程度に軽量に保てる
 
 **コード例**:
 ```ts
@@ -74,9 +75,15 @@ npx @ai-sdk/codemod v7
 > "global coverage of all AI SDK functions with a single registration"
 > ([AI SDK 7](https://vercel.com/blog/ai-sdk-7), セクション "Production-Ready Observability") ※2026-06-25に実際にfetch成功
 
+> "An abstract syntax tree is a DAG. Software itself is a DAG."
+> ([The best workflow engine is a programming language](https://vercel.com/blog/the-best-workflow-engine-is-a-programming-language), セクション "Code is already a DAG") ※2026-08-27に実際にfetch成功
+
+> "Traditional engines make you bring infrastructure to the framework. Workflow SDK brings the framework to infrastructure you already have."
+> ([The best workflow engine is a programming language](https://vercel.com/blog/the-best-workflow-engine-is-a-programming-language), セクション "A library, not a platform") ※2026-08-27に実際にfetch成功
+
 **バージョン**: AI SDK 7+（`ai` npm パッケージ）
 **確信度**: 高（Vercel 公式ブログ）
-**最終更新**: 2026-06-25
+**最終更新**: 2026-08-27
 
 ---
 
