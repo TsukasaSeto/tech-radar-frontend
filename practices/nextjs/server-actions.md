@@ -384,3 +384,53 @@ export async function updateAction(id: string, data: Input) {
 **バージョン**: Next.js 13+ (App Router)
 **確信度**: 高
 **最終更新**: 2026-06-16
+
+---
+
+### 8. セルフホストで Server Actions を使うなら `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` を「ビルド時に」固定する
+
+Server Action ID はビルドごとに生成される暗号鍵で導出されるため、鍵が固定されていないと「デプロイをまたいだ古いページから送信されたフォーム」や「複数レプリカが別ビルドを配信している状態」で `Failed to find Server Action` が発生する。
+`openssl rand -base64 32` で生成した値を `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` としてシークレット管理に置き、**ビルドステージに** 注入する。
+ランタイム（runner）側にだけ環境変数を渡しても効果がない。鍵はビルド時に成果物へ焼き込まれるためである。
+
+**根拠**:
+- 鍵未固定だとビルドのたびに Server Action ID の導出結果が変わり、クライアントが保持している古い ID がサーバー側で解決できなくなる
+- 公式ドキュメントの Version Skew の節は「ナビゲーション時のフルリロード」を扱っており、フォーム送信がデプロイをまたいで失敗するケースの解決策としては読み取りにくい。実際に `Failed to find Server Action` のエラーページ側が `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` を解決策として挙げている
+- マルチコンテナ（AWS ECS 等）ではローリング更新中に新旧ビルドが同時に稼働するため、鍵固定が無いと更新中だけ確率的にエラーが出る
+- 検証環境は Next.js 16.3 / App Router / AWS ECS + CodeBuild のセルフホスト構成
+
+**コード例**:
+```bash
+# 鍵の生成（一度だけ。生成後はシークレットマネージャ等で管理する）
+openssl rand -base64 32
+```
+```dockerfile
+# Good: builder ステージに ARG/ENV で注入する（ビルド時に焼き込まれる）
+FROM node:24-alpine AS builder
+
+ARG NEXT_SERVER_ACTIONS_ENCRYPTION_KEY
+ENV NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
+
+COPY . .
+RUN npm run build
+
+# Bad: runner ステージにだけ環境変数を渡す（ビルド済み成果物には反映されず、エラーは解消しない）
+# FROM node:24-alpine AS runner
+# ENV NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=${NEXT_SERVER_ACTIONS_ENCRYPTION_KEY}
+```
+
+**アンチパターン**:
+- 鍵をリポジトリ内の `.env` にコミットする（Server Action ID の偽造につながるため、シークレット管理必須。`security/secret-management.md` 参照）
+- ランタイム環境変数として設定して「効かない」と判断し、`deploymentId` などの別機能に流れる
+- デプロイのたびに鍵を再生成する CI を組む（固定されないので未設定と同じ）
+
+**出典引用**:
+> 「当該エラーの公式ページに deploymentId が載っていない」— 公式のエラーページは `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` を解決策として挙げている
+> ([【Next.js】デプロイをまたぐと Server Actions が失敗する問題は `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` で直る](https://qiita.com/bsj-k-hioki/items/03ba0d5f1801065522ad), セクション "当該エラーの公式ページに deploymentId が載っていない") ※2026-08-28に実際にfetch成功
+
+> 「Version Skew の節は「ナビゲーション」の話」
+> ([【Next.js】デプロイをまたぐと Server Actions が失敗する問題は `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` で直る](https://qiita.com/bsj-k-hioki/items/03ba0d5f1801065522ad), セクション "Version Skew の節は「ナビゲーション」の話") ※2026-08-28に実際にfetch成功
+
+**バージョン**: Next.js 14+（16.3 のセルフホスト構成で確認）
+**確信度**: 中（Next.js 公式の環境変数・エラー仕様を実機で検証した単独記事、パターン1c採用）
+**最終更新**: 2026-08-28

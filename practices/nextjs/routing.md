@@ -482,3 +482,60 @@ test('product title is immediately visible', async ({ page }) => {
 **最終更新**: 2026-06-25
 
 ---
+
+### 11. `scroll-behavior: smooth` を使うなら `<html>` に `data-scroll-behavior="smooth"` を明示する（Next.js 16 のルート遷移スクロール変更）
+
+Next.js 16 は、`<html>` に `scroll-behavior: smooth` が当たっているのに `data-scroll-behavior` 属性が無い場合に開発時警告を出す。
+Next.js 15 以前はルート遷移時にフレームワーク側がスムーススクロールを暗黙に打ち消していたが、16 ではその上書きをデフォルトで行わなくなった。
+`data-scroll-behavior="smooth"` は「スムーススクロールを有効にする属性」ではなく、「ルート遷移中だけ Next.js に上書きを許可する opt-in マーカー」である点を取り違えないこと。
+`<Link scroll={false}>` は個別ナビゲーションの制御であり、`data-scroll-behavior` のグローバルな役割とは別物なので置き換えにならない。
+
+**根拠**:
+- 警告文自体が対処法を指定している: `Detected \`scroll-behavior: smooth\` on the \`<html>\` element. To disable smooth scrolling during route transitions, add \`data-scroll-behavior="smooth"\` to your <html> element.`
+- 属性を付けないまま放置すると、ルート遷移時にページ先頭までスムーススクロールが走り、遷移が体感的に遅くなる（Next.js 15 以前の暗黙の打ち消しが無くなったため）
+- `prefers-reduced-motion: reduce` での `scroll-behavior: auto` へのフォールバックは CSS 側の責務であり、`data-scroll-behavior` では代替できない（アクセシビリティ要件は別途担保する）
+- 検証環境は Next.js 16.3.1 / React 19.2.8 / App Router
+
+**コード例**:
+```tsx
+// Good: app/layout.tsx — グローバルにスムーススクロールを使うなら opt-in を明示
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ja" data-scroll-behavior="smooth">
+      <body>{children}</body>
+    </html>
+  );
+}
+
+// Bad: CSS だけ smooth にして属性を付けない（Next.js 16 で警告 + 遷移がスムーススクロールに巻き込まれる）
+// <html lang="ja">
+```
+```css
+/* globals.css — アクセシビリティのフォールバックは CSS 側で担保する */
+html {
+  scroll-behavior: smooth;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+```
+
+**アンチパターン**:
+- `data-scroll-behavior="smooth"` を「スムーススクロールを有効化する属性」と誤解し、CSS の `scroll-behavior` を削除してしまう
+- 警告を消す目的で `<Link scroll={false}>` を全リンクに付けて回る（個別ナビゲーション制御であり、警告の原因は解消しない）
+
+**出典引用**:
+> "重要なのは、`data-scroll-behavior`がスムーズスクロールを有効にする属性ではないことです。"
+> ([Next.js 16のscroll-behavior警告をdata-scroll-behaviorで整理する](https://zenn.dev/nadarakainc/articles/0b3681191ac051), セクション "警告が示していること") ※2026-08-28に実際にfetch成功
+
+> "Next.js 15以前は...SPAのルート遷移で...処理を自動的に行っていました。Next.js 16では、この上書きをデフォルトで行わなくなりました。"
+> ([Next.js 16のscroll-behavior警告をdata-scroll-behaviorで整理する](https://zenn.dev/nadarakainc/articles/0b3681191ac051), セクション "Next.js 16で何が変わったか") ※2026-08-28に実際にfetch成功
+
+**バージョン**: Next.js 16+（16.3.1 で確認）
+**確信度**: 中（Next.js 公式の警告文・属性仕様を実機で検証した単独記事、パターン1c採用）
+**最終更新**: 2026-08-28
+
+---

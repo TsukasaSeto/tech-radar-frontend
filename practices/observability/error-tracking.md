@@ -593,6 +593,79 @@ npx add-mcp https://mcp.sentry.dev/mcp
 
 ---
 
+### 11. Sentry SDK v11 に上げる前に `dataCollection` へ移行し、収集カテゴリを個別に宣言する
+
+Sentry JavaScript SDK は真偽値 1 個の `sendDefaultPii` を廃止し、カテゴリ単位で収集可否を宣言する `dataCollection` に置き換えた（v10.57.0 で利用可能、v11 でデフォルト）。
+問題は移行漏れの向きで、**v11 のデフォルトは「収集する」側に倒れている**。`sendDefaultPii: false` に依存して PII を送っていなかったプロジェクトが v11 に上げると、Cookie・HTTP ボディ・DB クエリ・GenAI の入出力などが黙って送信され始める。
+アップグレード前に `dataCollection` を明示的に書き、各カテゴリに `true` / `false` / allow list / deny list のいずれかを宣言すること。
+`Sentry.setUser()` 等で手動添付したデータは `dataCollection` の対象外で常に送信される点も踏まえ、PII の入口は SDK 設定と手動添付の両方で塞ぐ。
+
+**根拠**:
+- v10 で `sendDefaultPii` を off にしていた場合、v11 のデフォルトでは `userInfo` / `cookies` / `httpBodies` / `databaseQueryData` / `genAI`（inputs・outputs）がいずれも収集側に変わる
+- `dataCollection` の各カテゴリは真偽値だけでなく allow list / deny list を取れるため、「ヘッダーは送るが `-ip` を含むものだけ落とす」といった中間的な設定が `beforeSend` を書かずに宣言できる
+- 手動で添付したデータは `dataCollection` を迂回して常に送信されるため、SDK 設定だけでは PII 対策は完結しない（本ファイル Rule #3 の `beforeSend` スクラブと併用する）
+- スパン側のノイズ・機微情報は `beforeSendSpan` / `ignoreSpans` で別途落とす
+
+**コード例**:
+```javascript
+// Good: v10 で sendDefaultPii: false だったプロジェクトの v11 移行（同等挙動を明示的に宣言）
+Sentry.init({
+  dataCollection: {
+    userInfo: false,
+    cookies: false,
+    httpHeaders: {
+      request: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+      response: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+    },
+    httpBodies: [],
+    urlQueryParams: { deny: ['forwarded', '-ip', 'remote-', 'via', '-user'] },
+    genAI: { inputs: false, outputs: false },
+    databaseQueryData: false,
+    graphQL: { document: false, variables: false },
+  },
+});
+
+// Good: v10 で sendDefaultPii: true だった場合は v11 のデフォルトと同じなので設定不要
+Sentry.init({});
+
+// Bad: sendDefaultPii: false のまま v11 に上げる（オプションが無くなり、収集側のデフォルトが適用される）
+Sentry.init({ sendDefaultPii: false });
+```
+```javascript
+// スパンに載る機微情報は beforeSendSpan / ignoreSpans で落とす
+Sentry.init({
+  dsn: 'example.com',
+  beforeSendSpan: (span) => {
+    if (span.attributes?.['sentry.op'] === 'db.query') {
+      span.name = '[filtered]';
+    }
+    return span;
+  },
+  ignoreSpans: [
+    'healthcheck',
+    { name: /^GET \//, attributes: { 'http.route': '/api/status' } },
+  ],
+});
+```
+
+**アンチパターン**:
+- `sendDefaultPii` の指定を残したまま v11 に上げ、「設定してあるから大丈夫」と判断する
+- `dataCollection` を真偽値だけで運用し、`httpHeaders` / `urlQueryParams` の deny list を使わずに `beforeSend` で全部書き直す
+- PII 対策を `dataCollection` だけに寄せ、`Sentry.setUser()` 等の手動添付を棚卸ししない
+
+**出典引用**:
+> "PII (or Personally Identifiable Information) is anything tied to a person: a user ID, email, username, name. Sensitive data is credentials and secrets"
+> ([From one switch to a control panel: meet `dataCollection`](https://blog.sentry.io/datacollection-control-panel/), セクション "PII vs. sensitive data") ※2026-08-28に実際にfetch成功
+
+> "You can pass true, false, an allow list, or a deny list"
+> ([From one switch to a control panel: meet `dataCollection`](https://blog.sentry.io/datacollection-control-panel/), セクション "Granularity for what you really need") ※2026-08-28に実際にfetch成功
+
+**バージョン**: Sentry JavaScript SDK 10.57.0+（v11 でデフォルト）
+**確信度**: 高（Sentry 公式ブログ — パターン1）
+**最終更新**: 2026-08-28
+
+---
+
 ## 関連プラクティス
 
 - [`architecture/error-handling.md`](../architecture/error-handling.md) - Next.js エラー境界の設計
