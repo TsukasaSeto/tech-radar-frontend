@@ -176,6 +176,7 @@ DAL の戻り値は必ず DTO（Data Transfer Object）に整形し、公開し�
 - DTO 境界を明示することで、DB スキーマ変更時に Client への影響を DAL 内で吸収できる
 - 「DAL は DTO を返す」というルールがあると、Server Component → Client Component に渡す props の型設計が自然に整う
 - RSC Payload の肥大化抑制にもなる（不要フィールドを落とす）
+- OWASP の Next.js Security Cheat Sheet も同じ境界を明示的な原則として挙げている（後述の出典引用）
 
 **コード例**:
 ```ts
@@ -225,14 +226,19 @@ export const getUser = cache(async (id: string) => {
 - DTO 変換を「呼び出し側でやる」運用にして、変換漏れが発生する
 - DTO 型を `Partial<Internal>` で定義し、フィールドの取捨選択を型レベルで担保しない
 
+**出典引用**:
+> "Do not pass ORM records, session objects, or configuration merely because they are available."
+> ([OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37), セクション "Control Data Crossing into the Browser") ※2026-08-31に実際にfetch成功
+
 **出典**:
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、DTO による明示的なフィールド境界を「Control Data Crossing into the Browser」として原則化) ※2026-08-31に実際にfetch成功
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**確信度**: 高（v16 公式相当の知見 + OWASP公式チートシートによる裏付け）
+**最終更新**: 2026-08-31
 
 ---
 
@@ -327,14 +333,19 @@ export default async function DashboardLayout({ children }: { children: React.Re
 - Server Action 内に書き込みロジックを直書きし、Mutation DAL を作らない（テスタビリティが下がる、認可の二重化もできない）
 - セッション Cookie に `httpOnly` / `secure` / `sameSite` を指定し忘れる（XSS / CSRF の温床）
 
+**出典引用**:
+> "Do not rely on Proxy or middleware alone"
+> ([OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37), セクション "Classify and Protect Server Entry Points") ※2026-08-31に実際にfetch成功
+
 **出典**:
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [CVE-2025-29927: Authorization Bypass in Next.js Middleware](https://nvd.nist.gov/vuln/detail/CVE-2025-29927) (NVD)
+- [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、「Proxy/middlewareのみへの依存を避ける」多層認可原則の公式裏付け) ※2026-08-31に実際にfetch成功
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見 + 実在 CVE）
-**最終更新**: 2026-05-16
+**確信度**: 高（v16 公式相当の知見 + 実在 CVE + OWASP公式チートシート）
+**最終更新**: 2026-08-31
 
 ---

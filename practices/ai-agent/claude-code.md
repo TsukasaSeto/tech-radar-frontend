@@ -3817,5 +3817,35 @@ claude --settings '<inline-json>' auto-mode config
 **バージョン**: Claude Code 2.1.246(2026-08-29時点で記録された挙動)
 **確信度**: 中(公式ツールの設定スキーマを直接示す実測検証記事、単独ソースのパターン1c採用)
 **最終更新**: 2026-08-29
+---
+
+### 48. `CLAUDE_CODE_TOOL_MEMORY_LIMIT` は macOS では効かない — メモリ上限は OS レベルの仕組みで別途担保する
+
+`CLAUDE_CODE_TOOL_MEMORY_LIMIT` 環境変数で Bash ツールのメモリ使用量を制限できるとドキュメント上は読めるが、macOS では実際には制限がかからない。加えて `--debug` を付けても cgroup 関連の失敗ログが一切出力されないため、「設定したのに制限されていない」ことに気づく手段がない。macOS で Claude Code を無人実行する場合、この変数を防御線として当てにせず `ulimit` でのラップやコンテナ化された実行環境で代替する。
+
+**根拠**:
+- 上限を 256M に設定した状態で Bash ツールから 320MiB のメモリ確保を試みたところ、上限を超えたまま確保が完走し、Bash ツール結果に成功マーカーがそのまま出力された（Claude Code v2.1.247 で再現）
+- `--debug` の出力には "cgroup" の記載が一件も無く、cgroup セットアップの成否を診断する手段が用意されていない
+- macOS は Linux の cgroup を持たないため、Linux 向けに実装されたメモリ制限機構がそのまま機能しない構造的な問題であり、将来のマイナーアップデートで暗黙に直る保証もない
+
+**コード例**:
+```bash
+# 効かない想定: CLAUDE_CODE_TOOL_MEMORY_LIMIT だけに頼る（macOS）
+CLAUDE_CODE_TOOL_MEMORY_LIMIT=256M claude --debug -p "big-allocation-task"
+# → 320MiB 確保が上限を超えたまま成功、--debug にも cgroup 関連ログなし
+
+# Good: macOS では ulimit や外側のコンテナで制限を担保する
+docker run --rm -m 256m my-claude-code-sandbox claude -p "big-allocation-task"
+```
+
+**出典引用**:
+> "上限を超える確保はそのまま完走し、Bash ツール結果に確保成功マーカーがそのまま出力されました。"
+> ([CLAUDE_CODE_TOOL_MEMORY_LIMIT はmacOSでは効かず、--debugも無言だった](https://zenn.dev/clopy/articles/claude-tool-memory-limit-macos-gate), セクション "観測結果: silent-gap") ※2026-08-31に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式環境変数 `CLAUDE_CODE_TOOL_MEMORY_LIMIT` の実挙動をバージョン明記の上で再現実験している）
+
+**バージョン**: Claude Code v2.1.247（2026-08-31時点で記録された挙動、macOS 限定）
+**確信度**: 中（公式環境変数の実測検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-08-31
 
 ---
