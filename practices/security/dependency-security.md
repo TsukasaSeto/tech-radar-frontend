@@ -344,6 +344,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - `npm audit` / `pnpm audit` は CVE 登録済みの既知脆弱性のみを検出する。Socket のような行動解析型スキャナーは install script 実行可否・ネットワーク接続要求・ファイルシステム操作を静的解析し、CVE に存在しない新種マルウェアや公開直後の zero-day 汚染を検知できる
 - 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: `!=3.0` で難読化された特定バージョンを除外）を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
 - 個人のローカル開発環境でも、行動解析型スキャナーを `npm`/`pnpm` コマンド自体に shell alias でかぶせておくと「実行するたびに」検査が効く。指示や記憶に頼る運用（「怪しいパッケージは手動で確認する」）は忘れられるが、alias と pre-commit フックは忘れない
+- **自分が公開しているパッケージが乗っ取られた場合の対応は「消費者側」と手順が異なる**: 侵入経路（GitHub Actions の脆弱性等）を塞がないまま publish 権限や `latest` タグだけ戻しても、同じ経路から再度汚染される。deprecate は新規インストールの大半を防ぐが「解決策」ではなく、既存インストール済み環境には別途通知が必要
 
 **個人開発環境でのエイリアス例**:
 ```bash
@@ -532,7 +533,6 @@ updates:
 - [When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b) (Medium、警告を「インストール後の報告」から「インストール前の非バイパスゲート」に転換した実例) ※2026-07-25に実際にfetch成功
 - [サプライチェーン攻撃への多層防御を「個人の開発環境」に組み込む](https://zenn.dev/crandim_r_and_d/articles/260822_a3_supply_chain_defense_personal) (Zenn、`npm`/`pnpm` を shell alias で行動解析スキャナー経由に固定する個人開発環境向けパターン) ※2026-08-23に実際にfetch成功
 - [自作npmパッケージにマルウェアを公開されたときにやったこと](https://zenn.dev/7nohe/articles/npm-malware-incident-response) (Zenn、`@7nohe/openapi-react-query-codegen` への実攻撃の一次対応記録。dist-tag 復旧・deprecate の限界・通報前の証拠保全) ※2026-08-29に実際にfetch成功
-
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
 
@@ -556,7 +556,6 @@ updates:
 
 > "この記録は、通報が通ってアカウントが凍結されると消えます。"
 > ([自作npmパッケージにマルウェアを公開されたときにやったこと](https://zenn.dev/7nohe/articles/npm-malware-incident-response), Zenn, セクション "証拠保全") ※2026-08-29に実際にfetch成功
-
 **侵害検知時の即時対応チェックリスト**:
 ```bash
 # 影響確認
@@ -591,10 +590,32 @@ git fetch origin <commit-sha>:refs/evidence/<ref-name>
 - MFA 強制化だけでなく、メンテナの **期限切れメールドメイン**の再取得でも乗っ取り可能
 - OIDC token compromise は `--ignore-scripts` で防げない—CI パイプラインのクレデンシャル管理とアカウント即時 revoke が第一防衛線
 
+**自分のパッケージが侵害されたときの対応チェックリスト（メンテナ視点・10ステップ）**:
+1. 侵入経路を塞ぐ（脆弱な GitHub Actions ワークフロー等の修正）—ここを埋めない限り以降の対応が無意味になる
+2. publish 権限を失効
+3. `latest` タグを安全なバージョンへ復元
+4. 汚染バージョンを deprecate
+5. マルウェアを npm へ報告
+6. 利用者へ通知
+7. 正確な検知方法を周知
+8. アカウント停止申請前に証拠を保全
+9. 攻撃者アカウントを通報
+10. 他パッケージへの横展開有無を確認
+
+```bash
+# latest タグを安全なバージョンへ復元
+npm dist-tag add @scope/package@1.2.3 latest
+
+# 汚染バージョン範囲を deprecate（新規インストールの大半を防ぐが「解決策」ではない）
+npm deprecate "@scope/package@>=1.2.4 <=1.2.5" "SECURITY: malicious version, do not install"
+
+# 削除申請後の反映確認
+npm view @scope/package@1.2.4 version
+```
+
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
 **最終更新**: 2026-08-29
-
 ---
 
 ### 5. SBOM（Software Bill of Materials）を生成して依存関係を可視化する

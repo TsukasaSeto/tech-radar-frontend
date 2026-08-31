@@ -473,6 +473,7 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 - 7.0 系のリリース実績は GitHub Releases 上で 7.0.2（2026-08-20）。移行は「まず 6.0 で既定値・非推奨オプションを片付け、その後 7.0 に上げる」順が安全
 - TypeScript 7.0 の `require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開し、Compiler API がそこから消える。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。`package.json` で `typescript` を TS 6.x 系にエイリアスし、実体の TS 7 系は別名で入れる回避策がある
 - 6.0.3 / 6.0.beta の実測検証では、非推奨オプションは「警告」ではなく `error TS5107` として即座にビルドを止める。`ignoreDeprecations: "6.0"` を指定すれば 6.0 では抑制できるが、7.0.2 ではこのオプション自体が削除されており、指定しても怒られもせず単に効かなくなる（`error TS5108` で「削除済みなので設定から除去せよ」と表示される）。「7.0 が来るまでは 6.0 で猶予がある」という前提は成立しない
+- TypeScript公式チームが2026年3月に公開した初期ベンチマークでは、VS Code 10.4倍・Playwright 10.1倍・TypeORM 13.5倍・date-fns 9.5倍・tRPC 9.1倍・rxjs 11.0倍と、プロジェクトごとに8〜13倍台で実測差がある。アーキテクチャは「書き直し」ではなく既存ロジック構造を保った「移植」であるため、コミュニティの再測定値（3〜5倍）との乖離は対象プロジェクトの違いや「型チェックのみ」か「emit込みフルビルド」かという測定条件差に起因する可能性が高い
 
 **コード例**:
 ```json
@@ -525,11 +526,15 @@ tsc --checkers 4
 > "6.0 は警告ではなく `error` を出して終了コード2で落ちます。TypeScript 7 を待たずに、6.0 の時点でもうビルドが止まっていました。"
 > ([TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error), セクション "TypeScript 6.0 は「警告」ではなく落ちる") ※2026-08-19に実際にfetch成功
 
+> "既存のTypeScript実装の構造やロジックをできるだけ保ったまま、Goへ忠実に移植されています"
+> ([TypeScript 7は本当に10倍速い？ 公式ベンチマークからGo移植の効果を見てみる](https://zenn.dev/pug/articles/typescript-7-native-go), セクション "「書き直し」ではなく「移植」なのも重要") ※2026-08-30に実際にfetch成功
+
 **出典**:
 - [TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6) (Zenn、`typescript-eslint` の TS7.0拒否と package alias による回避策の実機検証) ※2026-08-18 fetch
 - [TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error) (Zenn、5.9.3/6.0.3/7.0.2 の実機検証で `ignoreDeprecations: "6.0"` が7.0で削除され無効化される点を確認) ※2026-08-19 fetch
 - [TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750) (Qiita、削除オプションの全量・既定値変更（`types: []` / `rootDir`）・`--builders` / `--singleThreaded`・テンプレートリテラル型の Unicode 対応という追加観点) ※2026-08-28 fetch
 - [microsoft/TypeScript Releases](https://github.com/microsoft/TypeScript/releases) (GitHub、7.0.2 が 2026-08-20 リリース済みであることを確認) ※2026-08-28に実際にfetch成功
+- [TypeScript 7は本当に10倍速い？ 公式ベンチマークからGo移植の効果を見てみる](https://zenn.dev/pug/articles/typescript-7-native-go) (Zenn、公式初期ベンチマークのプロジェクト別内訳（VS Code 10.4倍〜TypeORM 13.5倍）と「書き直しでなく移植」という設計意図の整理) ※2026-08-30に実際にfetch成功
 
 > "コンパイラと言語サービスが Go にネイティブ移植され、フルビルドが 6.0 比でおおむね 8〜12倍高速に"
 > ([TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750), セクション "パフォーマンス") ※2026-08-28に実際にfetch成功
@@ -538,7 +543,7 @@ tsc --checkers 4
 > ([TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750), セクション "⑧【重要】7.0 には API がない") ※2026-08-28に実際にfetch成功
 
 **バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化）/ 7.0（`ignoreDeprecations` 自体が削除、7.0.2 が 2026-08-20 リリース）
-**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たす。2026-08-28 に GitHub Releases 上で 7.0.2（2026-08-20 リリース）の存在は確認できたが、公式リリースノート本文（devblogs.microsoft.com）は egress 制限で取得できず、高速化の実測値も情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と食い違うため「高」ではなく「中」を維持する）
-**最終更新**: 2026-08-28
+**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たす。2026-08-28 に GitHub Releases 上で 7.0.2（2026-08-20 リリース）の存在は確認できたが、公式リリースノート本文（devblogs.microsoft.com）は egress 制限で取得できず、高速化の実測値も情報源間で 3〜4倍・4〜5倍・8〜12倍・8〜13倍・10倍と食い違うため「高」ではなく「中」を維持する）
+**最終更新**: 2026-08-30
 
 ---
