@@ -473,3 +473,45 @@ test('button becomes enabled after input', async ({ mount }) => {
 **バージョン**: Playwright 1.62.1+
 **確信度**: 高（異なる著者による2記事＋コード例でパターン2を満たすため 2026-08-28 に「中」から格上げ）
 **最終更新**: 2026-08-28
+
+---
+
+### 8. `@storybook/addon-vitest` でストーリーをそのまま Vitest ブラウザモードのテストにする
+
+Storybook のストーリーファイルは UI カタログであると同時に、`@storybook/addon-vitest` の `storybookTest()` プラグインを Vitest の設定に加えるだけで、そのまま Vitest のテストケースとして実行できる。実行環境は jsdom ではなく Playwright provider による実ブラウザ（Chromium 等）なので、jsdom では再現できないレイアウト・CSS 依存の挙動も検証対象にできる。「ストーリーを書く動機」と「テストを書く動機」を一致させ、カタログとテストの二重管理を避けられる。
+
+**根拠**:
+- ストーリー自体がテストのソースになるため、コンポーネントの見た目パターンを追加するたびに個別の `*.test.tsx` を書く二重メンテナンスを避けられる
+- Vitest browser mode は実ブラウザ（Playwright provider）で実行されるため、jsdom 未対応の CSS・レイアウト依存挙動を含めて検証できる
+- 既存ルール7（async Server Component のテストツール振り分け）とは直交する — こちらは「同期コンポーネントのストーリーをテスト化する」手段であり、`experimentalRSC` は「async Server Component をモックする」手段
+
+**コード例**:
+```ts
+// vitest.config.ts
+import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
+import { playwright } from '@vitest/browser/providers/playwright';
+import path from 'node:path';
+
+export default {
+  plugins: [
+    storybookTest({ configDir: path.join(__dirname, '.storybook') }),
+  ],
+  test: {
+    name: 'storybook',
+    browser: {
+      enabled: true,
+      headless: true,
+      provider: playwright({}),
+      instances: [{ browser: 'chromium' }],
+    },
+  },
+};
+```
+
+**出典引用**:
+> "ストーリーを書けば、それがそのままブラウザ実行のテストになる"
+> ([StorybookのストーリーをそのままVitestのテストにする](https://zenn.dev/hirodeath/articles/storybook-vitest-browser-mode), セクション "構成の概要") ※2026-09-03に実際にfetch成功
+
+**バージョン**: Storybook 9+ (`@storybook/addon-vitest`), Vitest 3+ (browser mode)
+**確信度**: 中（公式ツールのバージョン固有機能を検証した単独記事、パターン1c採用）
+**最終更新**: 2026-09-03
