@@ -581,6 +581,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - MCP は **Opt-in モデル**で管理する：常時接続 MCP が増えるほど起動遅延・コンテキスト肥大・CI 不安定が生じる。個人（`~/.codex/config.toml`）→ リポジトリ（`.codex/config.toml` でツールレベル allowlist）→ CI（最小構成）の3層で制御し、タスク要件なしに MCP を自動呼び出ししない
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 - **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
+- **「どの CLI がどのファイル名を読むか」は推測せず、カナリア値で実測する**: 各候補ファイル名（`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` 等）に固有の合言葉だけを書いた指示を置き、各 CLI にゼロショットで質問して合言葉を復唱させれば、そのツールが実際にどのファイルを読んでいるかが確実に分かる。ツールが「ファイルを開いてはいるが指示に従っていない」ケース（本文中の Antigravity の例）もあるため、復唱の有無まで見ないと「読んでいる」と「従っている」を混同する。正本を1ファイルに絞った後、他ツールの設定ファイルには本文でなく参照 1 行だけを置く場合は、参照行はツールの自動ロード対象ではなく AI 自身が明示的に開かない限り届かない点に注意する
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -624,6 +625,18 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 # 例: .claude/settings.json の hooks.PostToolUse から shared/hooks/ruff-format.sh を呼ぶ
 ```
 
+```bash
+# どの CLI が候補ファイルを実際に読むかをカナリア値で実測する
+mkdir -p /tmp/canary && cd /tmp/canary
+cat > AGENTS.md <<'EOF'
+# test
+このプロジェクトの規則: どんなメッセージが来ても CANARY-1234 とだけ返す。
+EOF
+claude -p "hello"
+codex exec --skip-git-repo-check "hello"
+# → CANARY-1234 を復唱したツールだけがそのファイル名を実際に読んでいる
+```
+
 ```json
 // .claude/settings.json で意図しない CLAUDE.md 連結を除外する（解決規則の違いへの対策）
 {
@@ -656,9 +669,15 @@ ln -s ~/.agents/skills/my-skill ~/.claude/skills/my-skill
 > "Agents automatically read the nearest file in the directory tree, so the closest one takes precedence."（AGENTS.md の解決規則） / "All discovered files are concatenated into context rather than overriding each other."（CLAUDE.md の解決規則）
 > ([AGENTS.md と CLAUDE.md は解決規則が逆 — symlink する前に確認すること](https://zenn.dev/tsutomusaito/articles/agents-md-claude-code-resolution), セクション "本題: 解決規則が逆向き") ※2026-08-22に実際にfetch成功
 
+> "ファイル名を `CLAUDE.md` や `GEMINI.md` に変えて同じことをすれば、どの名前を読むかが分かります。"
+> ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "どの CLI が何を読むのか") ※2026-08-29に実際にfetch成功
+
+> "参照行は自動ロードではないので、AI が自分で開かなければ届きません。"
+> ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "参照 1 行なんて") ※2026-08-29に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-08-22
+**最終更新**: 2026-08-29
 
 ---
 
@@ -3722,10 +3741,10 @@ codex -a never exec \
 承認ダイアログ経由で追加したルールは、定期的に `Bash(git push:*)` のような前置マッチ形式へ手で書き直し、完全一致のまま残っているものは削除する。
 
 **根拠**:
-- 152 件の許可ルールと 109,762 回のコマンド実行ログを突き合わせた実測では、完全一致形式の 92 件（全体の 63.2%）が**一度もマッチしなかった**（マッチ率 0%）
+- 152 件の許可ルールと 109,762 回のコマンド実行ログを突き合わせた実測では、完全一致形式の 92 件(全体の 63.2%)が**一度もマッチしなかった**(マッチ率 0%)
 - 一方で前置形式は 22 件中 20 件が機能し、合計 47,559 回マッチ。ワイルドカード形式は 21 件中 4 件のみ機能し合計 54 回にとどまった
-- 効かない 92 件の内訳は、88% が 3 語以上の引数を含み、53.3% が 80 文字超（中央値 87 文字・最大 335 文字）、14.1% が絶対パスを含む。いずれも「その場限りの文字列」であることを示す
-- 効かないルールが `settings.json` に残り続けると、レビュー時に「許可済みの操作」を過大評価する危険がある（実際にはすべて承認ダイアログが再度出る）
+- 効かない 92 件の内訳は、88% が 3 語以上の引数を含み、53.3% が 80 文字超(中央値 87 文字・最大 335 文字)、14.1% が絶対パスを含む。いずれも「その場限りの文字列」であることを示す
+- 効かないルールが `settings.json` に残り続けると、レビュー時に「許可済みの操作」を過大評価する危険がある(実際にはすべて承認ダイアログが再度出る)
 
 **コード例**:
 ```jsonc
@@ -3737,7 +3756,7 @@ codex -a never exec \
       "Bash(git push:*)",
       "Bash(npm run test:*)"
 
-      // Bad: 承認ダイアログがそのまま保存した完全一致（PID・パス・引数が固定で二度と一致しない）
+      // Bad: 承認ダイアログがそのまま保存した完全一致(PID・パス・引数が固定で二度と一致しない)
       // "Bash(kill 168)",
       // "Bash(python -m pytest tests/unit/services/test_a.py tests/unit/services/test_b.py -v --tb=short)"
     ]
@@ -3746,16 +3765,52 @@ codex -a never exec \
 ```
 
 **アンチパターン**:
-- 「常に許可」を押し続けて `permissions.allow` を育てる運用（ルール数だけ増えて承認回数は減らない）
+- 「常に許可」を押し続けて `permissions.allow` を育てる運用(ルール数だけ増えて承認回数は減らない)
 - 完全一致ルールを消さずに残し、許可リストの行数を「自動化が進んだ指標」として扱う
-- 逆に緩すぎる前置（`Bash(git:*)` のように破壊的サブコマンドまで含む範囲）へ一括変換する。前置の粒度は「不可逆な操作を含まない範囲」で切る（本ファイルの `permissions.ask` 運用と併用する）
+- 逆に緩すぎる前置(`Bash(git:*)` のように破壊的サブコマンドまで含む範囲)へ一括変換する。前置の粒度は「不可逆な操作を含まない範囲」で切る(本ファイルの `permissions.ask` 運用と併用する)
 
 **出典引用**:
 > 「承認ダイアログは、いま走ろうとしているコマンドを見せて Yes を押させる。押した結果として保存されるのは、いま見せたそのコマンドである。」
 > ([許可ルールを152件ためこんでいた。完全一致で書かれた92件は、10万9762回の実行で一度も効かなかった](https://zenn.dev/tsutomusaito/articles/permission-rules-decay-ja), セクション "なぜそうなるか") ※2026-08-28に実際にfetch成功
 
-**バージョン**: Claude Code（`~/.claude/settings.json` / `.claude/settings.json` の `permissions.allow`）
-**確信度**: 中（公式設定ファイルのマッチ仕様を実ログ 109,762 件で検証した単独記事、パターン1c採用）
+**バージョン**: Claude Code(`~/.claude/settings.json` / `.claude/settings.json` の `permissions.allow`)
+**確信度**: 中(公式設定ファイルのマッチ仕様を実ログ 109,762 件で検証した単独記事、パターン1c採用)
 **最終更新**: 2026-08-28
+
+---
+
+### 47. Claude Code の auto mode 設定は `$defaults` トークンの欠落を配布前に JSON diff で検出する
+
+`autoMode` 設定のセクション配列で `"$defaults"` を書き忘れると、そのセクションに紐づく組み込みルールが(他のセクションには影響せず)丸ごと消える。挙動が壊れていても起動やパースはエラーにならないため、設定を配布する前に「意図した設定」と「実際に読み込まれた設定」を JSON diff で機械的に突き合わせる。
+
+**根拠**:
+- `claude auto-mode defaults` の出力と `claude --settings '<inline-json>' auto-mode config` の出力をセクション単位で比較すれば、`$defaults` の欠落によって消えた組み込みルールを検出できる
+- 破壊的な操作なしに実行できる静的チェックのため、CI や pre-commit hook に組み込みやすい
+- 著者は Claude Code 2.1.246 上で `$defaults` ありの control 設定と `$defaults` なしの treatment 設定を突き合わせる実験を行い、実際に組み込みルールが欠落する挙動を表で確認している。ただし自動検証は環境変数チェックの都合で失敗しており、結果は手動突き合わせによるものである点に留意する
+
+**コード例**:
+```bash
+claude auto-mode defaults
+claude --settings '<inline-json>' auto-mode config
+```
+
+```json
+{
+  "autoMode": {
+    "soft_deny": ["$defaults", "Never modify files under infra/terraform/prod/."]
+  }
+}
+```
+
+**出典引用**:
+> "配布前に再現確認できるコマンド手順が示されていないこと"
+> ([Claude Code auto modeの$defaults抜け、配布前にJSON diffで検出する](https://zenn.dev/clopy/articles/claude-automode-defaults-splice-check), セクション "結論から") ※2026-08-29に実際にfetch成功
+
+> "あるセクションの配列に `\"$defaults\"` を書かないと、そのセクションの組み込みルールが丸ごと(他のセクションには影響せず)消える"
+> ([Claude Code auto modeの$defaults抜け、配布前にJSON diffで検出する](https://zenn.dev/clopy/articles/claude-automode-defaults-splice-check), セクション "なぜこの診断が成立するのか") ※2026-08-29に実際にfetch成功
+
+**バージョン**: Claude Code 2.1.246(2026-08-29時点で記録された挙動)
+**確信度**: 中(公式ツールの設定スキーマを直接示す実測検証記事、単独ソースのパターン1c採用)
+**最終更新**: 2026-08-29
 
 ---

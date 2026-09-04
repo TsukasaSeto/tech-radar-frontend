@@ -531,6 +531,7 @@ updates:
 - [Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn) (dev.to、direct Poisoned Pipeline Execution・弱いブランチ保護の悪用) ※2026-07-14に実際にfetch成功
 - [When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b) (Medium、警告を「インストール後の報告」から「インストール前の非バイパスゲート」に転換した実例) ※2026-07-25に実際にfetch成功
 - [サプライチェーン攻撃への多層防御を「個人の開発環境」に組み込む](https://zenn.dev/crandim_r_and_d/articles/260822_a3_supply_chain_defense_personal) (Zenn、`npm`/`pnpm` を shell alias で行動解析スキャナー経由に固定する個人開発環境向けパターン) ※2026-08-23に実際にfetch成功
+- [自作npmパッケージにマルウェアを公開されたときにやったこと](https://zenn.dev/7nohe/articles/npm-malware-incident-response) (Zenn、`@7nohe/openapi-react-query-codegen` への実攻撃の一次対応記録。dist-tag 復旧・deprecate の限界・通報前の証拠保全) ※2026-08-29に実際にfetch成功
 
 > "パッケージのアップデート直後に脆弱性が発覚した場合、minimumReleaseAge 設定で被害を免れることができます"
 > ([【5分でできる】pnpmのサプライチェーン攻撃対策Tips8選](https://qiita.com/aaaa_tachibana/items/64f917b1734dc74398c3), Qiita, セクション "最小リリース経過時間設定") ※2026-06-01に実際にfetch成功
@@ -550,6 +551,12 @@ updates:
 > "A policy that runs only after installation can report a problem, but it cannot honestly claim to have stopped the risky install path."
 > ([When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b), Medium, セクション "From a Warning to a Non-Bypassable Gate") ※2026-07-25に実際にfetch成功
 
+> "「バージョンを明示したインストール」と「すでにlockfileに固定されている環境」は、deprecateでは止められません。"
+> ([自作npmパッケージにマルウェアを公開されたときにやったこと](https://zenn.dev/7nohe/articles/npm-malware-incident-response), Zenn, セクション "Deprecation の限界") ※2026-08-29に実際にfetch成功
+
+> "この記録は、通報が通ってアカウントが凍結されると消えます。"
+> ([自作npmパッケージにマルウェアを公開されたときにやったこと](https://zenn.dev/7nohe/articles/npm-malware-incident-response), Zenn, セクション "証拠保全") ※2026-08-29に実際にfetch成功
+
 **侵害検知時の即時対応チェックリスト**:
 ```bash
 # 影響確認
@@ -564,6 +571,21 @@ snyk test
 - [ ] **IDE 設定フォルダの不審ファイルを確認**（`~/.vscode/`, `~/.config/claude/` 等）— パッケージ削除後もマルウェアが IDE に残存するケースあり
 - [ ] CI の npm/pnpm キャッシュをクリア（汚染タールボールを除去）
 - [ ] Cloud / GitHub のアクセスログを遡及確認
+- [ ] **`latest` dist-tag を安全なバージョンへ戻す**（悪意バージョンが `latest` のままだと新規インストールが継続被害を受ける）
+- [ ] **`npm deprecate` で悪意バージョンに警告を出す**（ただしバージョン固定インストールや lockfile 済み環境には効かない点に注意）
+- [ ] **npm へ malware として通報する**（パッケージの完全削除に至る経路はこれのみ）
+- [ ] **通報前に証拠を保全する**（攻撃者アカウントが凍結されると force-push されたコミット等の履歴が失われる）
+- [ ] 同じ脆弱性・同じ攻撃経路が他リポジトリにも存在しないか横展開して確認する
+
+```bash
+# 悪意バージョンが publish された場合の是正コマンド
+npm dist-tag add @scope/package@1.2.3 latest   # latest を安全なバージョンへ戻す
+npm view @scope/package dist-tags --json        # 現在の tag 割り当てを確認
+npm deprecate "@scope/package@>=1.2.4 <=1.2.5" "SECURITY: malicious code, do not install"
+
+# 通報前に force-push で失われる可能性のある履歴を退避
+git fetch origin <commit-sha>:refs/evidence/<ref-name>
+```
 
 **知見（メンテナアカウント乗っ取りの経路）**:
 - MFA 強制化だけでなく、メンテナの **期限切れメールドメイン**の再取得でも乗っ取り可能
@@ -571,7 +593,7 @@ snyk test
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-08-23
+**最終更新**: 2026-08-29
 
 ---
 
