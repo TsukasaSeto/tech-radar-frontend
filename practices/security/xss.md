@@ -261,12 +261,15 @@ const state = JSON.parse(script?.textContent ?? '{}');
 
 `useSearchParams()` で取得した値をそのまま画面に表示するのは React の自動エスケープで安全だが、
 属性値・スタイル・スクリプト・URL 等に展開する際は別途エスケープが必要。
+React の外（メール本文・OGP・ログビューア・自前テンプレート等）で手動エスケープ関数を書く場合は、**`&` を必ず最初に置換する**。他のエンティティがすべて `&` で始まるため、順序を誤ると `<` → `&lt;` → `&amp;lt;` の二重エスケープが発生する。
 
 **根拠**:
 - JSX 内 `{searchParam}` のテキスト埋め込みは安全（React がエスケープ）
 - ただし `style={{ background: searchParam }}` や `<a href={searchParam}>` は React が検証しない
 - 攻撃者は `?q=" onerror="alert(1)` のようなクエリ文字列で属性ブレイクアウトを試みる
 - Reflected XSS は OWASP Top 10 で最も多い XSS 種別
+- （手動エスケープの例外条件）HTML エスケープの対象は `& < > " '` の5文字。すべてのエンティティが `&` で始まるため、`&` を最初に置換しないと `&lt;` が `&amp;lt;` になる二重エスケープが起きる。アンエスケープは逆順で、`&amp;` を最後に戻す
+- （エンティティ選択）シングルクォートは名前付き参照の `&apos;` ではなく数値参照の `&#39;` を使う。`&apos;` は XML / HTML5 で定義されたエンティティで、HTML4 等の古い仕様では未定義のため、レガシーパーサでは復元されない
 
 **コード例**:
 ```tsx
@@ -327,14 +330,46 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 - URL パラメータを `style` / `className` / `data-*` に渡す → 値の文字種を validate
 - URL パラメータを SQL / API クエリに渡す → そちらでも別途エスケープ（サーバー責務）
 - URL パラメータをエラーメッセージ等で reflect する → React の `{}` 経由のみ
+- React 外で自前エスケープ関数を書く → `&` を最初に置換しているか、シングルクォートが `&#39;` かを確認する
+
+**React 外で手動エスケープする場合**:
+```typescript
+// Good: & を最初に置換する
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')   // ← 必ず最初
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');  // &apos; ではなく数値参照
+}
+
+// Good: アンエスケープは逆順（& を最後に戻す）
+function unescapeHtml(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#x27;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');  // ← 必ず最後
+}
+
+// Bad: < を先に置換すると &lt; の & が後段で再変換され &amp;lt; になる
+```
 
 **出典**:
 - [OWASP: Reflected XSS](https://owasp.org/www-community/attacks/xss/#reflected-xss-attacks) (OWASP)
 - [Next.js Docs: useSearchParams](https://nextjs.org/docs/app/api-reference/functions/use-search-params) (Next.js 公式)
+- [HTMLエスケープの5文字と処理順序 — なぜ「&」を最初に変換しないと二重エスケープになるか](https://zenn.dev/sktt_panda/articles/html-escape-entity-order-xss-browser) (Zenn sktt_panda、手動エスケープ時の置換順序と `&#39;` / `&apos;` の使い分けという追加観点) ※2026-08-28 fetch
+
+> "`&apos;` はXMLとHTML5で定義されたエンティティで、**HTML4など古い仕様では未定義**"
+> ([HTMLエスケープの5文字と処理順序 — なぜ「&」を最初に変換しないと二重エスケープになるか](https://zenn.dev/sktt_panda/articles/html-escape-entity-order-xss-browser), セクション "シングルクォートのエンコード") ※2026-08-28に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-28
 
 ---
 

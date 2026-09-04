@@ -392,11 +392,14 @@ test('does not work', async () => {
 ### 7. Playwright 1.62 のコンポーネントテストは「stories & galleries」モデルに移行しており、`mount()` の返り値が変わったことを踏まえて構成する
 
 Playwright のコンポーネントテスト（Component Testing）は 1.62 で「stories & galleries」モデルに再設計された。旧方式では Playwright 自身がバンドラを持ち JSX を直接マウントしていたが、新方式では JSX がアプリ側の `*.story.tsx` に移り、Playwright は「バンドラを持つ側」をやめて、アプリ自身の dev server が配信する1枚の HTML（gallery）を叩くだけになる。`playwright.config.ts` の `webServer` / `baseURL` を gallery の URL に向け、gallery 側で `window.mount()` / `window.unmount()` の契約を実装する必要がある。1.62.0 にはリグレッションが報告されているため、`1.62.1` 以降を使う。
+運用面では、**story を「コンポーネントの 1 状態（props・モック・Provider・コールバックを固定したもの）」として先に定義し、テストは story id を `mount()` に渡すだけにする**。テストごとに JSX を書かなくなり、同じ状態定義を複数テストから再利用できる。
 
 **根拠**:
 - 新方式では Playwright がバンドラを持たなくなり、アプリ自身の dev server（Vite 等）が配信する gallery HTML を経由してコンポーネントをマウントするため、`playwright.config.ts` の `webServer` / `baseURL` を gallery URL に向ける設定が必須になる
 - `fixtures.mount()` は gallery に遷移して story id でマウントし、story のルート要素にスコープした `Locator` を返す設計になっている
 - 1.62.0 自体にリグレッションが報告されているため、導入時は `1.62.1` 以降を明示的に指定する
+- story は「コンポーネントの 1 つの状態」を表す単位であり、ハードコードした props・モックデータ・Provider・必要なコールバックを 1 か所に束ねる。テストは story を指定して `mount()` するだけになるため、テストごとに JSX を書き直す必要がなくなり、同じ状態を複数テストで再利用できる
+- Storybook が「人が目視で確認する」用途なのに対し、Playwright の CT は「実ブラウザで自動検証する」用途。同じ story 概念でも役割が異なるため、どちらかで代替しようとしない
 
 **コード例**:
 ```typescript
@@ -439,6 +442,34 @@ window.unmount = async () => {
 > 「Component testing が stories and galleries モデルに移った。`fixtures.mount()` は gallery に遷移して story id で mount し、story の root 要素にスコープした `Locator` を返す」
 > ([Playwright 1.62 の stories & galleries でコンポーネントテストを最小構成から作ってみた](https://zenn.dev/clopy/articles/playwright162-ct-stories-galleries), セクション "何が変わったのか（1.62.0 のリリースノート）") ※2026-08-23に実際にfetch成功
 
+> "`mount()` は、その story を実ブラウザ上に載せる役割です。" / "テストごとに JSX を毎回書かなくてよい"
+> ([Playwright の component testing と `mount()` を整理する](https://zenn.dev/pug/articles/playwright-component-testing-story-mount), セクション "mount とは" / "何が変わるか") ※2026-08-28に実際にfetch成功
+
+**story を再利用するテストの書き方**:
+```typescript
+// story 側: コンポーネントの 1 状態を props ごと固定する
+export const Disabled = {
+  args: { label: 'Submit', disabled: true },
+};
+
+// テスト側: story id を渡すだけ。JSX をテストに書かない
+test('disabled button is disabled', async ({ mount }) => {
+  const component = await mount('components/Button/Disabled');
+  await expect(component.getByRole('button')).toBeDisabled();
+});
+
+// 同じ story を状態遷移の検証にも再利用する
+test('button becomes enabled after input', async ({ mount }) => {
+  const component = await mount('components/Form/Primary');
+  await component.getByLabel('Email').fill('user@example.com');
+  await expect(component.getByRole('button', { name: 'Submit' })).toBeEnabled();
+});
+```
+
+**出典**:
+- [Playwright 1.62 の stories & galleries でコンポーネントテストを最小構成から作ってみた](https://zenn.dev/clopy/articles/playwright162-ct-stories-galleries) (Zenn clopy、`webServer` / `baseURL` と gallery 契約の最小構成) ※2026-08-23 fetch
+- [Playwright の component testing と `mount()` を整理する](https://zenn.dev/pug/articles/playwright-component-testing-story-mount) (Zenn pug、story を状態定義として再利用する書き方・Storybook との役割分担という追加観点) ※2026-08-28 fetch
+
 **バージョン**: Playwright 1.62.1+
-**確信度**: 中（公式ツールのバージョン固有機能を検証した単独記事、パターン1c採用）
-**最終更新**: 2026-08-23
+**確信度**: 高（異なる著者による2記事＋コード例でパターン2を満たすため 2026-08-28 に「中」から格上げ）
+**最終更新**: 2026-08-28

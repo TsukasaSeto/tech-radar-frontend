@@ -233,12 +233,19 @@ const { fontFamily, fontFaces } = createFontStack([inter, arial]);
 
 Web フォントの配信フォーマットは woff2 一択。レガシー対応は不要。
 日本語等の大規模文字セットフォントは `unicode-range` でサブセット化するか、可変フォント（variable font）の活用を検討する。
+ただし**日本語で `unicode-range` による細分割に頼るのは逆効果になりうる**。Google Fonts の Noto Sans JP は 124 区画に分割されており、本文の文字が区画をまたぐ数だけリクエストが飛ぶ。日本語では「区画分割で配信する」より「実際に表示する文字だけを抽出した 1〜2 ファイルを自前ホストする」ほうが総量・リクエスト数とも小さくなる（実測: 729KB / 37 リクエスト → 219KB / 2 リクエスト）。
+自前サブセットを採る場合は、サブセットが**表示中の文字列に依存して壊れる**ことを前提に、ビルドにカバレッジ検査を組み込み、ファイル名固定のサブセットに `immutable` を付けない。
 
 **根拠**:
 - woff2 は全モダンブラウザ（IE 除く）でサポート済み。woff（v1）・ttf・otf より 30% 程度小さい
 - ブラウザは `@font-face` 内の `src` リストを順に評価するため、woff2 を最初に書けば他フォーマットはダウンロードされない
 - 日本語フォント（数 MB）はサブセット化で 30-100KB まで削減できる
 - variable font は 1 ファイルで全ウェイト・斜体をカバーし、複数ウェイトをロードするより総容量が小さい
+- （反例・例外条件）`unicode-range` は Inter で 7 区画に対し Noto Sans JP は 124 区画に分かれる。本文の文字が区画に散ると区画数ぶんのリクエストが発生し、Latin 向けの前提（1〜2 区画で足りる）が日本語では崩れる
+- （実測）Google Fonts 配信からセルフホスト＋サブセットへ切り替えた事例で、フォント 729KB / 37 リクエスト → 219KB / 2 リクエスト、ページ総量 1,366KB / 47 リクエスト → 482KB / 9 リクエスト、FCP 548ms → 412ms
+- （運用上の落とし穴）サブセットは「表示される文字」で決まるため、記事の並べ替え・出し分け・件数変更だけでも欠字する。実例ではトップページの記事順を変えただけで必要文字が 740 → 878 字（219KB → 229.6KB）に増えた。ビルドにカバレッジ検査スクリプトを挟んで検知する
+- （キャッシュ）ファイル名を固定したサブセットに `Cache-Control: immutable` を付けると、サブセット再生成後も旧ファイルが使われ欠字が残る。ファイル名にハッシュを含めるか `immutable` を外す
+- 可変フォントは軸を絞ってからサブセット化すると更に小さくなる（`fontTools` の `instancer` でウェイト軸を 400-700 に限定する等）
 
 **コード例**:
 ```css
@@ -316,16 +323,38 @@ Web フォントの配信フォーマットは woff2 一択。レガシー対応
 - [pyftsubset](https://fonttools.readthedocs.io/en/latest/subset/) — Python の fontTools 経由でのサブセット化
 - [Google Fonts](https://fonts.google.com/) — `&text=...` パラメータで動的サブセット URL を生成可能
 - [Fontsource](https://fontsource.org/) — npm 経由で各ウェイト・サブセット済み woff2 を取得
+- [fontTools `instancer`](https://fonttools.readthedocs.io/en/latest/varLib/instancer.html) — 可変フォントのウェイト軸を絞ってから配信する
+
+**セルフホスト＋サブセットのビルド検査例**:
+```python
+# 可変フォントのウェイト軸を 400-700 に限定してからサブセット化する
+from fontTools.varLib import instancer
+
+WGHT = (400, 700)
+instancer.instantiateVariableFont(font, {"wght": WGHT}, inplace=True, updateFontNames=False)
+```
+```json
+// package.json — サブセットの文字カバレッジをビルドで検査し、欠字のまま公開されるのを防ぐ
+"build": "node scripts/check-node-version.mjs && astro build && node scripts/check-font-coverage.mjs"
+```
 
 **出典**:
 - [MDN: @font-face - src](https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src) (MDN Web Docs)
 - [MDN: unicode-range](https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/unicode-range) (MDN Web Docs)
 - [web.dev: Reduce web font size](https://web.dev/articles/reduce-webfont-size) (web.dev)
 - [web.dev: Variable fonts](https://web.dev/articles/variable-fonts) (web.dev)
+- [日本語フォントは unicode-range が効かない — Google Fonts をやめて 729KB を 219KB にした](https://zenn.dev/ukintech/articles/japanese-font-selfhost-subset) (Zenn ukintech、日本語での `unicode-range` 分割の反例・セルフホストサブセットの実測値・カバレッジ検査とキャッシュ運用の追加観点) ※2026-08-28 fetch
+
+**出典引用**:
+> "本文に使われている文字がこの 124 区画に散らばると、その数だけリクエストが飛びます"
+> ([日本語フォントは unicode-range が効かない — Google Fonts をやめて 729KB を 219KB にした](https://zenn.dev/ukintech/articles/japanese-font-selfhost-subset), セクション "なぜ日本語で unicode-range が効かないのか") ※2026-08-28に実際にfetch成功
+
+> "サブセットは表示される文字で決まる。並べ替え・出し分け・件数の変更でも壊れます"
+> ([日本語フォントは unicode-range が効かない — Google Fonts をやめて 729KB を 219KB にした](https://zenn.dev/ukintech/articles/japanese-font-selfhost-subset), セクション "運用で壊れるポイント") ※2026-08-28に実際にfetch成功
 
 **バージョン**: woff2 は Chrome 36+, Firefox 39+, Safari 12+ / Variable Fonts は Chrome 62+, Firefox 62+, Safari 11+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-08-28
 
 ---
 

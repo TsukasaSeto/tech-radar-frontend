@@ -137,7 +137,7 @@ const config: Config = { theme: 'dark' }; // OK
 ### 4. `paths` エイリアスで絶対インポートを整理し、`baseUrl` の非推奨化（TS 6.0）に対応する
 
 相対パスの深いインポート（`../../../components/Button`）を避けるため、`paths` でエイリアスを設定する。
-`baseUrl` は TypeScript 6.0 で非推奨化され TypeScript 7.0 で削除予定のため、`paths` 内にディレクトリを直接埋め込む方式へ移行する。
+`baseUrl` は TypeScript 6.0 で非推奨化され、**TypeScript 7.0（7.0.2 が 2026-08-20 にリリース済み）では実際に削除された**ため、`paths` 内にディレクトリを直接埋め込む方式へ移行する。
 
 **根拠**:
 - ファイル移動時のインポートパス修正が不要になる
@@ -193,13 +193,14 @@ import { Button } from '@/components/ui/Button';
 **出典**:
 - [TypeScript tsconfig reference: paths](https://www.typescriptlang.org/tsconfig#paths) (TypeScript公式)
 - [TypeScriptのbaseUrlが非推奨になった！経緯と移行方法](https://zenn.dev/seekseep/articles/typescript-baseurl-deprecated-migration) (Zenn、TS 6.0 非推奨化の背景・移行パターン3種) ※2026-06-09に実際にfetch成功
+- [TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750) (Qiita、7.0 で `baseUrl` が実際に削除され `paths` 単独運用が必須になった点の確認) ※2026-08-28 fetch
 
 > "pathsにマッチしないすべての bare specifier の探索ルートとしても働く副作用が問題でした"
 > ([TypeScriptのbaseUrlが非推奨になった！経緯と移行方法](https://zenn.dev/seekseep/articles/typescript-baseurl-deprecated-migration), セクション "非推奨の理由") ※2026-06-09に実際にfetch成功
 
-**バージョン**: TypeScript 6.0+（非推奨）/ 7.0 で削除予定
+**バージョン**: TypeScript 6.0+（非推奨）/ 7.0 で削除済み（7.0.2 で確認）
 **確信度**: 高
-**最終更新**: 2026-06-09
+**最終更新**: 2026-08-28
 
 ---
 
@@ -457,13 +458,19 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 移行前に `tsconfig.json` の対象オプションを確認し、`target: "ES2015"` 以上・`moduleResolution: "bundler"` に置き換える。
 高速化を謳う宣伝文句（「10倍高速」等）はソースによって数値が大きく異なるため、鵜呑みにせず自プロジェクトで実測する。
 **この非推奨化は 7.0 を待たず、6.0 の時点で既に `error`（終了コード2）としてビルドを止める。** `ignoreDeprecations: "6.0"` で 6.0 では黙らせられるが、この設定自体が 7.0 では削除され黙って無視される。
+7.0 は 7.0.2 が 2026-08-20 に GitHub Releases 上でリリース済みで、削除対象は `target: "es5"` / `moduleResolution` だけではない。`baseUrl`・`downlevelIteration`・`module` の `"amd"` / `"umd"` / `"systemjs"` / `"none"`・`esModuleInterop: false` / `allowSyntheticDefaultImports: false`・namespace の `module` キーワード・import の `assert` キーワードも同時に落ちるため、**アップグレード前に tsconfig 全体を棚卸しする**。
+加えて既定値も変わる（`strict: true` / `module: "esnext"` / `noUncheckedSideEffectImports: true` / `rootDir: "./"` / `types: []` / `stableTypeOrdering: true`）。特に `types` の既定が `["*"]` から `[]` になるため、`@types/node` 等を暗黙に拾っていたプロジェクトは明示列挙が必要になる。
 
 **根拠**:
 - `target: "es5"` を指定したままアップグレードすると `error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher.` でビルドが失敗する
 - `moduleResolution` の `"node"` / `"classic"` も削除され、`"bundler"` が唯一の推奨値になる（本ファイル Rule #5 のコード例が既に `"bundler"` を採用しているのはこの流れに合致する）
 - ベンダー側は「10倍高速」を謳うが、独自ベンチマーク記事では型チェックのみで実測 3.3〜4.1倍にとどまったと報告されており、公称値と実測値に乖離がある。マーケティング数値をそのまま採用せず自プロジェクトで計測する
 - 別の独立ベンチマーク（約10.5万行の実プロジェクト）でも tsc 6.0.3 の 2,457ms に対し tsc 7.0.2 は 535ms（4.6倍）、Go バイナリを直接叩く `tsgo` は 524ms（4.7倍、Node.js 起動オーバーヘッド約86ms を除く）と、複数ソースで「公称10倍」と「実測4〜5倍」の乖離が再現している
-- 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）
+- 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）。既定値は 4 で、Project References のビルド並列度は別途 `--builders` が制御する（両者は掛け算で効く）。デバッグやリソース制約環境では `--singleThreaded` で並列化を切る
+- 削除される compilerOptions は `target: "es5"` / `moduleResolution: "node"` / `"node10"` / `"classic"` に加えて `baseUrl`・`downlevelIteration`・`module` の `"amd"` / `"umd"` / `"systemjs"` / `"none"`・`esModuleInterop: false` / `allowSyntheticDefaultImports: false`・namespace の `module` キーワード・import の `assert` キーワードにも及ぶ（いずれもハードエラー）
+- 既定値の変更のうち実害が出やすいのは `types: ["*"] → []` と `rootDir: "./"`。前者は `@types/*` を暗黙に拾っていたプロジェクトで型が一斉に消えるため、`"types": ["node", "jest"]` のように明示列挙する
+- テンプレートリテラル型がサロゲートペアを 1 文字として扱うようになり、`HeadTail<"😀abc">` が 6.x の `["\ud83d", "\ude00abc"]` から `["😀", "abc"]` に変わる。文字列型を 1 文字ずつ分解する型ユーティリティは挙動差分を確認する
+- 7.0 系のリリース実績は GitHub Releases 上で 7.0.2（2026-08-20）。移行は「まず 6.0 で既定値・非推奨オプションを片付け、その後 7.0 に上げる」順が安全
 - TypeScript 7.0 の `require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開し、Compiler API がそこから消える。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。`package.json` で `typescript` を TS 6.x 系にエイリアスし、実体の TS 7 系は別名で入れる回避策がある
 - 6.0.3 / 6.0.beta の実測検証では、非推奨オプションは「警告」ではなく `error TS5107` として即座にビルドを止める。`ignoreDeprecations: "6.0"` を指定すれば 6.0 では抑制できるが、7.0.2 ではこのオプション自体が削除されており、指定しても怒られもせず単に効かなくなる（`error TS5108` で「削除済みなので設定から除去せよ」と表示される）。「7.0 が来るまでは 6.0 で猶予がある」という前提は成立しない
 
@@ -475,7 +482,11 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
     // NG: "target": "es5" → TS 7.0 では build エラー (TS5023)
     "target": "ES2015",
     // NG: "moduleResolution": "node" / "classic" は削除済み
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    // TS 7.0 で既定が [] に変わるため、暗黙に拾っていた型定義は明示列挙する
+    "types": ["node", "jest"],
+    // TS 7.0 の既定は "./"。出力先の想定が違うなら明示する
+    "rootDir": "./src"
   }
 }
 ```
@@ -517,9 +528,17 @@ tsc --checkers 4
 **出典**:
 - [TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6) (Zenn、`typescript-eslint` の TS7.0拒否と package alias による回避策の実機検証) ※2026-08-18 fetch
 - [TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error) (Zenn、5.9.3/6.0.3/7.0.2 の実機検証で `ignoreDeprecations: "6.0"` が7.0で削除され無効化される点を確認) ※2026-08-19 fetch
+- [TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750) (Qiita、削除オプションの全量・既定値変更（`types: []` / `rootDir`）・`--builders` / `--singleThreaded`・テンプレートリテラル型の Unicode 対応という追加観点) ※2026-08-28 fetch
+- [microsoft/TypeScript Releases](https://github.com/microsoft/TypeScript/releases) (GitHub、7.0.2 が 2026-08-20 リリース済みであることを確認) ※2026-08-28に実際にfetch成功
 
-**バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化）/ 7.0（`ignoreDeprecations` 自体が削除）
-**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たすが、高速化の実測値が情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と大きく食い違い、かつ本セッションの環境制約で公式リリースノート（typescriptlang.org / GitHub Releases）へのアクセスが遮断され裏取りできなかったため「高」ではなく「中」とする）
-**最終更新**: 2026-08-19
+> "コンパイラと言語サービスが Go にネイティブ移植され、フルビルドが 6.0 比でおおむね 8〜12倍高速に"
+> ([TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750), セクション "パフォーマンス") ※2026-08-28に実際にfetch成功
+
+> "⑧【重要】7.0 には API がない"
+> ([TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750), セクション "⑧【重要】7.0 には API がない") ※2026-08-28に実際にfetch成功
+
+**バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化）/ 7.0（`ignoreDeprecations` 自体が削除、7.0.2 が 2026-08-20 リリース）
+**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たす。2026-08-28 に GitHub Releases 上で 7.0.2（2026-08-20 リリース）の存在は確認できたが、公式リリースノート本文（devblogs.microsoft.com）は egress 制限で取得できず、高速化の実測値も情報源間で 3〜4倍・4〜5倍・8〜12倍・10倍と食い違うため「高」ではなく「中」を維持する）
+**最終更新**: 2026-08-28
 
 ---
