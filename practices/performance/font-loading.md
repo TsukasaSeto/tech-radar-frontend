@@ -358,6 +358,41 @@ instancer.instantiateVariableFont(font, {"wght": WGHT}, inplace=True, updateFont
 
 ---
 
+### 5. `next/font/google` の日本語フォントは `subsets` に `"japanese"` を指定できない — `subsets: ["latin"]` を使う
+
+`Noto_Sans_JP` 等の CJK フォントを `next/font/google` で読み込む際、`subsets` オプションの型定義には `'cyrillic' | 'latin' | 'latin-ext' | 'vietnamese'` のみが許可され、`"japanese"` は指定できない。`subsets` を省略すると `preload: true`（デフォルト）時にビルドエラーになるため、`subsets: ["latin"]` を指定するか `preload: false` にする。
+
+**根拠**:
+- `subsets` は「どの文字集合を `<link rel="preload">` で先読みするか」を制御するオプションであり、「フォントが対応する文字」を制限するものではない。日本語グリフは CSS `unicode-range` により 124 以上のファイルへ自動分割され、実際に使われた文字だけがオンデマンドで読み込まれる
+- CJK フォントが `subsets` の選択肢から除外されているのは Next.js PR #44594 に由来する。全 unicode-range 分をプリロードするのは非効率なため意図的に外されている
+- `subsets` を省略したまま `preload`（デフォルト `true`）を使うと `Preload is enabled but no subsets were specified for font Noto Sans JP` でビルドが失敗する
+
+**コード例**:
+```tsx
+// Bad: subsets を省略 → preload: true のデフォルトでビルドエラー
+import { Noto_Sans_JP } from 'next/font/google';
+const notoSansJP = Noto_Sans_JP({ weight: '400' });
+
+// Good: subsets: ["latin"] を明示（日本語グリフは on-demand で読み込まれる）
+import { Noto_Sans_JP } from 'next/font/google';
+const notoSansJP = Noto_Sans_JP({ weight: '400', subsets: ['latin'] });
+
+// Good: プリロード自体が不要な場合は preload: false でも可
+const notoSansJP2 = Noto_Sans_JP({ weight: '400', preload: false });
+```
+
+**出典引用**:
+> "It doesn't make sense to preload all of them"
+> ([next/fontで日本語フォントを使うとき、subsetsに"japanese"は書けない](https://zenn.dev/matsutake_prgrm/articles/japanese-webfont-subsets-latin), セクション "4. なぜCJKはsubsetsから除外されているか（Next.js PR #44594）") ※2026-08-31に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが `next/font/google` の型定義・ビルドエラーメッセージという公式APIの実挙動を実測し、Next.js PR #44594を典拠に示している）
+
+**バージョン**: Next.js 13+ (`next/font`)
+**確信度**: 中（非公式記事単独だが公式APIの型・エラーメッセージの直接検証）
+**最終更新**: 2026-08-31
+
+---
+
 ## 関連プラクティス
 
 - [`performance/core-web-vitals.md`](./core-web-vitals.md) - LCP・CLS の改善（フォント関連はここからリンク）

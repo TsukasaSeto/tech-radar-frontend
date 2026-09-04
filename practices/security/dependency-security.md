@@ -1007,6 +1007,7 @@ class ToolPinStore:
 - Intelligence Layer が提供する「fixedIn targets」（具体的な修正バージョン）・「breakability analysis」（ビルド破壊リスク）・「reachability assessment」（脆弱コードパスが実際に呼ばれるか）を LLM に渡すことで、的確な fix 提案が可能になる
 - 修正は「再スキャンで脆弱性が消えた」ことを CI で自動確認するまで完了とみなさない
 - OSS のみで構成した Trivy MCP + Claude Code フック構成でも同等ワークフローを実現できる。「スキャナ＝事実、AI＝提案、人間＝承認」の責務分離は共通
+- 修正版へのアップグレードが不可能なケース（メジャーバージョン跨ぎで破壊的変更が大きい等）では、公式修正版そのものではなく「保守されたバックポートパッチ」を充てる選択肢がある。OWASP は評価基準として、エコシステム網羅性と公表された対応時間、パッチの公開・出所の追跡可能性、互換レジストリ経由での配布、明文化された終了戦略（exit strategy）の4点を挙げている
 
 **ワークフロー**:
 ```
@@ -1041,13 +1042,17 @@ trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --quiet .
 > "A fix only counts as a fix when a re-scan confirms the vulnerability is resolved"
 > ([Fix SCA issues at scale in your terminal with Snyk Remediation Agent in the CLI](https://snyk.io/blog/snyk-remediation-agent-in-the-cli/), セクション "Verification") ※2026-05-29に実際にfetch成功
 
+> "The tools above detect vulnerable dependencies, they do not fix them. When the fixed version cannot be adopted, the patch still has to come from somewhere"
+> ([OWASP Cheat Sheet Series: Vulnerable Dependency Management — Remediation and maintained backports](https://github.com/OWASP/CheatSheetSeries/commit/b994fb6623eff9fac19e9d19697aedce77114074), セクション "Remediation and maintained backports") ※2026-08-31に実際にfetch成功
+
 **出典**:
 - [Fix SCA issues at scale in your terminal with Snyk Remediation Agent in the CLI](https://snyk.io/blog/snyk-remediation-agent-in-the-cli/) (Snyk公式ブログ) ※2026-05-29に実際にfetch成功
 - [Claude Code × Trivy MCPで依存ライブラリの脆弱性を検出→修正→再スキャンする](https://zenn.dev/virtualcraft/articles/claude-code-trivy-mcp-security-check) (Zenn、Trivy MCP + Claude Code hooks によるOSSのみのSCA自動化構成) ※2026-06-12に実際にfetch成功
+- [OWASP Cheat Sheet Series: Vulnerable Dependency Management](https://github.com/OWASP/CheatSheetSeries/commit/b994fb6623eff9fac19e9d19697aedce77114074) (OWASP公式、修正版へアップグレードできない場合の「保守されたバックポート」評価基準4点) ※2026-08-31に実際にfetch成功
 
 **バージョン**: Snyk CLI 1.0+, Trivy 0.50+
 **確信度**: 中
-**最終更新**: 2026-06-12
+**最終更新**: 2026-08-31
 
 ---
 
