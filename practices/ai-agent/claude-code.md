@@ -1931,9 +1931,25 @@ MEMORY.md
 > "100%守らせたいならhook（確定的）、AIの判断で破ってよいならテキスト（確率的）"
 > ([CLAUDE.mdは確率的制約——144KBのルールが破られた記録と3層防御](https://zenn.dev/zenn_content/articles/claude-md-rules-are-probabilistic), セクション "対策") ※2026-08-13に実際にfetch成功
 
+**複数ドキュメントに分割した場合、目次がないと「隣のドキュメントの存在」自体を見失う**: 単一ファイル内の見出し順序（Rule #16 前段）だけでなく、`CLAUDE.md` と参照先ファイルが複数に分かれている構成では、Claude が「今読んでいる1ファイルに全情報がある」と誤って判断し、隣接ドキュメントを開かないまま回答することがある。CLAUDE.md の先頭に「1行説明つきの目次」を置くだけで、8ケース中の到達率が 25%（2/8）→ 100% に改善し、平均トークンコストも 22% 減少した実測がある:
+```markdown
+## ドキュメント目次（質問に応じてここから辿る）
+- [twitter/README.md](twitter/README.md) — Twitter投稿の文体・トーン・媒体固有ルール
+- [zenn/README.md](zenn/README.md) — Zenn記事公開手順
+```
+
+**出典**:
+- [CLAUDE.md の目次に 3 行足したら、Claude の迷子が到達率 25%→100% になった](https://zenn.dev/ruri/articles/doc-wayfinder) (Zenn ruri、8ケースのBefore/After計測とトークンコスト比較) ※2026-08-27に実際にfetch成功
+
+> "CLAUDE.md の先頭に、1 行説明つきの目次を置いただけ。"
+> ([CLAUDE.md の目次に 3 行足したら、Claude の迷子が到達率 25%→100% になった](https://zenn.dev/ruri/articles/doc-wayfinder), セクション "実測: 迷子は「遠回り」ではなかった") ※2026-08-27に実際にfetch成功
+
+> "あるドキュメントの充実が、隣のドキュメントの存在を隠す"
+> ([CLAUDE.md の目次に 3 行足したら、Claude の迷子が到達率 25%→100% になった](https://zenn.dev/ruri/articles/doc-wayfinder), セクション "ケースの選び方が、計測の盲点を決める") ※2026-08-27に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-13
+**最終更新**: 2026-08-27
 
 ---
 
@@ -2157,13 +2173,18 @@ Hook / Sandbox / Backup の3層 + 6カテゴリのリスク分類で安全境界
 - パーミッションルールは **`deny` → `ask` → `allow` の順に評価され、最初にマッチした結果が採用される**（`deny` に例外を追加することはできない）。`ask` は `curl`・`wget`・`npx` のような外部接続・任意コード実行系コマンドに使うと、`auto` や `bypassPermissions` へモードを緩めても確認が残る「床」として機能する（`allow` はモードを緩めると素通りする）
 - `deny`/`allow` のパスパターンで `/path` と書くと、ファイルシステムのルートではなく**`settings.json` の配置場所からの相対パス**として解釈される。絶対パスを指定したい場合は `//path` または `~/path` を使う
 - Read/Edit の `deny` は Claude の組み込みツールと認識済みの Bash コマンド（`cat` 等）しか止めず、Python/Node スクリプトによる直接ファイル読み取りは防げない。これは `bash -c` の抜け穴と同種の「文字列一致では防げない」限界であり、パーミッション設計は「最下位スコープであり、削除・回避されうる」前提で管理者ポリシー層と組み合わせる
+- **`.claude/` 配下への書き込みは、`PreToolUse` フックで `allow` を設定していても機密ファイル判定に負けて止まる場合がある**。センシティブファイル判定はパーミッション設定のチェックより前に走る組み込みの安全装置らしく、無人稼働の Routine が `.claude/` 配下に出力ファイルを書こうとして応答不能な確認待ち状態のまま 13 時間停止した実例がある。無人実行で `.claude/` 配下に自動生成ファイルを書かせたい場合は、`docs/auto-reports/` のようなリポジトリ内の別ディレクトリを出力先にする回避策が必要
 
 **出典**（追加）:
 - [Claude Code をチームに配るときの settings.json — deny / ask / allow をどう引いたか](https://zenn.dev/tikuwaman/articles/claude-code-team-settings-json) (Zenn、評価順序・パス構文の落とし穴・ask のモード横断性) ※2026-08-06に実際にfetch成功
+- [無人のClaude Codeが13時間止まった原因 — PreToolUseのallowでは勝てないsensitive file判定](https://zenn.dev/sivami/articles/61d6115c38e014) (Zenn sivami、`.claude/` 書き込みが PreToolUse の allow 設定より優先される機密ファイル判定で無応答停止した実例、コード例なし・単一事例のため確信度は既存部分より低い参考情報) ※2026-08-27に実際にfetch成功
+
+> "The sensitive file detection appears to run before checking any permission settings, making it impossible to suppress via configuration."
+> ([無人のClaude Codeが13時間止まった原因 — PreToolUseのallowでは勝てないsensitive file判定](https://zenn.dev/sivami/articles/61d6115c38e014), セクション "原因：sensitive file の判定は、権限設定より前に走る") ※2026-08-27に実際にfetch成功
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-06
+**最終更新**: 2026-08-27
 
 ---
 
