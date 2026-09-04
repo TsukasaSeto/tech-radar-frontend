@@ -401,3 +401,42 @@ const nextConfig = {
 初期表示される Widgets コンポーネント（62KB gzip）を `React.lazy()` で分割したところ、TBT が 20ms → 170ms（8倍増）、Lighthouse スコアが 95 → 92 に悪化。FCP は 1.1s → 0.9s に改善したが、TBT はスコアへの加重が高い（30%）ため逆効果になった。原因: コード分割はJavaScript総量を削減せず「実行タイミング」を変えるだけ。初期レンダリングで必要なコンポーネントを分割すると、FCP以降のメインスレッドブロック（= TBT）が増大する。修正: バレルのモーダル（WidgetPicker）のみに lazy-loading を限定した。適用範囲の原則: 「ユーザーのクリック・ナビゲーションがなければ表示されないUI（モーダル・アコーディオン・遷移先ページ）」にのみ使用する。
 
 **確信度**: 既存（高）→ 高（実測データで適用条件を明確化）
+
+---
+
+### 7. Turbopack のチャンク結合はナビゲーションパターンに合わせてチューニングする（Next.js 16.3+）
+
+Turbopack はビルド時に複数の小さいチャンクを「チャンクグループ」単位で結合し、リクエスト数とダウンロード量のトレードオフを最適化する。デフォルトの結合戦略は「初回訪問が2/3、複数ページ遷移が1/3」という仮定に基づく統計的な重み付けであり、実際のサイトの回遊パターンと異なる場合は `experimental.turbopackChunking` で明示的にチューニングできる。加えて、ソフトナビゲーション時の再ダウンロードを避けるため `generateComponentChunks` で結合チャンクと未結合チャンクを両方生成し、ブラウザのキャッシュ状況に応じてランタイムが有利な方を選択できるようにする。
+
+**根拠**:
+- チャンク結合はビルド時に決定されるため、訪問者が既に何をキャッシュ済みかを考慮できない。`generateComponentChunks` はこの制約を実行時の選択に置き換える
+- サイトの実際の回遊率（単一ページ訪問 vs 複数ページ遷移）はデフォルトの 2/3 という仮定と乖離しうるため、`firstPageLoadPriority` / `priorityRoutes` / `clusters` で自サイトの計測値に合わせて調整できる
+- CJS モジュールの tree-shaking（`turbopackCjsTreeShaking`）と共有ランタイム（`turbopackSharedRuntime`）は、チャンク結合とは独立に「そもそもの出力量」を削減する
+
+**コード例**:
+```ts
+// next.config.js
+const nextConfig = {
+  experimental: {
+    // ソフトナビゲーション時に結合/未結合チャンクを両方生成し、ランタイムが選択
+    turbopackChunking: {
+      generateComponentChunks: true,
+      firstPageLoadPriority: 0.67, // 0-1: 初回ロード優先度（デフォルト0.67 = 直帰率相当）
+      priorityRoutes: ['/'],       // 表示速度を最優先したいルート
+      clusters: [[/^\/blog/, /^\/blog\/.*/]], // 一緒に回遊されやすいルート群
+    },
+    // CJS モジュールの tree-shaking を有効化（将来デフォルト化予定）
+    turbopackCjsTreeShaking: true,
+    // ページ単位ランタイムを1つの共有ランタイムに統合（初回以降のナビゲーションで約10KB削減）
+    turbopackSharedRuntime: true,
+  },
+};
+```
+
+**出典引用**:
+> "In Next.js 16.3 or later, enabling `experimental.turbopackChunking.generateComponentChunks` in your `next.config.js` makes Turbopack emit un-merged versions of chunks alongside the merged ones... at request time we can pick whichever is cheaper: the merged chunk, or just the pieces that are missing."
+> ([How Turbopack chunks your JavaScript](https://nextjs.org/blog/turbopack-chunking), セクション "Smarter chunk fetching") ※2026-09-03に実際にfetch成功
+
+**バージョン**: Next.js 16.3+
+**確信度**: 高（Next.js 公式ブログ、実測ベンチマーク付き）
+**最終更新**: 2026-09-03
