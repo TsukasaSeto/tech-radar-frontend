@@ -854,3 +854,51 @@ Tailwind CSS v3 では `text-{size}` ユーティリティが行間（line-heigh
 **最終更新**: 2026-08-23
 
 ---
+
+### 15. Tailwind CSS の Preflight は「タグ名で見た目を決める」習慣を意図的に壊す — 何がリセットされるかを把握してから外す
+
+Tailwind CSS の Preflight（base layer）は `h1`〜`h6` の `font-size`/`font-weight` を `inherit` にリセットし、`ol`/`ul`/`menu` の `list-style` を `none` にし、全要素の `margin`/`padding` を 0 にする。これは「バグでリセットされている」のではなく、タグ名だけで見た目が決まる状態を防ぎ、スタイリングを常にユーティリティクラスで明示させるための設計。ただし `list-style: none` は VoiceOver 等のスクリーンリーダーからリスト要素の意味論を奪うため、`role="list"` を明示しないとアクセシビリティが壊れる。
+
+**根拠**:
+- ブラウザ既定の `h1` サイズ（2em 等）は多くの場合デザイナーのタイプスケールに存在せず、無自覚に使うとスケール体系が崩れる
+- 「大きく見せたいから `h1` を使う」という動機は見た目上正しくても文書構造を破壊し、支援技術の利用者に影響する
+- Preflight は margin/padding も含めて全称リセットするため、コンポーネント側は常に明示的なユーティリティクラスでスタイルを当てる前提になる
+- `list-style: none` は見た目のリセットである一方、一部のスクリーンリーダー（VoiceOver など）ではリストの意味論も同時に失われるため、意味を残したい場合は `role="list"` の追加が必要
+
+**コード例**:
+```css
+/* Tailwind CSS Preflight が実際に出力するリセット（抜粋） */
+h1, h2, h3, h4, h5, h6 {
+  font-size: inherit;
+  font-weight: inherit;
+}
+ol, ul, menu {
+  list-style: none;
+}
+*, ::after, ::before, ::backdrop, ::file-selector-button {
+  margin: 0;
+  padding: 0;
+}
+```
+```html
+<!-- list-style: none でVoiceOverのリスト読み上げが外れるため、意味を残すなら role="list" を明示する -->
+<ul role="list">
+  <li>One</li>
+  <li>Two</li>
+  <li>Three</li>
+</ul>
+```
+
+**アンチパターン**:
+- `<h1>` を「大きな見出しを出すタグ」として使い、Preflight のリセットに気づかず「なぜか大きくならない」と誤診する
+- `list-style: none` だけ適用して `role="list"` を付け忘れ、スクリーンリーダー利用者からリストの構造情報を奪う
+
+**出典引用**:
+> "list-style: none はVoiceOverでの"リスト扱い"を外す"
+> ([h1が大きくならないのはバグではなく、タグで見た目を決める癖を折る設計だった](https://zenn.dev/matsutake_prgrm/articles/preflight-breaks-the-habit-of-styling-by-tag), Zenn, セクション "ただし、意味まで無傷ではなかった") ※2026-09-05に実際にfetch成功
+
+**バージョン**: Tailwind CSS v3+ (Preflight)
+**確信度**: 中（公式ツールの base layer 挙動を検証した単独記事、パターン1c採用）
+**最終更新**: 2026-09-05
+
+---

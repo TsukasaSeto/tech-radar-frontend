@@ -14,6 +14,7 @@ XSS の最後の防衛線として CSP を運用する。「設定して終わ�
 - nonce は HTTP レスポンスごとにランダム生成され、攻撃者は予測できない
 - Google・MDN は `'strict-dynamic'` + nonce を CSP Level 3 のベストプラクティスとして推奨
 - `'unsafe-eval'` も同様に避ける（Vue.js テンプレート等で必要なら明示的に許可）
+- `prefetch-src` は実験的ディレクティブとして提案されたが CSP Level 3 仕様から削除されており、最新ブラウザでは無視される。防御手段として `prefetch-src` に依存せず、`script-src` / `default-src` 等の標準 fetch ディレクティブでリソース取得を制御する
 
 **コード例（Next.js Middleware）**:
 ```ts
@@ -70,10 +71,14 @@ Content-Security-Policy: script-src 'self' https://cdn.example.com https://cdnjs
 - [W3C CSP Level 3](https://www.w3.org/TR/CSP3/) (W3C)
 - [Google Web Fundamentals: Strict CSP](https://web.dev/articles/strict-csp) (web.dev)
 - [OWASP: Content Security Policy Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html) (OWASP)
+- [OWASP Content Security Policy Cheat Sheet: prefetch-src の記述修正](https://github.com/OWASP/CheatSheetSeries/commit/1eacf6cb9bfcba006ca972a804c5faace8c2758a) (OWASP CheatSheetSeries、`prefetch-src` が CSP Level 3 仕様から削除され最新ブラウザでは無視される旨の公式ドキュメント修正) ※2026-09-05に実際にfetch成功
+
+> "It was removed from the CSP Level 3 specification and is ignored by modern browsers — do not rely on it for defense."
+> ([OWASP Content Security Policy Cheat Sheet commit](https://github.com/OWASP/CheatSheetSeries/commit/1eacf6cb9bfcba006ca972a804c5faace8c2758a), セクション "prefetch-src") ※2026-09-05に実際にfetch成功
 
 **バージョン**: CSP Level 3 / Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-09-05
 
 ---
 
