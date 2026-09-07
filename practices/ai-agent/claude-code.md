@@ -3849,3 +3849,51 @@ docker run --rm -m 256m my-claude-code-sandbox claude -p "big-allocation-task"
 **最終更新**: 2026-08-31
 
 ---
+
+### 49. Claude Code の Bash ツールは長いヒアドキュメントを黙って切り捨てる — 固定の安全長を当てにせず PreToolUse hook で防御する
+
+Claude Code の Bash ツールに `<<'EOF'` 形式のヒアドキュメントを渡すと、一定の文字数を超えた内容が途中で黙って切り捨てられ、`unexpected EOF` 等のシェルエラーとして現れることがある。しかも実効上限は固定値ではなく、セッションが進むほど縮小する挙動が観測されているため、「前回この文字数までは動いた」という経験則を安全マージンとして使えない。長い内容を Bash 経由で渡す代わりに、PreToolUse hook で文字数を検査してブロックし、Write ツール等の別経路に倒す。
+
+**根拠**:
+- 実測で約7,489文字からヒアドキュメントの切り捨てによる失敗が確認され、7,200文字を閾値としたガードを導入したところ33件の失敗を検知し、誤検知（false positive）は2件にとどまった
+- 実効上限がセッション進行とともに縮む観測結果があり、「固定の安全な文字数」という前提そのものが成立しない
+
+**コード例**:
+```json
+// ~/.claude/settings.json — PreToolUse hook でヒアドキュメントの長さを検査する
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{
+          "type": "command",
+          "command": "python",
+          "args": ["-X", "utf8", "path/to/heredoc-guard.py"]
+        }]
+      }
+    ]
+  }
+}
+```
+```bash
+# Bad: 7,000文字超のヒアドキュメントをBashツールにそのまま渡す
+cat > output.txt <<'EOF'
+... (7,489文字以上) ...
+EOF
+# → 途中で黙って切り捨てられ、unexpected EOF 等のシェルエラーになりうる
+
+# Good: 長い内容はヒアドキュメント以外の経路（Writeツール等）で渡す
+```
+
+**出典引用**:
+> "実効上限は固定ではなく、セッションが進むほど縮む"
+> ([Claude Code の Bash は長いヒアドキュメントを黙って切る — 閾値は固定ではなかった](https://zenn.dev/genkunjc/articles/claude-code-heredoc-truncation), セクション "先に結論") ※2026-09-07に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の Bash ツールの実挙動を検証し、`~/.claude/settings.json` の PreToolUse hook 設定を直接示している）
+
+**バージョン**: Claude Code（2026-09-07時点で観測された挙動、バージョン非明記）
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-07
+
+---
