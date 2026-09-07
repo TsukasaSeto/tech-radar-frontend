@@ -169,6 +169,7 @@ export async function generateAction(input: string) {
 - TruffleHog / gitleaks 等のツールがクライアントバンドルから secret パターンを発見できる
 - **betterleaks**（gitleaks 作者による後継ツール）は BPE トークナイザーで自然言語とシークレットを区別し、Shannon エントロピー方式（gitleaks）より高精度（CredData 評価: 98.6% vs 70.4%）
 - `secret_lint` や `actionlint` も合わせて運用
+- ファイル本文への grep はコミットの author/committer メタデータ（`git config user.email` 未設定時にホスト名から合成される識別子等）を検査対象に含まない。公開リポジトリでは `git log --all` で全参照を対象に含め、noreply 形式のメールアドレスを標準にする
 
 **CI 設定例**:
 ```yaml
@@ -253,10 +254,14 @@ process.exit(leaked ? 1 : 0);
 - [GitHub: secret scanning](https://docs.github.com/en/code-security/secret-scanning) (GitHub Docs)
 - [gitleaksの作者が一から作り直したbetterleaks](https://zenn.dev/shuymn/articles/600779b488d6d3) (Zenn shuymn、BPE トークナイザーによる検出率改善) ※2026-06-08に実際にfetch成功
 - [GitLeaksからBetterLeaksに乗り換えた話](https://zenn.dev/mohhh_ok/articles/gitleaks-to-betterleaks) (Zenn mohhh_ok、実際の移行事例) ※2026-06-09に実際にfetch成功
+- [公開されるのは本文だけではない。grep検査を全部通したのにコミット履歴から個人情報が漏れていた話](https://qiita.com/fujiken818/items/e96cf84bc2bee61512b2) (Qiita、ファイル本文grepでは検知できないコミット著者欄メタデータ漏洩の実例と全数検査スクリプト) ※2026-09-05に実際にfetch成功
+
+> "本文のgrepは0件だったが、著者欄に情報が焼き込まれている"
+> ([公開されるのは本文だけではない。grep検査を全部通したのにコミット履歴から個人情報が漏れていた話](https://qiita.com/fujiken818/items/e96cf84bc2bee61512b2), Qiita, セクション "コミットの著者欄は本文ではない") ※2026-09-05に実際にfetch成功
 
 **バージョン**: Next.js 13+, GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-06-09
+**最終更新**: 2026-09-05
 
 #### 追加根拠 (2026-05-16)
 
@@ -645,6 +650,7 @@ const { payload } = await jwtVerify(token, JWKS);
 - macOS では `security` コマンドで Keychain にサービス単位のエントリを作成でき、Preview/Production 用に別エントリを分ければ環境ごとの取り違えも防げる
 - CI トークンは個人の認証情報を使い回さず、権限を絞った専用トークンを発行する
 - git の remote URL や `.git/config` に PAT を直接埋め込む（`https://<token>@github.com/...`）と平文で残り続ける。`gh auth login` 等 CLI ネイティブの credential helper 方式に切り替えれば、OS のクレデンシャルストア経由でトークンを扱え、`.git/config` には平文トークンが残らない
+- AI エージェントと共有するリポジトリでは、未コミットの機密ファイルを「誰が置いたか（人間かAIか）」を特定できないまま、未コミット変更を自動回収する仕組みが善意でコミット履歴に焼き込むリスクがある。書く場所を「どこにも書かない/書くが公開しない/公開前に必ずチェックする」の3層に分け、機密ファイルは決まった名前・場所に限定して `.gitignore` で封じ、AI にチェックさせる際は中身をチャットに書かせず場所と種類だけ報告させる
 
 **命名規約**: `<app>-<purpose>-<environment>`（例: `comic-app-openai-preview`）
 
@@ -684,11 +690,15 @@ git config --global --get credential.https://github.com.helper
 
 **出典**:
 - [シークレットはどこに置く？ .env、Keychain、CLIログイン、Secretストアを整理した](https://zenn.dev/optimisuke/articles/d7a4c2e91f6b30) (Zenn、アプリ/CLI/CIの3分類とmacOS Keychainへの実際の保存・取得コマンド) ※2026-08-19 fetch
+- [見覚えのないファイルが落ちていた——AIと共有するリポジトリの秘密境界](https://zenn.dev/hilopon/articles/ai-shared-repository-secret-boundaries) (Zenn、AIエージェントとの共有リポジトリにおける3層の秘密情報境界設計) ※2026-09-05に実際にfetch成功
+
+> "次に起動したAIが、完全に善意で、トークンをgitの履歴に焼き込んでいた"
+> ([見覚えのないファイルが落ちていた——AIと共有するリポジトリの秘密境界](https://zenn.dev/hilopon/articles/ai-shared-repository-secret-boundaries), Zenn, セクション "怖いのは「誰が置いたか」ではなかった") ※2026-09-05に実際にfetch成功
 - [【GitHub】セキュリティ強化のためPAT を卒業する](https://qiita.com/kura13/items/78073e51eac9a4e72383) (Qiita、`.git/config` への PAT 平文埋め込みから `gh auth login` の credential helper への切り替え手順) ※2026-08-23 fetch
 
 **バージョン**: 一般原則（例は macOS `security` コマンド + Vercel CLI + GitHub CLI）
 **確信度**: 中（単一記事だが各CLIの実際のコマンド・フラグを直接示す実機検証のためパターン1c扱い）
-**最終更新**: 2026-08-23
+**最終更新**: 2026-09-05
 
 ---
 
