@@ -348,3 +348,67 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 **最終更新**: 2026-08-19
 
 ---
+
+### 7. Hydration Error は「window が存在しない」以外にも原因が複数ある — 非決定的な値・不正な HTML ネスト・クライアント限定状態を疑う
+
+Rule #6 の「レンダー本体でブラウザ専用 API に直接触れるとサーバーが `ReferenceError` で落ちる」は Hydration 問題の一部でしかない。より頻度が高いのは、SSR 自体は成功するがサーバーが出力した HTML とクライアントが再構築する DOM が一致せず、React が Hydration を中断する「Hydration Mismatch」で、これは別の原因群を持つ。代表的な原因は (1) `Math.random()` / `Date.now()` など非決定的な値をレンダー本体で使う、(2) `<p>` の中に `<div>` を置くなど無効な HTML ネスト（ブラウザが自動補正した結果クライアント側DOMだけ構造が変わる）、(3) `localStorage` の値や認証状態などクライアントでしか分からない値で条件分岐する、の3つ。対処は「非決定的な値は `useId()` で安定化する」「クライアント限定の値はマウント済みフラグを経由して `useEffect` 内でのみ読む」「どうしても揃えられない場合のみ `suppressHydrationWarning` で対象要素に限定して黙らせる（乱用しない）」。
+
+**根拠**:
+- Hydration Mismatch は React が「サーバー出力とクライアント出力が食い違ったため Hydration を中断した」際に起きるもので、Rule #6 の `ReferenceError` によるサーバー側の即時クラッシュとは別の失敗モードである
+- `useId()` は React 18 で導入された安定 ID 生成 API で、`Math.random()` 等の代わりに使うとサーバー/クライアントで同じ値を生成できる
+- クライアント専用の値（`localStorage` 等）はマウント済みフラグを経由して読むことで、初回レンダーはサーバーと同じ「未確定値」で揃い、マウント後の再レンダーで実値に更新される
+- `suppressHydrationWarning` は差分そのものを解消するわけではなく警告を黙らせるだけなので、タイムスタンプ表示など「差分が原理的に避けられない」要素にのみ限定して使う
+
+**コード例**:
+```tsx
+// Bad: 非決定的な値をそのままレンダーに使う（サーバー/クライアントでIDがずれる）
+function RandomBadge() {
+  const id = Math.random().toString(36);
+  return <span id={`badge-${id}`}>Random ID: {id}</span>;
+}
+
+// Good: useId() で安定した ID を生成する
+'use client';
+import { useId } from 'react';
+
+function RandomBadge() {
+  const id = useId();
+  return <span id={`badge-${id}`}>Random ID: {id}</span>;
+}
+
+// Good: クライアント専用の値はマウント済みフラグ経由で useEffect 内でのみ読む
+'use client';
+import { useEffect, useState } from 'react';
+
+function FavoriteButton() {
+  const [isFavorited, setIsFavorited] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => setIsMounted(true), []);
+  useEffect(() => {
+    if (isMounted) {
+      setIsFavorited(localStorage.getItem('favorite') === 'true');
+    }
+  }, [isMounted]);
+
+  return <button>{isFavorited ? 'Unfavorite' : 'Favorite'}</button>;
+}
+```
+
+**出典引用**:
+> "The article demonstrates how to replace the nondeterministic call with a stable API (`useId`)"
+> ([Fix React 18 Hydration Mismatch in Next.js](https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m), セクション "How React 18 decides your page is broken") ※2026-09-09に実際にfetch成功
+
+> "サーバーでレンダリングされたHTML構造やコンテンツと、クライアントでReactが生成するDOMツリーが一致しない場合に発生します"
+> ([Next.js Hydration Errorを徹底解剖！堅牢な解決策を実装する手順](https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1), セクション "Hydration Errorの一般的な発生原因") ※2026-09-09に実際にfetch成功
+
+**出典**:
+- [Fix React 18 Hydration Mismatch in Next.js](https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m) (dev.to、`useId()` による安定 ID 生成のコード例) ※2026-09-09に実際にfetch成功
+- [Next.js Hydration Errorを徹底解剖！堅牢な解決策を実装する手順](https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1) (Zenn、マウント済みフラグ経由の `useEffect` パターンと `suppressHydrationWarning` の適用範囲限定というコード例) ※2026-09-09に実際にfetch成功
+- 参考として同日 Medium にも同テーマの記事（entepazhe 名義）が見つかったが、本文取得は403/500/408で全段階失敗したため出典に含めていない（取得統計参照）
+
+**バージョン**: Next.js 13+ / React 18+（`useId` は React 18 で導入）
+**確信度**: 高（パターン2: 異なる著者2名〔dev.to / Zenn〕が同時期に同じ知見を独立に記事化し、両方に具体的なコード例あり。ただし Zenn 側の著者 `fd_ai_teacher` は過去 changelog（2026-08-11）で「AI生成の "tech-daily" 定型記事で品質に疑義」と記録された前歴があるため、dev.to 側のコード例を一次根拠とし Zenn 側は裏付けとして扱う）
+**最終更新**: 2026-09-09
+
+---
