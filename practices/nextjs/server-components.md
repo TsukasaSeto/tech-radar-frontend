@@ -358,6 +358,7 @@ Rule #6 の「レンダー本体でブラウザ専用 API に直接触れると�
 - `useId()` は React 18 で導入された安定 ID 生成 API で、`Math.random()` 等の代わりに使うとサーバー/クライアントで同じ値を生成できる
 - クライアント専用の値（`localStorage` 等）はマウント済みフラグを経由して読むことで、初回レンダーはサーバーと同じ「未確定値」で揃い、マウント後の再レンダーで実値に更新される
 - `suppressHydrationWarning` は差分そのものを解消するわけではなく警告を黙らせるだけなので、タイムスタンプ表示など「差分が原理的に避けられない」要素にのみ限定して使う
+- マウント済みフラグ経由の `useEffect` はクライアント専用の値を扱う代表的な回避策だが、初回レンダー後にもう1回の再レンダーを挟む。値がレンダー前から DOM 上に実在する場合（`<html data-theme>` など、インラインスクリプトで先に設定済みの属性）は、`useSyncExternalStore` で DOM を「外部ストア」として直接購読する方が、React state に値を二重管理させずに済む
 
 **コード例**:
 ```tsx
@@ -393,11 +394,39 @@ function FavoriteButton() {
 
   return <button>{isFavorited ? 'Unfavorite' : 'Favorite'}</button>;
 }
+
+// Good: 値が既に DOM 上にある場合は useSyncExternalStore で外部ストアとして直接購読する
+'use client';
+import { useSyncExternalStore } from 'react';
+
+function subscribe(callback: () => void) {
+  const observer = new MutationObserver(callback);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  });
+  return () => observer.disconnect();
+}
+
+function getSnapshot() {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+function getServerSnapshot() {
+  return 'pending'; // SSR 時点の初期値（マウント後に実値へ更新される）
+}
+
+function useDisplayedTheme() {
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+}
 ```
 
 **出典引用**:
 > "The article demonstrates how to replace the nondeterministic call with a stable API (`useId`)"
 > ([Fix React 18 Hydration Mismatch in Next.js](https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m), セクション "How React 18 decides your page is broken") ※2026-09-09に実際にfetch成功
+
+> "The theme lives in the DOM. React just doesn't know that...React needs to _read_ an external source, not maintain its own parallel copy."
+> ([Stop Using a mounted Flag to Fix Theme Flash: Use useSyncExternalStore Instead](https://dev.to/udlxix/stop-using-a-mounted-flag-to-fix-theme-flash-use-usesyncexternalstore-instead-4emo), セクション "Where the theme actually lives") ※2026-09-10に実際にfetch成功
 
 > "サーバーでレンダリングされたHTML構造やコンテンツと、クライアントでReactが生成するDOMツリーが一致しない場合に発生します"
 > ([Next.js Hydration Errorを徹底解剖！堅牢な解決策を実装する手順](https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1), セクション "Hydration Errorの一般的な発生原因") ※2026-09-09に実際にfetch成功
@@ -406,9 +435,10 @@ function FavoriteButton() {
 - [Fix React 18 Hydration Mismatch in Next.js](https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m) (dev.to、`useId()` による安定 ID 生成のコード例) ※2026-09-09に実際にfetch成功
 - [Next.js Hydration Errorを徹底解剖！堅牢な解決策を実装する手順](https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1) (Zenn、マウント済みフラグ経由の `useEffect` パターンと `suppressHydrationWarning` の適用範囲限定というコード例) ※2026-09-09に実際にfetch成功
 - 参考として同日 Medium にも同テーマの記事（entepazhe 名義）が見つかったが、本文取得は403/500/408で全段階失敗したため出典に含めていない（取得統計参照）
+- [Stop Using a mounted Flag to Fix Theme Flash: Use useSyncExternalStore Instead](https://dev.to/udlxix/stop-using-a-mounted-flag-to-fix-theme-flash-use-usesyncexternalstore-instead-4emo) (dev.to、マウント済みフラグの代替として `useSyncExternalStore` で DOM を外部ストアとして直接購読するコード例) ※2026-09-10 fetch
 
-**バージョン**: Next.js 13+ / React 18+（`useId` は React 18 で導入）
+**バージョン**: Next.js 13+ / React 18+（`useId` は React 18 で導入。`useSyncExternalStore` も React 18 で導入）
 **確信度**: 高（パターン2: 異なる著者2名〔dev.to / Zenn〕が同時期に同じ知見を独立に記事化し、両方に具体的なコード例あり。ただし Zenn 側の著者 `fd_ai_teacher` は過去 changelog（2026-08-11）で「AI生成の "tech-daily" 定型記事で品質に疑義」と記録された前歴があるため、dev.to 側のコード例を一次根拠とし Zenn 側は裏付けとして扱う）
-**最終更新**: 2026-09-09
+**最終更新**: 2026-09-10
 
 ---
