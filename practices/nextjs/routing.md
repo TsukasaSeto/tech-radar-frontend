@@ -165,6 +165,7 @@ Intercepting Routes はフォルダの相対的な深さに基づいたマッチ
 **根拠**:
 - 記法を誤るとルートがインターセプトされず、単純なページ遷移になってしまう
 - クライアントナビゲーションとURLの直接アクセスで異なる表示を提供できる（URLシェア可能なモーダル等）
+- ハードリフレッシュ（フルSSR）では、クライアントナビゲーション時のスロット状態を引き継げないため、各スロットについて現在のURLに一致するルートを個別に解決し直す。一致するルートを持たないスロットがあると、Next.js は 404 にフォールバックする。`default.tsx` はこの「一致なし」時に描画するフォールバックであり、`@modal` のようなオプショナルなスロットに限らず**全てのスロットに用意しないと、ハードリフレッシュだけで 404 になる**
 
 **コード例**:
 ```
@@ -206,15 +207,30 @@ export default function RootLayout({
 export default function Default() {
   return null;
 }
+
+// Bad: 一部のスロットにだけ default.tsx を用意する
+// app/@analytics/ に default.tsx がないと、/dashboard 以外の URL へのハードリフレッシュで
+// @analytics スロットが解決できず、ページ全体が 404 になる
+
+// Good: 全スロットに default.tsx を用意する
+// app/@analytics/default.tsx
+export default function DefaultAnalytics() {
+  return null; // または直近の妥当な状態を返す
+}
 ```
+
+**出典引用**:
+> "Next.js hits a wall...Lacking a defined path for that specific URL within that specific slot, the framework defaults to the safest option: throwing a 404."
+> ([Fix Next.js Parallel Routes 404 on Refresh | App Router Guide](https://dev.to/nainikmehta/fix-nextjs-parallel-routes-404-on-refresh-app-router-guide-11o2), セクション本文) ※2026-09-10に実際にfetch成功
 
 **出典**:
 - [Next.js Docs: Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes) (Next.js公式 / 2024)
 - [Next.js Docs: Parallel Routes](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes) (Next.js公式 / 2024)
+- [Fix Next.js Parallel Routes 404 on Refresh | App Router Guide](https://dev.to/nainikmehta/fix-nextjs-parallel-routes-404-on-refresh-app-router-guide-11o2) (dev.to、ハードリフレッシュで一部スロットのみ 404 になる具体的な再現条件と `default.js` による修正例) ※2026-09-10 fetch
 
 **バージョン**: Next.js 15+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-09-10
 
 ---
 
