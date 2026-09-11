@@ -2402,6 +2402,7 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - `.claude/agents/` 配下の YAML フロントマターで `model:` フィールドを指定すると、サブエージェントごとにモデルを切り替えられる（Claude Code 公式機能）
 - 深い階層のエージェントは上位からの指示が既に絞り込まれた状態で動くため Opus の推論力は不要
 - `CLAUDE_CODE_SUBAGENT_MODEL` 環境変数でデフォルトモデルを一括設定できる
+- **v2.1.251 以降、`CLAUDE_CODE_SUBAGENT_MODEL` は frontmatter で `model:` を明示指定したサブエージェントを上書きしない**（frontmatter 側が優先される、安全側のデフォルト挙動）。`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`（v2.1.257+）で強制上書きできるとされるが、動作は未確定（検証者自身が「結果不定」と留保）。深さ別モデル設計を環境変数の一括切り替えに頼る場合、個別に `model:` を pin したサブエージェントだけは環境変数の対象外になる点を前提に設計する
 - 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
 - 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
 - v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする。別著者（haruhiro1020, 2026-08-24 Zenn）が公式 changelog（code.claude.com/docs/en/changelog, v2.1.212/217/219）を出典として同じ変更を確認し、実機検証で「メインは深さの数に入らず、最初のサブエージェントが depth 1」という数え方も確定させた
@@ -2516,6 +2517,9 @@ tools: Read, Grep, Edit, Write, Bash
 > "Bash を渡した時点で、Write を渡さないことによる保証は消えている"
 > ([サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38), セクション "権限では縛りきれないものがある") ※2026-08-24に実際にfetch成功
 
+> "frontmatter側のモデル(この例ではsonnet系)がそのまま使われました" / "「個別に明示指定したモデルを、環境変数ひとつで不用意に上書きしない」という安全側の優先順位"
+> ([CLAUDE_CODE_SUBAGENT_MODELだけではpin済みsubagentのモデルを変えられない](https://zenn.dev/clopy/articles/claude-subagent-model-force-precedence-gap), セクション "結論から" / "設計思想") ※2026-09-11に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
@@ -2525,10 +2529,11 @@ tools: Read, Grep, Edit, Write, Bash
 - [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。単著者・未公式検証) ※2026-07-24 fetch
 - [Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745) (Zenn、必須フロントマターフィールドの最小構成と、ディレクトリ新規作成直後/`--disable-slash-commands`起動時の再起動要否) ※2026-08-08 fetch
 - [サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38) (Zenn haruhiro1020、公式 changelog を出典に深さ1→3変更を裏取り、深さの数え方の実機検証、深さ3を使わない設計判断の具体例) ※2026-08-24 fetch
+- [CLAUDE_CODE_SUBAGENT_MODELだけではpin済みsubagentのモデルを変えられない](https://zenn.dev/clopy/articles/claude-subagent-model-force-precedence-gap) (Zenn clopy、frontmatter `model:` と環境変数の優先順位を実機検証、`_FORCE` フラグは検証結果不定) ※2026-09-11 fetch
 
-**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、公式 changelog で裏取り済み）
+**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、公式 changelog で裏取り済み）、v2.1.251+（frontmatter 優先の上書き仕様）
 **確信度**: 高
-**最終更新**: 2026-08-24
+**最終更新**: 2026-09-11
 
 ---
 
