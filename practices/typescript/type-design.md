@@ -323,6 +323,8 @@ type HandlerName = 'onClick' | 'onFocus' | 'onBlur' | 'onChange';
 - 型アサーション（`as`）はコンパイラのチェックを回避してしまう
 - `satisfies` は「型チェックはするが型推論は維持する」というバランスを実現する
 - ドメイン定数のシングルソース管理と組み合わせることで、複数ファイルでの定義二重管理を防げる
+- `Record<Union, Type>` と組み合わせると、Union のメンバーに対応するキーの過不足（書き忘れ・タイポ）をコンパイル時に検出できる。設定オブジェクトの網羅性チェックとして機能する
+- `satisfies` はあくまでコンパイル時の型チェックであり、「型が付いている」ことは「実行時にその値が実際に来る」ことを保証しない。API レスポンスなど外部データの検証には Zod 等のランタイムバリデーションを別途併用する
 
 **コード例**:
 ```tsx
@@ -371,13 +373,17 @@ const invalidCategory = "その他" satisfies IngredientCategory;
 > "「この型を満たすか」をチェックする。`as`と違って嘘をつけない。"
 > ([TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants), セクション "satisfies の特性") ※2026-05-17に実際にfetch成功
 
+> "「TypeScriptで型が付いている = APIから来る値も必ず正しい」という意味ではありません"
+> ([satisfies は「型を満たすか」をチェックする](https://zenn.dev/sponge841841/articles/2026-09-11-typescript-satisfies-vs-as), セクション "外部データの検証には satisfies だけでは足りない") ※2026-09-11に実際にfetch成功
+
 **出典**:
 - [TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator) (TypeScript公式 / 2022-11)
 - [TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants) (Zenn saytooy_arch, schemas.ts シングルソースへの satisfies 応用) ※2026-05-17 fetch
+- [satisfies は「型を満たすか」をチェックする](https://zenn.dev/sponge841841/articles/2026-09-11-typescript-satisfies-vs-as) (Zenn sponge841841、`Record<Union, Type>` による設定の網羅性チェックと、外部データ検証にはランタイムバリデーションが別途必要な点) ※2026-09-11 fetch
 
 **バージョン**: TypeScript 4.9+
 **確信度**: 高
-**最終更新**: 2026-05-17
+**最終更新**: 2026-09-11
 
 ---
 
