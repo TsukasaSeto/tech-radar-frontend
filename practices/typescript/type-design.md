@@ -323,6 +323,9 @@ type HandlerName = 'onClick' | 'onFocus' | 'onBlur' | 'onChange';
 - 型アサーション（`as`）はコンパイラのチェックを回避してしまう
 - `satisfies` は「型チェックはするが型推論は維持する」というバランスを実現する
 - ドメイン定数のシングルソース管理と組み合わせることで、複数ファイルでの定義二重管理を防げる
+- `satisfies` はコンパイル時チェックに限られる。API レスポンス等の外部/未検証データの検証には使えないため、Zod 等のランタイムバリデーションと併用する
+- `Record<K, V>` と組み合わせると、必須キーの記載漏れ・タイポもコンパイル時に検出できる（例: `Record<Environment, string>` で環境の指定漏れを検出）
+- コードレビューでは `as unknown as T` のような二重アサーションを「型安全性を放棄したサイン」として指摘する
 
 **コード例**:
 ```tsx
@@ -374,10 +377,13 @@ const invalidCategory = "その他" satisfies IngredientCategory;
 **出典**:
 - [TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator) (TypeScript公式 / 2022-11)
 - [TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants) (Zenn saytooy_arch, schemas.ts シングルソースへの satisfies 応用) ※2026-05-17 fetch
+- [satisfies と as の使い分け——外部データ検証の限界とRecordキー漏れ検出](https://zenn.dev/sponge841841/articles/2026-09-11-typescript-satisfies-vs-as) (Zenn ちっち、外部データ検証には不十分な点とRecordキー漏れ検出の実例) ※2026-09-12 fetch
+  > "satisfies だけでは足りない" — 外部/未検証データの検証にはランタイムバリデーションが別途必要
+  > (セクション "外部データの検証には satisfies だけでは足りない") ※2026-09-12に実際にfetch成功
 
 **バージョン**: TypeScript 4.9+
 **確信度**: 高
-**最終更新**: 2026-05-17
+**最終更新**: 2026-09-12
 
 ---
 

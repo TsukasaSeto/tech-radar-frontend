@@ -578,6 +578,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
   各ツールの設定からシンボリックリンクで参照することで1箇所の変更が全ツールに反映される
 - 人間が最低限のルールを明示的に書いた仕様の方が、AIが自動生成した指示ファイルよりも成功率が高い（ETH Zurich研究で自動生成はコスト20%増・成功率低下を確認）
 - `AGENTS.md` は「恒久的なルール」のみを置き肥大化を防ぐ：手順は SOP へ、設計決定は `_docs/decisions/` へ、作業ログは `_docs/logs/` へ分離する。重要な規則が大量の作業メモに埋もれると遵守率が下がる
+- 「リポジトリを読めば分かること」（ディレクトリ構造・依存関係リスト・機能チェックリスト等）は書かない。実装が進むと必ず乖離し、古い記述がそのまま誤った指示として残り続けて害になる。ある実例では構造情報中心の309行のAGENTS.mdを、設計判断・禁止事項・現在のフェーズ・設定例外だけに絞った24〜65行まで削減した
 - MCP は **Opt-in モデル**で管理する：常時接続 MCP が増えるほど起動遅延・コンテキスト肥大・CI 不安定が生じる。個人（`~/.codex/config.toml`）→ リポジトリ（`.codex/config.toml` でツールレベル allowlist）→ CI（最小構成）の3層で制御し、タスク要件なしに MCP を自動呼び出ししない
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 - **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
@@ -675,9 +676,12 @@ codex exec --skip-git-repo-check "hello"
 > "参照行は自動ロードではないので、AI が自分で開かなければ届きません。"
 > ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "参照 1 行なんて") ※2026-08-29に実際にfetch成功
 
+> "リポジトリを読めば分かることは書かない。必ず腐り、腐ると指示として害になる"
+> ([AGENTS.mdに書くべきは「リポジトリを読んでも分からないこと」だけ](https://zenn.dev/citras/articles/agents-md-what-to-write), セクション "何を書くべきか") ※2026-09-12に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-08-29
+**最終更新**: 2026-09-12
 
 ---
 
@@ -3895,5 +3899,89 @@ EOF
 **バージョン**: Claude Code（2026-09-07時点で観測された挙動、バージョン非明記）
 **確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
 **最終更新**: 2026-09-07
+
+---
+
+### 50. `permissions.deny` のパスパターンは `Read` / `Edit` にしか効かない — `Write` / `NotebookEdit` / `Glob` / (旧)`MultiEdit` への記述は黙って無視される
+
+`settings.json` の `permissions.deny` にパスパターン（`Write(src/generated/**)` 等）を書いても、
+JSON としては正しく受理されるだけで、実行時には一度も参照されない場合がある。
+パスパターンによる deny が実際に評価されるのは `Read(...)` と `Edit(...)` の呼び出し時のみで、
+`Write` / `NotebookEdit` / `Glob` / 旧 `MultiEdit` へのパスパターンは静かに無視される。
+
+**根拠**:
+- パスパターン形式の `permissions.deny` ルールが評価されるツール名は `Read` と `Edit` に限られる
+- 対象外のツール名にパスパターンを書いてもエラーにならないため、設定ミスとして気づきにくい（JSON構文もツール名も正しいため）
+- 生成物ディレクトリ等への書き込みを本気で禁止したい場合は、パスパターンではなくツール名そのもの（例: `"Write"`）を deny するか、`PreToolUse` フックでパスを検査する必要がある
+
+**コード例**:
+```json
+// Bad: Write(...) へのパスパターン deny は黙って無視される
+{
+  "permissions": {
+    "deny": ["Write(src/generated/**)"]
+  }
+}
+```
+```json
+// Good: ツール名そのものを deny する（パスに関わらずWrite自体を禁止）
+{
+  "permissions": {
+    "deny": ["Write"]
+  }
+}
+```
+
+**出典引用**:
+> "ファイルパスのルールが効くのは Read(...) と Edit(...) だけです。Write / NotebookEdit / Glob / 旧 MultiEdit に書いても、受け付けられたうえで一度も見られません。"
+> ([書いた deny ルールが、一度も参照されていなかった](https://zenn.dev/quintetkit/articles/permission-rule-allows-more), セクション "見た目より重い理由") ※2026-09-12に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが、公式ツール Claude Code の `settings.json` `permissions.deny` の実挙動を検証し、実際の設定ファイル形式を直接示している）
+
+**バージョン**: Claude Code（2026-09-12時点で観測された挙動、バージョン非明記）
+**確信度**: 中
+**最終更新**: 2026-09-12
+
+---
+
+### 51. コンテキスト管理は自作の閾値監視だけでなく、公式の `/context` ・ `/compact` ・ autocompact 設定を併用する
+
+Claude Code / Codex ともに、コンテキストウィンドウの残量確認と圧縮を行う公式のコマンド・設定が用意されている。
+Claude Code では `/context`（内訳表示）、`/compact [instructions]`（要約時の重視事項を指定できる圧縮）、
+`/autocompact <token数>` や環境変数 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` で自動圧縮の閾値を制御できる。
+Codex では `/status` ・ `/statusline` に加え、設定ファイルの `model_auto_compact_token_limit` キーで同等の制御が可能。
+既存の自作閾値管理（Rule #14）を組む場合も、まずこれら公式の可視化・制御コマンドを併用すべき。
+
+**根拠**:
+- 自動要約（compaction）は会話序盤の指示を失わせることがあるため、いつ・どの粒度で発生するかを公式コマンドで可視化しておく必要がある
+- `/compact` には要約時に何を重視するかを明示的な指示として渡せる。省略時の暗黙要約より情報欠落を抑えられる
+- 自作のファイル永続化による引き継ぎ戦略（Rule #14）と公式の autocompact 設定は排他ではなく、制御レイヤーが異なるため併用すべき対策
+
+**コード例**:
+```bash
+# Claude Code: 現在のコンテキスト内訳を確認
+/context
+
+# 圧縮時に残したい情報を明示して要約する
+/compact 直近のバグ修正の意思決定理由は要約せずそのまま残す
+
+# 自動圧縮のトークン閾値を変更（環境変数でも指定可能）
+/autocompact 500000
+export CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000
+```
+```toml
+# Codex: config.toml で自動圧縮の閾値を設定
+model_auto_compact_token_limit = 500000
+```
+
+**出典引用**:
+> "コンテキストが埋まると自動で要約（compaction）が走るが、会話の序盤にあった指示は失われることがある"
+> ([コーディングエージェントを使う上でのコンテキスト管理入門 — Claude CodeとCodexの公式ドキュメントから「なぜ必要か」「放置するとどうなるか」「どのコマンドで管理するか」を整理する](https://qiita.com/Takuya__/items/85659512e93f4d8fa3ef), セクション "コンテキスト管理の必要性") ※2026-09-12に実際にfetch成功
+
+**取り込み元**: パターン1c採用（Claude Code / Codex の公式ドキュメント（code.claude.com/docs、developers.openai.com/codex 等）を参照し、具体的なCLIコマンド・環境変数・設定キーを直接示す検証記事）
+
+**バージョン**: Claude Code / Codex CLI（記事内で参照された公式ドキュメント時点）
+**確信度**: 中
+**最終更新**: 2026-09-12
 
 ---
