@@ -3897,3 +3897,42 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+### 50. `permissions.deny` のパスパターンは Write/NotebookEdit/Glob には効かず、Bash allow のワイルドカードはサブコマンド全体にマッチする
+
+`permissions.deny` にパスパターン（例: `Write(src/generated/**)`）を書いても、設定としては読み込まれるだけで実際には一切参照されない。Read/Edit ツールだけがパスパターンの deny/allow を評価しており、Write・NotebookEdit・Glob はそのパターンを見ない。逆に `permissions.allow` 側では、`Bash(git * main)` のように `*` をコマンド途中に置くと「main に対する diff だけを許可する」という意図に反し、`git` の全サブコマンド（`push` 等）にマッチしてしまう。
+
+**根拠**:
+- 設定ファイルとして構文的に正しく読み込まれるため、「書いた deny ルールは効いている」という誤認が起きやすい。効いていないルールと効いているルールは見た目が完全に同じで、実際に対象操作を試すまで気づけない
+- `Bash(git * main)` のような途中ワイルドカードの allow ルールは、Claude Code 起動時に警告が出るが、警告を見落とすと意図しない広範な許可になる
+
+**コード例**:
+```json
+// Bad: Write/NotebookEdit/Glob には効かない想定で安心してしまう
+{ "permissions": { "deny": ["Write(src/generated/**)"] } }
+// → Write ツールでの src/generated/** への書き込みは deny を素通りする
+
+// Bad: 途中にワイルドカードを置いた allow は git の全サブコマンドを許可する
+{ "permissions": { "allow": ["Bash(git * main)"] } }
+// → git diff main だけでなく git push origin main 等も許可されてしまう
+
+// Good: Read/Edit で保護したいパスは deny で列挙しつつ、
+// Write/NotebookEdit/Glob 経由の書き込みは PreToolUse フックで別途検査する
+// Good: allow ルールはサブコマンドを先頭に固定して書く
+{ "permissions": { "allow": ["Bash(git diff:*)", "Bash(git status:*)"] } }
+```
+
+**出典引用**:
+> "`*` がコマンドの途中にある allow ルールには、起動時に警告が出ます。"
+> ([書いた deny ルールが、一度も参照されていなかった](https://zenn.dev/quintetkit/articles/permission-rule-allows-more), セクション "Bash(git * main) は git の全サブコマンドを許す") ※2026-09-13に実際にfetch成功
+
+> "何もしていない権限ルールは、効いているルールとまったく同じに見える"
+> ([書いた deny ルールが、一度も参照されていなかった](https://zenn.dev/quintetkit/articles/permission-rule-allows-more), セクション "何もしていない権限ルールは、効いているルールとまったく同じに見える") ※2026-09-13に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の permissions 設定の実挙動を、診断ツールの実装を通じて検証し、`.claude/settings.json` の具体的なルール例を直接示している）
+
+**バージョン**: Claude Code（2026-09-13時点で観測された挙動、バージョン非明記）
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-13
+
+---
