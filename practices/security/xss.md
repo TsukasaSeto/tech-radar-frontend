@@ -158,6 +158,7 @@ export default {
 
 同じ `new URL()` による正規化は、Next.js API ルート等でサーバーサイドが外部 URL へリクエストを行う場合にも必須。
 文字列の見た目だけで IP やホストを判定すると、`http://0x7f000001/` （16進IPv4）や `http://2130706433/` （10進IPv4）、`http://expected.com@attacker.com/` （userinfo偽装）等のバイパスが成立する。
+OWASP の SSRF Prevention Cheat Sheet はさらに踏み込み、**ホストだけを抽出して allowlist と照合し、リクエスト自体はアプリケーション側のスキーム・ポート・パスで組み立て直す**ことを推奨している。加えて、`new URL()`（WHATWG パーサー）とサーバー側の別実装（RFC 3986 パーサー等）でホストの解釈が食い違うケース（例: `http://example.com\@evil.com` のようなユーザー情報偽装）では、その**パーサー間の不一致自体を拒否理由として扱う**。
 
 ```typescript
 // サーバーサイド SSRF 対策: 必ず new URL() で正規化してから検査
@@ -168,6 +169,18 @@ function validateExternalUrl(userInput: string): URL {
   // さらに DNS 解決・リダイレクト先検証・egress 制御と組み合わせる
   return u;
 }
+
+// OWASP 推奨: ホストを allowlist と照合し、リクエストは自前で組み立て直す
+const ALLOWED_UPSTREAM_HOSTS = new Set(['api.partner.example.com']);
+
+function buildAllowedUpstreamRequest(userInput: string): URL {
+  const parsed = new URL(userInput);
+  if (!ALLOWED_UPSTREAM_HOSTS.has(parsed.host)) {
+    throw new Error('host not in allowlist');
+  }
+  // ユーザー入力の URL をそのまま fetch せず、host のみ再利用して自前で組み立てる
+  return new URL(`${parsed.pathname}${parsed.search}`, `https://${parsed.host}`);
+}
 ```
 
 **出典**:
@@ -175,13 +188,17 @@ function validateExternalUrl(userInput: string): URL {
 - [React Docs: javascript: URL warning](https://react.dev/reference/react-dom/components/common#applying-css-styles) (React 公式)
 - [MDN: URL constructor](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) (MDN Web Docs)
 - [SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb) (Qiita、サーバーサイド SSRF への同パターンの適用とバイパス例) ※2026-05-25に実際にfetch成功
+- [OWASP CheatSheetSeries commit: SSRF は allowlist で検証しパーサー不一致を拒否する](https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba) (OWASP公式、SSRF Prevention Cheat Sheet への allowlist 照合・パーサー不一致拒否の追記) ※2026-09-14に実際にfetch成功
 
 > "URL を検査するときは、文字列の見た目だけで判断しない方が安全です。"
 > ([SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb), セクション "なぜ文字列検査だけでは不十分か") ※2026-05-25に実際にfetch成功
 
+> "Match the host against an allowlist, and build the request yourself." / "Treat parser disagreement as a rejection."
+> ([OWASP CheatSheetSeries commit e2d4221](https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba), セクション "Application Layer") ※2026-09-14に実際にfetch成功
+
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-09-14
 
 ---
 
