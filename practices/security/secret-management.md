@@ -8,12 +8,14 @@ API キー・DB 接続文字列・OAuth クレデンシャル等を「サーバ�
 
 Next.js では `NEXT_PUBLIC_` プレフィックスの環境変数のみクライアントバンドルに含まれる。
 プレフィックスなしの環境変数は **サーバー専用**。混同しないようコマンド規約を統一する。
+また `NEXT_PUBLIC_` はビルド時にソースコードへ直接インライン化される値であり、デプロイ環境（Vercel 等）でダッシュボードの値を更新しただけでは反映されない点に注意する。**再ビルド（再デプロイ）して初めて新しい値が焼き込まれる**。
 
 **根拠**:
 - 認証情報をうっかり `NEXT_PUBLIC_*` で公開する事故が業界全体で頻発（GitHub の secret scanning でも検出される）
 - プレフィックスがビルド時に文字列置換される仕組みのため、ビルド成果物に含まれるかどうかは `NEXT_PUBLIC_` で完全に決まる
 - Next.js 13+ では `import 'server-only'` で「サーバー専用モジュール」を強制でき、クライアントから誤って import するとビルドエラーになる
 - Vite・Remix にも同等の規約（`VITE_*` / `PUBLIC_*` ）がある
+- ビルド時インライン化の帰結として、値のローテーション（ライセンスキー更新等）は環境変数更新だけでは反映されず、**Production・Preview 双方の明示的な再デプロイ**が必要（例: Vercel の `vercel redeploy <deployment-url>`）。複数アプリで同じ `NEXT_PUBLIC_*` を共有している場合、1 つだけ再デプロイを忘れると古い値のまま本番稼働し続ける事故につながる
 
 **コード例**:
 ```bash
@@ -65,6 +67,13 @@ declare namespace NodeJS {
     JWT_SIGNING_KEY: string;
   }
 }
+```
+
+```bash
+# NEXT_PUBLIC_* の値をローテーションした後、Vercel で明示的に再デプロイしないと
+# 古い値がバンドルに焼き込まれたまま配信され続ける
+vercel redeploy <最新のデプロイURL>
+# Production / Preview は別ビルドなので、両方を再デプロイする必要がある
 ```
 
 **`@t3-oss/env-nextjs` を使う場合**（推奨）:
@@ -147,14 +156,18 @@ export async function generateAction(input: string) {
 - [t3-oss/env-nextjs](https://env.t3.gg/) (t3-oss)
 - [「API キーは全部隠せ」は勘違いだった — ブラウザに出る"公開値"とサーバだけの"秘密"の見分け方](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571) (Qiita Kazy_engineer、「隠す」ではなく「縛る」の原則と公開値別の保護方法) ※2026-06-15 fetch
 - [AIのAPIキーがクライアントに混入したら「ビルドエラー」にする — server-onlyで作る安全なGemini統合](https://zenn.dev/shippai/articles/f1625c5587629a) (Zenn shippai、LLM API キーの三層ロックパターン) ※2026-06-16 fetch
+- [NEXT_PUBLIC_* を更新したのに古いキーが動き続ける（ビルド時に焼き込まれる）](https://zenn.dev/y3chi5z/articles/next-public-env-baked-at-build) (Zenn y3chi5z、Vercel でのローテーション事故と `vercel redeploy` による対処) ※2026-09-15に実際にfetch成功
 
 **出典引用**:
 > "「隠す」のではなく「縛る」ことで守るからだ"
 > ([「API キーは全部隠せ」は勘違いだった](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571), セクション "公開値は縛る") ※2026-06-15に実際にfetch成功
 
+> "NEXT_PUBLIC_ で始まる環境変数は、ビルドのときにソースコードへ直接インライン化されます"
+> ([NEXT_PUBLIC_* を更新したのに古いキーが動き続ける（ビルド時に焼き込まれる）](https://zenn.dev/y3chi5z/articles/next-public-env-baked-at-build), セクション "原因") ※2026-09-15に実際にfetch成功
+
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-06-16
+**最終更新**: 2026-09-15
 
 ---
 
