@@ -130,11 +130,13 @@ const nextConfig = {
 
 Open Graph 画像（OGP）はページごとに動的生成する必要がある場合、
 `next/og`（ImageResponse API）を使いエッジで生成する。
+ただし配信経路に `next/image`（`/_next/image` 経由）を挟むと、Next.js 16.0.0 で `images.minimumCacheTTL` のデフォルトが 60 秒から 14,400 秒（4 時間）に変更されたため、OGP を更新しても最大 4 時間古い画像が SNS 等に配信され続ける。OGP のように頻繁に内容が変わる画像は `/_next/image` を経由させず `next/og` の Route Handler を直接 URL として指定するか、`next.config.ts` で `minimumCacheTTL` を明示的に短く設定する。
 
 **根拠**:
 - エッジランタイムで実行されるためレイテンシが低い
 - React コンポーネントの構文で OGP 画像をデザインできる
 - 静的画像をすべてのページ分事前生成する必要がなくなる
+- Next.js 16.0.0 で `images.minimumCacheTTL` の既定値が 60秒→14,400秒（4時間）に変更されており、`/_next/image?url=...` 経由で OGP 画像を配信していると更新が最大4時間反映されない（v15 以前からのアップグレード時に見落としやすい）
 
 **コード例**:
 ```tsx
@@ -185,12 +187,36 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 }
 ```
 
+```typescript
+// Bad（Next.js 16+）: /_next/image 経由だと minimumCacheTTL のデフォルト4時間でOGPが古いまま配信される
+openGraph: {
+  images: [`/_next/image?url=${encodeURIComponent('/og.png')}&w=1200&q=100`],
+}
+
+// Good: next/og の Route Handler を直接 URL として指定する（/_next/image を経由しない）
+openGraph: {
+  images: [`/api/og?title=${encodeURIComponent(title)}`],
+}
+
+// もしくは next.config.ts で明示的に短い TTL を指定する（v15 以前の挙動に戻す）
+const nextConfig: NextConfig = {
+  images: {
+    minimumCacheTTL: 60, // 頻繁に更新される画像向け。静的アセットのみなら300秒程度でも可
+  },
+};
+```
+
 **出典**:
 - [Next.js Docs: OG Image Generation](https://nextjs.org/docs/app/building-your-application/optimizing/metadata#dynamic-image-generation) (Next.js公式)
+- [Next.js 16 で OGP 画像が 4 時間キャッシュされた話と minimumCacheTTL 移行](https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale) (Zenn cosoado、`/_next/image` 経由時の落とし穴と `minimumCacheTTL` による対処) ※2026-09-15に実際にfetch成功
 
-**バージョン**: Next.js 13+
+**出典引用**:
+> "v16.0.0 では「アップストリームに Cache-Control を返さない画像が多く、60s では無駄な再バリデーションが多すぎる」という理由でデフォルトが 14,400s に変更された"
+> ([Next.js 16 で OGP 画像が 4 時間キャッシュされた話と minimumCacheTTL 移行](https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale), セクション "minimumCacheTTL とは") ※2026-09-15に実際にfetch成功
+
+**バージョン**: Next.js 16+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-09-15
 
 ---
 

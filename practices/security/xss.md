@@ -170,18 +170,40 @@ function validateExternalUrl(userInput: string): URL {
 }
 ```
 
+OWASP の SSRF Prevention Cheat Sheet は、`new URL()` 等のパーサーによる正規化・検査そのものを最終防御にしない方針をさらに明確化している。ホスト名をパーサーで読み取って判定する代わりに、**許可リスト（allowlist）に一致した値からリクエストを組み立て直す**方式を推奨し、加えて「異なるパーサー間でホストの読み取り結果が食い違うURLは、どちらが正しいか判定しようとせず単に拒否する」という基準も明文化された。上記の `validateExternalUrl` はパーサー正規化止まりのため、本番導入時はホストを許可リストと照合してからリクエストを再構築する層を追加するのが望ましい。
+
+```typescript
+// より安全: 許可リストに一致した値からリクエストを再構築する
+const ALLOWED_HOSTS = new Set(['api.trusted-partner.com', 'cdn.example.com']);
+
+function buildAllowlistedRequest(userInput: string): URL {
+  const u = new URL(userInput);
+  if (!ALLOWED_HOSTS.has(u.hostname)) throw new Error('host not allowlisted');
+  // パースした u をそのまま使わず、許可リストの正規ホストから URL を組み立て直す
+  return new URL(u.pathname + u.search, `https://${u.hostname}`);
+}
+```
+
+**根拠**:
+- OWASP SSRF Prevention Cheat Sheet の更新（2026-09-14）が、パーサーによる文字列検査を最終防御にせず「許可リストに一致した値からリクエストを組み立て直す」方式を推奨するよう明文化した
+- 同更新は、パーサーごとにホスト解釈が食い違う URL（例: `http://example.com\@evil.com`）を検出した場合は「どちらが正しいか判断しようとせず拒否する」という基準も追加している
+
 **出典**:
 - [OWASP: DOM-based XSS](https://owasp.org/www-community/attacks/DOM_Based_XSS) (OWASP)
 - [React Docs: javascript: URL warning](https://react.dev/reference/react-dom/components/common#applying-css-styles) (React 公式)
 - [MDN: URL constructor](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) (MDN Web Docs)
 - [SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb) (Qiita、サーバーサイド SSRF への同パターンの適用とバイパス例) ※2026-05-25に実際にfetch成功
+- [SSRF: validate with an allowlist, not with a parser (#2412)](https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba) (OWASP CheatSheetSeries commit、許可リスト方式への更新) ※2026-09-15に実際にfetch成功
 
 > "URL を検査するときは、文字列の見た目だけで判断しない方が安全です。"
 > ([SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb), セクション "なぜ文字列検査だけでは不十分か") ※2026-05-25に実際にfetch成功
 
+> "Match the host against an allowlist, and build the request yourself...compare that value against an explicit allowlist of permitted destinations, then build the request from the entry that matched"
+> ([SSRF Prevention Cheat Sheet 更新 (#2412)](https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba), セクション "SSRF: validate with an allowlist, not with a parser") ※2026-09-15に実際にfetch成功
+
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-09-15
 
 ---
 
