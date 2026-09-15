@@ -4182,5 +4182,8 @@
   "https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m",
   "https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1",
   "https://medium.com/@entepazhe/next-js-hydration-errors-why-they-happen-and-how-to-actually-fix-them-61fcd724b90b",
-  "https://techblog.zozo.com/entry/screen-analyze-v2"
+  "https://techblog.zozo.com/entry/screen-analyze-v2",
+  "https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba",
+  "https://zenn.dev/y3chi5z/articles/next-public-env-baked-at-build",
+  "https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale"
 ]
