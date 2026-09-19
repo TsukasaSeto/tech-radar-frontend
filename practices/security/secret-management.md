@@ -713,6 +713,7 @@ Vercel は環境変数の「Sensitive」トグルを廃止し、Config（保存�
 - 旧ポリシー「Enforce Sensitive Environment Variables」は廃止され、新ポリシー「Separate Production Secret Values」に置き換えられた。このポリシーは Secret 型の本番値が Preview/Development/カスタム環境の値と異なることを強制する
 - レガシーの `--sensitive` / `--no-sensitive` CLI フラグは引き続き動作し、それぞれ Secret / Config にマッピングされる
 - Rule #4（Secret Manager 採用）とは補完関係にある: #4 は「本番で平文 `.env` を使わない」というプラットフォーム非依存の原則、本ルールは Vercel 自身の環境変数システムが提供する write-only な値保護と環境間の値分離強制という、プラットフォーム固有の具体的な実装手段
+- v0 のような AI コード生成ツールも同じ Secret/Config 分離の恩恵を受ける: `NPM_TOKEN` / `NPM_RC` を Secret 種別の shared environment variable として設定すると、プライベート npm パッケージ導入時もクレデンシャルが LLM に渡らず、サンドボックスのファイルシステムにも書き込まれない
 
 **コード例**:
 ```bash
@@ -732,9 +733,11 @@ vercel env add API_KEY production --value "sk_live_..." --visibility secret --ye
 
 **出典**:
 - [Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types) (Vercel 公式 changelog) ※2026-08-24 fetch
+- [v0 now reads npm credentials from shared environment variables](https://vercel.com/changelog/v0-now-reads-npm-credentials-from-shared-environment-variables) (Vercel 公式 changelog、AIツールがSecret値をモデルに露出させない設計の実例) ※2026-09-19 fetch
+  > "Credentials can be marked sensitive, and v0 never exposes them to the model or writes them to the sandbox filesystem."
 
 **バージョン**: Vercel（環境変数 Config/Secret 種別、2026-08時点）
 **確信度**: 高
-**最終更新**: 2026-08-24
+**最終更新**: 2026-09-19
 
 ---

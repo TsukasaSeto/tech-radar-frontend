@@ -112,6 +112,7 @@ git diff package-lock.json
 - `--force` はメジャーバージョンジャンプ・peer dependency 競合・Node/npm バージョン要件違反を許可してしまう
 - 「0 vulnerabilities」という出力は「安全」を意味しない。修正パッチが存在しない脆弱性は audit fix では解決できない
 - 深刻度だけで対応可否を判断せず、本番依存か dev 依存か・実際に到達可能なコードパスか・修正版が存在するかを確認してから動く
+- CI 未整備の個人開発・小規模チームでは、`cve-lite-cli` のようなローカル完結型ツールで `npm audit` 相当のスキャン＋EPSS/CVSS優先度付け＋修正コマンド提示をワンショットで得られる。CI 導入前の入口としても有効
 
 **出典**:
 - [npm audit](https://docs.npmjs.com/cli/v10/commands/npm-audit) (npm Docs)
@@ -129,10 +130,11 @@ git diff package-lock.json
 
 **出典（追加）**:
 - [KEV 30%・EPSS 35%――脆弱性優先度付けスコアの重み設計と、その理由](https://zenn.dev/lumen/articles/vuln-priority-weights-kev-epss) (Zenn、KEV/EPSS を重み付けした優先度スコアの計算式) ※2026-08-18 fetch
+- [cve-lite-cliを利用してローカルで完結するフロントエンドの脆弱性管理](https://qiita.com/t_o_d/items/cd1dfcec670345495d2b) (Qiita、CI不要のローカル完結スキャン＋EPSS優先度付け＋コピペ修正コマンド) ※2026-09-19 fetch
 
 **バージョン**: npm 8+, pnpm 8+
 **確信度**: 高
-**最終更新**: 2026-08-18
+**最終更新**: 2026-09-19
 
 ---
 
