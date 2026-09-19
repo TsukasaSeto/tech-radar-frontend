@@ -1090,3 +1090,45 @@ gh api "repos/{owner}/{repo}/actions/runs?created=2026-08-01..2026-08-10&per_pag
 **バージョン**: GitHub Actions（全プラン共通の課金モデル）
 **確信度**: 中
 **最終更新**: 2026-08-18
+
+---
+
+### 13. PR ごとに axe-core で WCAG 2.2 準拠チェックを自動化し、重大な違反はマージをブロックする
+
+ビルド済みアプリに対して axe-core ベースの自動スキャンを PR 時に実行し、重大度がしきい値を超えたら CI を失敗させる。ただし自動チェックが検出できるのは a11y 課題の5〜6割程度に留まり、キーボード操作性・フォーカス順序・alt テキストの質などは引き続き手動テストが必要——「フロアであってオーディットではない」と捉える。
+
+**根拠**:
+- axe-core は Deque Systems が開発する業界標準の a11y スキャンエンジンで、WCAG 2.2 AA ルールセットに対応する
+- 自動スキャンを PR 時に走らせ、CI の Job Summary / annotation に違反箇所（CSS セレクタ）を出力すると、レビュー前に機械的に検知できるものは検知できる
+- 元記事で紹介されている個別の GitHub Action はメンテナ・供給元の検証ができないサードパーティ製ラッパー単独ソースであるため、本リポジトリの既存 CI/CD ルール（サードパーティ Action の SHA ピン留め等）の方針に合わせ、`@axe-core/cli` など系譜の明確な公式寄りのツールを一次候補として採用し、記事の設定パターン（重大度によるしきい値、ビルド成果物に対する実行）のみを参考にする
+- 自動チェックは a11y 課題の5〜6割程度しか検出できないため、「マージをブロックする最低ライン」として位置づけ、手動テスト・スクリーンリーダー確認を代替しない
+
+**コード例**:
+```yaml
+# .github/workflows/a11y.yml
+name: Accessibility Gate
+on: [pull_request]
+
+jobs:
+  axe-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci && npm run build
+      - run: npx serve out -l 4173 &
+      - name: Run axe-core CLI against build output
+        run: npx @axe-core/cli http://localhost:4173 --tags wcag22aa --exit
+```
+
+**出典引用**:
+> "Automated checks catch roughly half to two-thirds of accessibility defects...Treat this action as the floor, not the audit."
+> ([A zero-config accessibility gate for GitHub Actions (axe-core, WCAG 2.2, one step)](https://dev.to/syntropydigital/a-zero-config-accessibility-gate-for-github-actions-axe-core-wcag-22-one-step-29jf), セクション "What it does not do") ※2026-09-19に実際にfetch成功
+
+**出典**:
+- [A zero-config accessibility gate for GitHub Actions (axe-core, WCAG 2.2, one step)](https://dev.to/syntropydigital/a-zero-config-accessibility-gate-for-github-actions-axe-core-wcag-22-one-step-29jf) (dev.to、設定パターンのみ参考。紹介されている個別 Action は単独ソースの検証不能なサードパーティ製のため未採用) ※2026-09-19 fetch
+
+**バージョン**: axe-core（WCAG 2.2 AA ルールセット）
+**確信度**: 中（axe-core 自体は業界標準だが、記事の具体的な実装は単独ソース）
+**最終更新**: 2026-09-19

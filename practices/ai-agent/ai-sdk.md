@@ -255,3 +255,50 @@ curl https://api.anthropic.com/v1/sessions \
 **最終更新**: 2026-08-21
 
 ---
+
+### 6. `mcp-handler` の `experimental_webMcp` で既存 MCP ツールをブラウザ内エージェントに公開する
+
+Vercel の `mcp-handler` は WebMCP（提案中の Web 標準）に対応し、`experimental_webMcp.tools` に列挙した MCP ツールを、ページに `<script src="/api/mcp?webmcp-script">` を1行追加するだけでブラウザ内エージェントから呼び出し可能にする。サーバー側 MCP への呼び出しは認証済みユーザーとしてプロキシされるため、ブラウザ側で別途 OAuth フローを実装する必要がない。既存の MCP ツール実装をそのまま再利用でき、フロントエンド向け API とエージェント向け API を二重実装しなくて済む。
+
+**根拠**:
+- WebMCP はページ内のブラウザエージェント（ブラウザ拡張・OS レベルのエージェント等）に対し、ページが持つ機能をツールとして宣言的に公開する提案中の Web 標準
+- `experimental_webMcp.tools` に既存の MCP ツール定義を渡すだけで、別途フロントエンド用 API を実装せずに済む
+- 呼び出しはサーバー側 MCP ハンドラーへ「サインイン済みユーザーとして」プロキシされるため、認証が必要なツールでもブラウザ側で OAuth フローを組む必要がない
+
+**コード例**:
+```ts
+// app/api/mcp/route.ts
+import { createMcpHandler, experimental_webMcp } from "mcp-handler";
+
+const handler = createMcpHandler(
+  (server) => {
+    server.tool("get-order-status", "...", schema, async (input) => {/* ... */});
+  },
+  {},
+  {
+    experimental_webMcp: {
+      tools: ["get-order-status"], // ブラウザ内エージェントに公開するツール名
+    },
+  },
+);
+
+export { handler as GET, handler as POST };
+```
+
+```html
+<!-- ページ側: スクリプト1行でツールをブラウザに登録 -->
+<script src="/api/mcp?webmcp-script"></script>
+```
+
+**出典引用**:
+> "The script registers those tools with the page and proxies each call back to your MCP server as the signed-in user, so authenticated tools work without a browser-side OAuth flow."
+> ([WebMCP support now available in mcp-handler](https://vercel.com/changelog/webmcp-mcp-handler), Implementation Details 相当のセクション) ※2026-09-19に実際にfetch成功
+
+**出典**:
+- [WebMCP support now available in mcp-handler](https://vercel.com/changelog/webmcp-mcp-handler) (Vercel 公式 changelog) ※2026-09-19 fetch
+
+**バージョン**: `mcp-handler`（`experimental_webMcp`、2026-09時点。WebMCP自体は提案中の Web 標準）
+**確信度**: 中（公式ソースだが `experimental_` プレフィックス付きの実験的機能であり、WebMCP 自体も未確定の proposed standard）
+**最終更新**: 2026-09-19
+
+---
