@@ -704,6 +704,7 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **`matcher` を単一ツール名だけに絞ると、別ツール経由の迂回が素通りする**: `matcher: "Bash"` だけを対象にしたブロックフックは、`Write` ツールで同じファイル操作を行う迂回を防げない（3 回中 2 回、同一ファイルへの書き込みが素通りした実測あり）。`matcher: "Bash|Write"` のように迂回先のツールも含めて列挙すると、同条件でバイパスは 0 件になった。ブロックされた回も含め、hook を素通りした操作は「成功・エラーなし・終了コード0」で返ってくるため、ログだけでは迂回に気づきにくい点にも注意する
 - **「ブロックして毎回聞く」以外に「操作の性質を可逆に変えてから自動許可する」という戦略もある**: 削除系コマンドを `permissions.ask` に置いたままだと安全だが、都度の承認判断が積み重なり「承認疲れ」で雑な `Yes` が増えるリスクがある。ファイル削除を OS のごみ箱（Windows なら `Microsoft.VisualBasic.FileIO.FileSystem` 等）に送るラッパースクリプトを `permissions.allow` に、素の `rm` / `Remove-Item` を `permissions.ask` に置くことで、「不可逆な操作だけ確認を求める」原則を保ったまま日常的な削除の承認回数を減らせる
 - **危険操作のブロックだけでなく、ノイズの多いプラグイン/Skill 呼び出しをゲートする用途にも同じ `PreToolUse` の型が使える**: `matcher: "Skill"` で特定 Skill の呼び出しをフックし、`permissionDecision: "ask"` ではなく `deny` を返しつつメッセージで Claude に `AskUserQuestion` の呼び出しを促すことで、実行を完全停止させずに軽量な確認フローを挟める。制御点を1箇所（フック側）に集約するのが要点
+- **`Bash("rm*")` の deny 文字列一致は `find <dir> -delete` や `rm -r -f` のような表記ゆれ・別コマンドですり抜ける**: 特定コマンド文字列の deny ルール／PreToolUse 正規表現は「列挙した分だけ」しか守れないという弱点が、削除コマンドでも再現する。`find` サブコマンドは `rm` の deny リストに引っかからず、`-delete` オプションで同等の破壊操作ができてしまう。根本対策は `.claude/settings.json` の `sandbox.filesystem.denyWrite` でディレクトリ単位の書き込みを OS レベルで拒否することで、コマンド名の列挙に依存しない防御にする
 
 ```json
 {
@@ -883,6 +884,20 @@ if ! $owner_allowed; then
 fi
 ```
 
+**コード例（`sandbox.filesystem.denyWrite` — コマンド名に依存しない書き込み拒否）**:
+```json
+// .claude/settings.json
+{
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "filesystem": {
+      "denyWrite": ["./webcache"]
+    }
+  }
+}
+```
+
 **出典**:
 - [Claude Codeのhookの仕組み:JSONとexitコードで作る最小の安全装置](https://zenn.dev/yurukusa/articles/be79dbe97e34bb) (Zenn) ※2026-05-14に実際にfetch成功
 - [Claude Code hook で AI coding assistant の規律を補強する — 個人運用での設計パターン参考](https://zenn.dev/shogaku/articles/claude-code-hook-discipline) (Zenn、&&/;/|| チェーンブロック・1MB超ファイルブロックのパターン追加) ※2026-05-22に実際にfetch成功
@@ -948,9 +963,23 @@ fi
 > "cp が確認なしで上書きするからです。"
 > ([Claude Code の承認プロンプト、rm が無くても消えることがある](https://qiita.com/fukumuraryota0724/items/6f2703e602de362b04d6), セクション本文) ※2026-08-30に実際にfetch成功
 
+**出典（追加2）**:
+- [Claude Code PreToolUse Hook Security Analysis](https://qiita.com/aicoding-guide/items/1bd51b5ff48a8ceff299) (Qiita @aicoding-guide、文字列一致が `rm -r -f` や変数展開で外れる限界とサンドボックス併用の必要性) ※2026-09-22に実際にfetch成功
+- [Bash("rm*") を deny しても、find の -delete で消される](https://zenn.dev/y_shinoda/articles/only-setting-claude-code-permissions-is-risky) (Zenn 篠田将彦、`find -delete` によるdenyバイパス実例と `sandbox.filesystem.denyWrite` 設定例) ※2026-09-22に実際にfetch成功
+- [CLAUDE.mdはソフトガード、Hooksはハードガード](https://zenn.dev/m16_llc/articles/claude-code-hooks-hard-guardrails) (Zenn、「お願い/強制」と同旨のソフトガード/ハードガード整理、PreToolUse でドリフトチェックscriptを実行する追加実装例) ※2026-09-22に実際にfetch成功
+
+> "Bash(rm ./webcache/*) を deny しても find の -delete オプションで代替します。"
+> ([Bash("rm*") を deny しても、find の -delete で消される](https://zenn.dev/y_shinoda/articles/only-setting-claude-code-permissions-is-risky), セクション冒頭) ※2026-09-22に実際にfetch成功
+
+> "文字列一致は `rm -r -f` や変数展開で外れる。確実な遮断は deny ルールとサンドボックスに任せる"
+> ([Claude Code PreToolUse Hook Security Analysis](https://qiita.com/aicoding-guide/items/1bd51b5ff48a8ceff299), セクション "まとめ") ※2026-09-22に実際にfetch成功
+
+> "CLAUDE.md はソフトガード(読まれる前提の文脈)、Hooks はハードガード(ツール実行の手前で機械的に止まる仕組み)です。"
+> ([CLAUDE.mdはソフトガード、Hooksはハードガード](https://zenn.dev/m16_llc/articles/claude-code-hooks-hard-guardrails), セクション "3段構えにする 〜ソフトガード・ハードガード・CI〜") ※2026-09-22に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-08-30
+**最終更新**: 2026-09-22
 
 ---
 
