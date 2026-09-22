@@ -440,3 +440,39 @@ const nextConfig = {
 **バージョン**: Next.js 16.3+
 **確信度**: 高（Next.js 公式ブログ、実測ベンチマーク付き）
 **最終更新**: 2026-09-03
+
+---
+
+### 8. 大容量静的アセットは Vercel の `rewrites` で外部ストレージへ逃がし、コード参照を書き換えない
+
+デプロイ容量が上限に近づいた場合、画像・音声等の大容量静的アセットをコード内の参照パスは変えずに `vercel.json` の `rewrites` で外部ストレージ（Supabase Storage 等）へ透過的にプロキシし、`.vercelignore` でデプロイ対象から除外する。HTML/コード側は相対パスのままで、Vercel がリクエスト時にリライト先へ転送する。
+
+**根拠**:
+- `rewrites` はURLパスのマッチングのみで動作するため、既存コードの参照（`src="sprites/foo.png"` 等）を1つも書き換える必要がない。大量の参照を一括置換するリスクを避けられる
+- `.vercelignore` でアセットをデプロイパッケージから除外することで、デプロイ容量そのものを削減できる（実例: 72MB → 7.9MB、-89%）
+- ブラウザ・クローラー等クライアントから見えるURLは変わらないため、SEOやキャッシュ済みリンクへの影響がない
+
+**コード例**:
+```json
+// vercel.json
+{ "rewrites": [
+  { "source": "/sprites/:path*",
+    "destination": "https://xxxx.supabase.co/storage/v1/object/public/kanji/sprites/:path*" }
+]}
+```
+```
+# .vercelignore
+sprites/
+*.mp3
+```
+
+**出典引用**:
+> "HTMLから見える世界は何も変わらない"
+> ([デプロイ容量が100%になった。圧縮では解けず、参照を1つも書き換えずに89%減らした](https://zenn.dev/horibe/articles/assets-off-vercel-rewrites), セクション "正しい対処は「外に出す」") ※2026-09-22に実際にfetch成功
+
+**出典**:
+- [デプロイ容量が100%になった。圧縮では解けず、参照を1つも書き換えずに89%減らした](https://zenn.dev/horibe/articles/assets-off-vercel-rewrites) (Zenn horibe、Vercel公式機能である`rewrites`/`.vercelignore`の設定ファイル形式を直接示す検証記事) ※2026-09-22に実際にfetch成功
+
+**バージョン**: Vercel（`rewrites` / `.vercelignore`、全プラン共通）
+**確信度**: 中（パターン1c: 公式機能の設定ファイル形式を直接検証した単独記事）
+**最終更新**: 2026-09-22
