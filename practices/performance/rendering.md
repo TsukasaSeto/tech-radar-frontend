@@ -71,6 +71,7 @@ function Parent() {
 - 大量の DOM ノードはブラウザのレイアウト・ペイントコストを大幅に増加させる
 - 仮想スクロールはビューポート内の要素のみをレンダリングする
 - 10,000件のリストでも 50件分の DOM ノードしか存在しない
+- 行の高さが固定値で見積もれない場合（コメントスレッドのような可変高さコンテンツが混在する等）は、高さの見積もりを「行の種類」で2系統に分ける設計が有効: 決定論的に計算できる要素（コード行など）は事前に正確な高さを積み上げ、動的な要素（コメント等）はビューポート付近（実測で約2400px手前）に来たときだけ実測してから合計する。GitHub Copilot アプリでは 2,200ファイル・100万行超・400件超のインラインコメントを含む PR でこの2系統設計により、常時マウントする行数を約100行に抑えつつ描画を成立させている
 
 **コード例**:
 ```tsx
@@ -115,12 +116,17 @@ function VirtualList({ items }: { items: Item[] }) {
 }
 ```
 
+**出典引用**:
+> "total height = deterministic code height (exact, known up front) + Σ dynamic block effective heights (estimated, then measured)"
+> ([Rendering huge pull requests in the GitHub Copilot app](https://github.blog/engineering/user-experience/rendering-huge-pull-requests-in-the-github-copilot-app/), GitHub Blog, セクション "Two geometries instead of one") ※2026-09-23に実際にfetch成功
+
 **出典**:
 - [TanStack Virtual Docs](https://tanstack.com/virtual/latest) (TanStack公式)
+- [Rendering huge pull requests in the GitHub Copilot app](https://github.blog/engineering/user-experience/rendering-huge-pull-requests-in-the-github-copilot-app/) (GitHub Blog 公式、固定高さ行と可変高さブロックを分離する仮想スクロール設計) ※2026-09-23 fetch
 
 **バージョン**: @tanstack/react-virtual 3+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-09-23
 
 ---
 

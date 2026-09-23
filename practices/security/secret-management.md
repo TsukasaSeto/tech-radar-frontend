@@ -738,3 +738,34 @@ vercel env add API_KEY production --value "sk_live_..." --visibility secret --ye
 **最終更新**: 2026-08-24
 
 ---
+
+### 8. 長期保存データの鍵確立には post-quantum 移行を見据えたハイブリッド方式を検討する
+
+RSA・ECC（Curve25519 を含む）ベースの公開鍵暗号は post-quantum 安全ではない。将来 crypto-relevant な量子コンピュータが実用化されれば破られうるため、長期間の機密性を要するデータ（保存期間が数年〜数十年に及ぶバックアップ・アーカイブ等）の鍵確立方式には、移行を見据えた設計が必要になる。
+
+**根拠**:
+- OWASP Cryptographic Storage Cheat Sheet が「Post-Quantum Consideration」節を新設し、RSA/ECC が post-quantum 安全でないことを明記した
+- post-quantum な鍵確立が必要な場合は、標準化された **ML-KEM（NIST FIPS 203）** を、移行期間中は古典アルゴリズムと組み合わせた **ハイブリッド構成** で使うことが推奨されている
+- 既存の RSA/ECC 実装を今すぐ全廃する話ではなく、「保存期間が長いデータの鍵確立から優先的に post-quantum 移行を計画する」というリスクベースの判断が前提
+
+**コード例**:
+```text
+// Bad: 長期保存データの鍵確立を ECC 単独に依存し続ける
+KeyAgreement: X25519 のみ
+
+// Good: 移行期間中はハイブリッド構成で post-quantum 耐性を確保する
+KeyAgreement: X25519 + ML-KEM (NIST FIPS 203) のハイブリッド
+```
+
+**出典引用**:
+> "RSA and ECC-based public-key cryptography (including Curve25519) are not post-quantum secure."
+> ([Cryptographic Storage Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/394fe51fe08c5c53e99eee5781f28b886056fa25), OWASP CheatSheetSeries, セクション "Post-Quantum Consideration") ※2026-09-23に実際にfetch成功
+
+**出典**:
+- [Cryptographic Storage Cheat Sheet — Post-Quantum Consideration 追加コミット](https://github.com/OWASP/CheatSheetSeries/commit/394fe51fe08c5c53e99eee5781f28b886056fa25) (OWASP CheatSheetSeries 公式) ※2026-09-23 fetch
+
+**バージョン**: 該当なし（暗号方式の選定指針）
+**確信度**: 高
+**最終更新**: 2026-09-23
+
+---

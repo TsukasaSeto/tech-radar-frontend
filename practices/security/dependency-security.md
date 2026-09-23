@@ -1126,6 +1126,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- ad-hoc パッチは実際に発動している: 2026-09-22 に out-of-band 緊急リリースがあり、`next/og` の Node.js `ImageResponse` 実装が上流 Satori 依存の脆弱性経由で Remote Code Execution（Critical, GHSA-vcvr-r3jv-pc5j）の影響を受けると告知された。対象は Next.js `>=16.2.0 <16.3.6`。修正版 `16.3.6`（15.x 系は RCE 自体の対象外だが hardening を含む `15.5.26`）が即日公開され、Edge の `ImageResponse` 実装は影響を受けない。月次サイクルとは別に、こうした Critical 脆弱性は告知当日中のアップグレードを要する
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1136,12 +1137,16 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 > "Today we are moving to a formal security release program, with updates that teams can plan around."
 > ([Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program), Next.js Blog, セクション "A predictable release schedule") ※2026-07-14に実際にfetch成功
 
+> "An out-of-band security update is now available in v16.3.6 (Active LTS) and v15.5.26 (Maintenance LTS). These releases upgrade upstream dependencies, including Satori, to address an issue that could lead to remote code execution in affected Next.js versions."
+> ([Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026), Next.js Blog, セクション "Impact") ※2026-09-23に実際にfetch成功
+
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026) (Next.js 公式ブログ、`next/og` RCE の out-of-band 緊急パッチの実例) ※2026-09-23 fetch
 
-**バージョン**: Next.js 16.2+ / 15.5+
+**バージョン**: Next.js 16.2+ / 15.5+（`next/og` RCE 対策は 16.3.6 / 15.5.26 以降）
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-09-23
 
 ---
 
