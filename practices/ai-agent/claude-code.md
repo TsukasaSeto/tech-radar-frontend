@@ -3334,6 +3334,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - キー名だけでなく **ツール名の形式** も同様に「受理されるが適用されない」ケースがある。`Write()` / `Glob()` / `NotebookEdit()` / `MultiEdit()` 形式の deny ルールはパーサーに受理されるが実際の enforcement では機能しない（有効なのは `Edit()` / `Read()` 形式のみ）。公開されている設定の 16% がこの種のデッドルールを含んでいたという実測報告があり、153件の deny リストを持つ実運用設定でも 26 件のデッドルールが見つかっている
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 - allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
+- 5つ目の抜け道として **空白1つの追加だけで完全一致 deny ルールが外れる** ことが実測で確認されている。`"deny": ["Bash(touch /tmp/denyprobe/repo/marker.txt)"]` に対し、コマンド中の空白を1つ増やしただけの `touch  /tmp/denyprobe/repo/marker.txt`（スペース2個）が 9/9 回すり抜けた。同条件で前置マッチ形式 `"deny": ["Bash(touch:*)"]` に書き換えると、空白追加・引用符付きパス・相対パス化など 21 パターンの変形すべてをブロックできた。すり抜けた実行は `permission_denials` に0件のまま記録されず、終了コードも0でエラー表示も無いため、ログ監視だけでは検知できない
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
 
 **コード例**:
@@ -3381,13 +3382,17 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 > "bashコマンドについては**フックは確かに発火してdenyを返しているのに、コマンドはそのまま実行されていました**"
 > ([Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0), セクション "きっかけ") ※2026-08-21に実際にfetch成功
 
+> "空白が1つ増えただけで別物になります"
+> ([禁止コマンドを一字一句で書いたら、空白を1つ増やすだけで9回とも素通りした](https://zenn.dev/numarn/articles/deny-rule-exact-string-bypass-handson), セクション "全文で書いた禁止は、空白1つで外れた") ※2026-09-23に実際にfetch成功
+
 **出典**:
 - [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
 - [Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0) (Zenn、Codex CLI の bash 実行フックが deny を無視する再現報告、Windows環境) ※2026-08-21 fetch
+- [禁止コマンドを一字一句で書いたら、空白を1つ増やすだけで9回とも素通りした](https://zenn.dev/numarn/articles/deny-rule-exact-string-bypass-handson) (Zenn、完全一致 deny ルールの空白バイパスをハンズオン実測、前置マッチ形式なら21パターン全ブロックを確認) ※2026-09-23 fetch
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-21
+**最終更新**: 2026-09-23
 
 ---
 

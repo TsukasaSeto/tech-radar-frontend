@@ -255,3 +255,40 @@ curl https://api.anthropic.com/v1/sessions \
 **最終更新**: 2026-08-21
 
 ---
+
+### 6. AIエージェント向けAPI（WebMCP等）は全ツールを常時公開せず、状態遷移に応じてツールを段階的に開示する
+
+エージェントが操作するツール群（WebMCP のようなブラウザ内ツールスキーマを含む）を、アプリの現在状態に関わらず一括で公開すると、エージェントが無効な操作を選びうる余地が増え、判断コストも上がる。代わりに、その時点で実際に実行可能な操作に対応するツールだけを公開し、状態が変わればツール一覧自体を差し替える。
+
+**根拠**:
+- Stripe は Checkout フローに WebMCP を実装する際、「ページはその時点の状態で意味のあるツールとパラメータだけを公開する」設計（progressive tool disclosure）を採用した
+- 具体的には、決済手段選択前後でフォーム入力ツールのスキーマ（表示されているフィールドのみ）が変わり、必須項目がすべて埋まるまで `submit_payment` ツール自体を公開しない
+- 6モデル・60回のテストで、素朴なブラウザ操作の自動化と比較して **トークン消費 42% 減・ツール呼び出し回数 38% 減・完了時間 39% 短縮（約60秒短縮）** を達成し、チェックアウト完了率は両条件とも100%だった
+- 「無効な選択肢を隠す」というUI設計原則を、人間向けUIだけでなくエージェント向けAPI（ツールスキーマ)の設計にもそのまま適用できることを示す実例
+
+**コード例**:
+```text
+// Bad: 全ツールを常時公開し、エージェント側の判断に委ねる
+tools = [select_payment_method, fill_card_form, fill_address_form, submit_payment, apply_coupon, ...]
+
+// Good: チェックアウトの状態遷移に合わせてツール一覧を差し替える
+// 1. 決済手段未選択 → select_payment_method のみ公開
+// 2. 決済手段選択後 → 該当手段のフォーム入力ツールのみ公開（フィールドも表示中のものだけ）
+// 3. 必須項目が全て埋まった後 → submit_payment を公開
+```
+
+**出典引用**:
+> "the page only exposes only the tools and parameters that are relevant in its current state"
+> ([How Stripe is designing Checkout for AI agents](https://stripe.dev/blog/how-stripe-is-designing-checkout-for-ai-agents), Stripe Engineering Blog, セクション "Reveal tools as they become actionable") ※2026-09-23に実際にfetch成功
+
+> "we do not reveal the submit_payment tool until all the fields have been filled"
+> ([How Stripe is designing Checkout for AI agents](https://stripe.dev/blog/how-stripe-is-designing-checkout-for-ai-agents), Stripe Engineering Blog, セクション "Reveal tools as they become actionable") ※2026-09-23に実際にfetch成功
+
+**出典**:
+- [How Stripe is designing Checkout for AI agents](https://stripe.dev/blog/how-stripe-is-designing-checkout-for-ai-agents) (Stripe Engineering Blog 公式、WebMCP実装とprogressive tool disclosureのベンチマーク結果) ※2026-09-23 fetch
+
+**バージョン**: WebMCP（Stripe Checkout、2026-09時点の実装）
+**確信度**: 高
+**最終更新**: 2026-09-23
+
+---
