@@ -3897,3 +3897,94 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+
+### 50. PreToolUse / PostToolUse / SessionStart フックでアカウントのメールアドレスがツール入出力へ混入するのを機械的に遮断する
+
+Claude Code は `~/.claude.json` の `oauthAccount.emailAddress` をセッションのコンテキストに注入するため、モデルはユーザーのメールアドレスを知った状態で動作する。コンテキストに存在する値はモデルが自由に出力しうるため、git commit の identity への混入や、ツール呼び出しの入出力を経由した意図しない漏出が起こりうる。注入そのものは止められないが、PreToolUse（ツール入力の遮断）・PostToolUse（ツール出力の redact）・SessionStart（自動読み込みファイルの走査）の3フックを組み合わせることで、ツール経由の漏出だけは機械的に防げる。
+
+**根拠**:
+- コンテキストにある値はモデルが自由に出力しうるため、フィルタなしでは git commit や外部リクエストへの混入を防げない（GitHub Issue #81138 に実報告あり）
+- URLエンコード・HTMLエンティティ・`[at]`表記など、モデルが自然に生成しうるエンコーディングのバリエーションもあわせて検査する必要がある
+- 注入そのものを止める方法はないため、ドメインからの推論などモデルの「知識」に起因するリスクは残る点に留意する
+
+**コード例**:
+```json
+// .claude/settings.json — PreToolUse/PostToolUse hook でメールアドレスの混入を検査する
+{
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/account-email-guard.py\" PreToolUse",
+        "timeout": 10,
+        "statusMessage": "account-email-guard"
+      }]
+    }]
+  }
+}
+```
+```python
+# Good: エンコーディングのバリエーションも含めて比較する
+def variants(email: str) -> list[str]:
+    local, _, domain = email.partition("@")
+    return sorted({
+        email,
+        quote(email).lower(),            # user%40example.com
+        email.replace("@", "[at]"),
+        email.replace("@", "(at)"),
+        email.replace("@", "&#64;"),
+        f"{local} at {domain}",
+    })
+
+# Bad: 生のメールアドレス文字列だけを完全一致で検査する
+# → URLエンコードやHTMLエンティティ化された表記をすり抜けてしまう
+```
+
+**出典引用**:
+> "コンテキストにあるものはモデルが書き出せます。コミット identity への混入や自発的な出力は GitHub Issue #81138 に実報告があり"
+> ([Claude Code はあなたのメールアドレスを毎回モデルに渡している — 出口をフックで機械的に塞いだ話](https://zenn.dev/minedia/articles/07dab654a07022), セクション "背景") ※2026-09-24に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の hook システム（PreToolUse/PostToolUse/SessionStart）と `~/.claude.json` の `oauthAccount.emailAddress` という具体的な設定/挙動を実装込みで示している）
+
+**バージョン**: Claude Code（2026-09-24時点で観測された挙動、バージョン非明記）
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-24
+
+---
+
+### 51. `claude mcp add` は `--scope` で保存先・共有範囲・優先順位が変わることを理解して使い分ける
+
+`claude mcp add` はスコープ引数で保存先と共有範囲が変わる。個人利用は `local`（既定、`~/.claude.json` のプロジェクト単位）、チーム共有は `project`（`.mcp.json` をVCSにコミットし、参加時に承認プロンプトが出る）、全プロジェクト共通利用は `user`（`~/.claude.json` のユーザー単位）を選ぶ。同名サーバーが複数スコープに存在する場合は local → project → user → plugins → connectors の優先順で1つだけが採用される。
+
+**根拠**:
+- スコープを意識せず追加すると、チームで共有すべき設定が個人の `local` に閉じたり、逆に個人用の一時設定が `.mcp.json` 経由でチーム全体に配布されてしまう
+- 同名サーバーが複数スコープに存在する場合の優先順位を知らないと、意図しない設定が読み込まれても気づきにくい
+- `project` スコープはチームメンバーの承認プロンプトを経るため、意図せず外部MCPサーバーがチームに配布されるリスクを抑えられる
+
+**コード例**:
+```bash
+# Good: チームで共有するMCPサーバーは project スコープで .mcp.json にコミットする
+claude mcp add --scope project github-mcp -- npx -y @some/github-mcp-server
+
+# Good: 自分だけが全プロジェクトで使うツールは user スコープに登録する
+claude mcp add --scope user my-personal-tool -- node ./tools/my-tool.js
+
+# Bad: スコープを指定せず追加すると local（既定）になり、チームに共有されない
+claude mcp add github-mcp -- npx -y @some/github-mcp-server
+
+# project スコープの承認選択をリセットしたい場合
+claude mcp reset-project-choices
+```
+
+**出典引用**:
+> "自分だけがそのプロジェクトで使うなら `local`(既定)、チームで共有するなら `project`、自分がすべてのプロジェクトで使うなら `user`"
+> ([claude mcp add の --scope local / project / user の違いと使い分け](https://qiita.com/aicoding-guide/items/e827d0151736664ef91b), セクション "スコープの使い分け") ※2026-09-24に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式CLIコマンド `claude mcp add` の `--scope` フラグと優先順位という具体的なCLI仕様を実例込みで示している）
+
+**バージョン**: Claude Code CLI（2026-09-24時点の仕様）
+**確信度**: 中（公式CLIのフラグ挙動を実例込みで示す単独ソースのパターン1c採用）
+**最終更新**: 2026-09-24
+
+---

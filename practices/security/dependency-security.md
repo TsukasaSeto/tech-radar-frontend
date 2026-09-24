@@ -1126,6 +1126,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- 運用は継続しており、2026-09-30 の月次リリースでは critical 1件・high 2件・medium 5件・low 1件の計9件の脆弱性を含む 16.3.7 / 15.5.27 が予告された。事前告知には対象バージョンと影響範囲、アップグレード手順が今後含まれる旨が明記されている
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1138,10 +1139,11 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Upcoming Next.js September Security Release](https://nextjs.org/blog/upcoming-nextjs-security-release-september-2026) (Next.js 公式ブログ、月次運用の継続を示す2026-09インスタンス) ※2026-09-24 fetch
 
-**バージョン**: Next.js 16.2+ / 15.5+
+**バージョン**: Next.js 16.3+ / 15.5+
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-09-24
 
 ---
 
@@ -1181,3 +1183,38 @@ minimum-release-age=0
 **バージョン**: pnpm 11+
 **確信度**: 中（単一記事だが公式ツールの設定ファイル形式・エラーコードを直接示す実機検証のためパターン1c扱い）
 **最終更新**: 2026-08-19
+
+
+---
+
+### 12. 脆弱性バックログは件数ではなく解消リードタイムと連鎖経路で優先度を管理する
+
+脆弱性バックログは単なる「未対応の技術的負債」ではなく、放置期間が長いほど成立していく攻撃対象領域（attack surface）である。件数や深刻度スコアの単純な棚卸しではなく、実際の解消リードタイムを基準指標として継続的に追跡し、単独では低深刻度でも組み合わさると重大な攻撃経路になりうる脆弱性クラスタをサービス・信頼境界単位でマッピングする。
+
+**根拠**:
+- 「まだ悪用されていない」という前提は、コードが変わらないことに賭けているに過ぎない。放置は「exploitation probability に対する賭け」であり、時間が経つほど賭けは悪化する
+- 深刻度スコアは個々の脆弱性を単独で評価するが、実際の攻撃は複数の脆弱性を連鎖させる。単独では medium 相当の脆弱性でも、認証済みリモートコード実行への経路を構成しうる
+- 追跡すべき基準指標として、直近90日の実際のクローズ率・risk-accepted/won't-fix の件数と最終レビュー日・人間が書いたコードのマージ比率・直近四半期のセキュリティ修正マージ率の4つが挙げられている
+
+**コード例**:
+```yaml
+# Good: 放置期間でバックログの鮮度を可視化し、しきい値超過をCIで検知する
+# .github/workflows/vuln-backlog-age.yml
+- name: Fail if any accepted-risk finding is stale
+  run: |
+    # risk-accepted / won't-fix 判定から180日を超えたエントリを検出して fail させる
+    node scripts/check-backlog-age.js --max-age-days=180 --status=risk-accepted
+
+# Bad: 深刻度だけでソートし、放置期間や連鎖経路を見ずに上から順に対応する
+# → 単独では medium 深刻度の「見えない経路」が放置され続ける
+```
+
+**出典引用**:
+> "Accepting the rest amounted to a bet on exploitation probability, namely that an attacker would not find this specific medium-severity issue, in this specific service, before the code around it changed anyway."
+> ([Your Vulnerability Backlog Is No Longer Technical Debt, It's an Attack Surface](https://snyk.io/blog/vulnerability-backlog-attack-surface/), セクション "The backlog was a bet") ※2026-09-24に実際にfetch成功
+
+**バージョン**: N/A（プロセス・運用プラクティス）
+**確信度**: 高（公式ソース: Snyk Blog）
+**最終更新**: 2026-09-24
+
+---

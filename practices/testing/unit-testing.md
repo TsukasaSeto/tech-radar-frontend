@@ -392,3 +392,49 @@ await expect(getMyDraft('post-1')).rejects.toMatchObject({
 **バージョン**: Next.js 16+
 **確信度**: 高（v16 公式相当の知見）
 **最終更新**: 2026-05-16
+
+
+---
+
+### 7. Vitest の「`vite-tsconfig-paths` は不要」警告が出たら、まずプラグインを外して壊れるか確認してからネイティブオプションに置き換える
+
+Vitest/Vite が「`vite-tsconfig-paths` は不要」という警告を出す場合、Vite が `resolve.tsconfigPaths` オプションでネイティブに tsconfig の paths 解決をサポートするようになったことが理由。ただし警告に従っていきなりプラグインを削除するのではなく、まずプラグインだけを外してテストが壊れるかを確認し、機能自体が本当に必要であることを確かめてからネイティブオプションに置き換える。
+
+**根拠**:
+- 警告メッセージだけでは「本当に不要」なのか「実装方法が変わっただけ」なのか判断できない。実際にプラグインを外した直後に複数のテストファイルで `Failed to resolve import` エラーが発生し、機能自体は必要だが実装方法が古くなっていただけと判明した
+- 「先にプラグインを外して壊れることを確認する」手順を踏むことで、「不要だから消す」と「実装を移行する」を区別できる
+- ネイティブオプションへの移行により `globrex` / `tsconfck` / `vite-tsconfig-paths` の3つの依存を削減できる
+
+**コード例**:
+```ts
+// Before: プラグインで tsconfig paths を解決
+import tsconfigPaths from 'vite-tsconfig-paths'
+export default defineConfig({
+  plugins: [tsconfigPaths(), react()],
+})
+
+// Good: ネイティブオプションに置き換える
+export default defineConfig({
+  resolve: {
+    tsconfigPaths: true,
+  },
+})
+
+// Bad: 警告に従っていきなりプラグインを削除するだけ
+// （壊れるかどうかを確認せずに削除すると import 解決が壊れたまま気づかない）
+export default defineConfig({
+  plugins: [react()], // vite-tsconfig-paths を削除しただけ
+})
+```
+
+**出典引用**:
+> "The plugin 'vite-tsconfig-paths' is detected. Vite now supports tsconfig paths resolution natively via the resolve.tsconfigPaths option."
+> ([Vitestの「vite-tsconfig-pathsは不要」警告に従う前に、プラグインを外して落としてみた](https://zenn.dev/matsutake_prgrm/articles/remove-it-first-before-migrating), セクション "警告メッセージ") ※2026-09-24に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Vite/Vitest の `resolve.tsconfigPaths` という具体的な設定オプションを実例込みで示している）
+
+**バージョン**: Vite 6+ / Vitest（`resolve.tsconfigPaths` サポート以降）
+**確信度**: 中（公式ツールの設定オプションを実例込みで示す単独ソースのパターン1c採用）
+**最終更新**: 2026-09-24
+
+---
