@@ -368,6 +368,7 @@ monitors:
 - 同一ツール（Sentry）でエラーとメトリクスを一元管理でき、メトリクス異常とエラースパイクを同一ダッシュボードで相関分析できる
 - Counter・Distribution・Gauge の3種類で主要なメトリクスパターンを網羅できる
 - タグを付与することで `reason` / `userId` / `queue` 別のドリルダウン分析が可能
+- 同じ仕組みは自作の Counter/Distribution だけでなく、SDK 組み込みの `bfcacheMetricsIntegration()` のように「ブラウザイベントを Application Metrics に変換する」用途にも使える。back/forward navigation の hit/miss を `browser.bfcache.navigation`（Counter）、ブロック理由別件数を `browser.bfcache.not_restored`（Counter）、ミス時のリロード所要時間を `browser.bfcache.reload.duration`（Distribution）として計測でき、初期化は1行で済む
 
 **コード例**:
 ```ts
@@ -429,9 +430,13 @@ async function processOrder(order: Order) {
 - [Introducing Application Metrics](https://blog.sentry.io/introducing-application-metrics/) (Sentry Engineering / 2026-05) ※2026-05-06に実際にfetch成功
 - [Sentry Docs: Metrics](https://docs.sentry.io/product/metrics/) (Sentry公式)
 
-**バージョン**: @sentry/nextjs 8+
+**出典引用**:
+> "The integration emits application metrics, so rather than hand you a pre-packaged dashboard that answers some questions and needs constant tweaking, you get to build your own."
+> ([Measuring the back/forward cache with Application Metrics](https://blog.sentry.io/bfcache-metrics/), Sentry Engineering, セクション "How it works") ※2026-09-24に実際にfetch成功
+
+**バージョン**: @sentry/nextjs 8+ / @sentry/browser 11+（`bfcacheMetricsIntegration`）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-09-24
 
 ---
 

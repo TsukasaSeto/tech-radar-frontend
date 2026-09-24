@@ -307,6 +307,8 @@ React は `<ViewTransition>` コンポーネントで `document.startViewTransit
 - コンポーネントがアンマウントされても fetch が完了すると `setState` が呼ばれ、メモリリークや警告が発生する
 - `AbortController` は `fetch`・`axios`・`EventSource` など複数のAPIに対応する
 - React では `useEffect` のクリーンアップ関数でキャンセルするパターンが標準的
+- 単純な時間経過での打ち切りだけなら `AbortSignal.timeout(ms)` が `AbortController` を手動生成せずにタイムアウト付き signal を返す。内部タイムアウトと呼び出し元からのキャンセルを同時に扱いたい場合は `AbortSignal.any([...])` で複数 signal を1つに合成できる
+- 一度 abort した `AbortSignal` は abort 済み状態のまま再利用できない。同じ signal を使い回すと後続の `fetch` が即座に reject されるため、リクエストごとに signal を作り直す
 
 **コード例**:
 ```tsx
@@ -361,15 +363,30 @@ await Promise.all([
   fetch('/api/b', { signal: controller.signal }),
 ]);
 controller.abort();  // 両方を一度でキャンセル
+
+// Good: 単純なタイムアウトだけなら AbortController を手動生成しなくてよい
+await fetch('/api/slow', { signal: AbortSignal.timeout(5_000) });
+
+// Good: 内部タイムアウトと呼び出し元キャンセルを両方効かせたい場合
+async function fetchWithTimeout(url: string, callerSignal?: AbortSignal) {
+  const signal = callerSignal
+    ? AbortSignal.any([AbortSignal.timeout(5_000), callerSignal])
+    : AbortSignal.timeout(5_000);
+  return fetch(url, { signal });
+}
 ```
 
 **出典**:
 - [MDN: AbortController](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) (MDN Web Docs)
 - [MDN: Fetch API - Canceling a request](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#canceling_a_request) (MDN Web Docs)
 
-**バージョン**: Chrome 66+, Firefox 57+, Safari 12.1+
+**出典引用**:
+> "Once aborted, an AbortSignal remains in aborted state, causing subsequent fetch calls using the same signal to immediately reject."
+> ([Node.jsのfetchにタイムアウトを入れる：AbortSignal.timeoutとanyの実務的な使い分け](https://zenn.dev/sponge841841/articles/2026-09-21-node-fetch-timeout-abortsignal), セクション "Signal Reuseの落とし穴") ※2026-09-24に実際にfetch成功
+
+**バージョン**: Chrome 66+, Firefox 57+, Safari 12.1+ / `AbortSignal.timeout` は Chrome 103+, Firefox 100+, Safari 15.4+ / `AbortSignal.any` は Chrome 116+, Firefox 124+, Safari 17.4+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-09-24
 
 ---
 
