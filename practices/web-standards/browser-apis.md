@@ -141,7 +141,7 @@ function ResponsiveChart({ data }: { data: DataPoint[] }) {
 用途に応じて使い分け、機密情報は保存しない。
 
 **根拠**:
-- `localStorage` と `sessionStorage` はどちらもオリジン単位で隣離されている
+- `localStorage` と `sessionStorage` はどちらもオリジン単位で隔離されている
 - `sessionStorage` はタブを閉じると消えるため一時的なデータに適している
 - アクセストークンなどの機密情報は Web Storage ではなく HttpOnly Cookie に保存すべき
 
@@ -423,7 +423,7 @@ const promise = new Promise<void>((resolve) => { resolveFn = resolve; });
 - [Your Build Target Is Not an API Contract: Enforcing Baseline with TypeScript](https://dev.to/ryuya/your-build-target-is-not-an-api-contract-enforcing-baseline-with-typescript-epn) (dev.to、同一手法の別実装解説) ※2026-07-25に実際にfetch成功
 
 **出典引用**:
-> "ViteとTypeScriptは、どちらも別の役割を正しく果たしています。足りないのは『このAPIはWidely Availableか」という検査です。"
+> "ViteとTypeScriptは、どちらも別の役割を正しく果たしています。足りないのは『このAPIはWidely Availableか』という検査です。"
 > ([そのAPI、Baselineですか？](https://zenn.dev/ru/articles/17941500fa3391), セクション "2つの型パッケージを入れて、実際に止める") ※2026-07-25に実際にfetch成功
 
 > "Its build target tells the transformer which JavaScript syntax needs to be lowered. It does not automatically reject every API that falls outside the corresponding Baseline target."
