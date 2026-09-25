@@ -902,3 +902,44 @@ ol, ul, menu {
 **最終更新**: 2026-09-05
 
 ---
+
+### 16. CSS-in-JS をランタイムで解決させず、CSS Modules 等の静的抽出方式に移行する
+
+CSS-in-JS ライブラリ（styled-components 等）はコンポーネントのレンダーごとにスタイルオブジェクトを計算・注入するため、SSR とクライアント初期化の両方に実行時コストを持ち込む。GitHub は本番の CSS-in-JS を CSS Modules へ段階移行し、SSR 時間 55%減・コンポーネント初期化 25%高速化を達成した。
+
+**根拠**:
+- CSS-in-JS はレンダーのたびにスタイルオブジェクトを計算・注入するため、SSR・クライアント初期化の双方でJS実行コストが発生する
+- CSS Modules はビルド時にスタイルを静的なCSSファイルへ抽出するため、ランタイムでのスタイル計算が不要になる
+- 大規模移行は feature flag による段階的ロールアウト（社内→社員→一般ユーザー）と Visual Regression Testing での出力比較を組み合わせることで安全に進められる
+- codemod や AI支援ツールによる自動書き換えで、数千箇所規模の移行も現実的な工数で実行できる
+
+**コード例**:
+```tsx
+// Bad: CSS-in-JS はレンダーごとにスタイルを計算・注入する
+const Button = styled.button`
+  padding: 8px 16px;
+  border-radius: 4px;
+`;
+
+// Good: CSS Modules はビルド時に静的CSSへ抽出され、ランタイムコストがゼロになる
+// Button.module.css
+// .button { padding: 8px 16px; border-radius: 4px; }
+import styles from './Button.module.css';
+function Button() {
+  return <button className={styles.button}>...</button>;
+}
+```
+
+**アンチパターン**:
+- 大規模な CSS-in-JS 移行を一括切り替えで行い、Visual Regression Testing なしでデプロイする（本番で見た目の差分に気づけない）
+- feature flag を使わず全ユーザーに一斉ロールアウトし、問題発生時に切り戻せない状態を作る
+
+**出典引用**:
+> "With CSS Modules, styles would be authored in a CSS file alongside the JavaScript source for the component."
+> ([Improving site performance by shipping more CSS](https://github.blog/engineering/architecture-optimization/improving-site-performance-by-shipping-more-css/), GitHub Blog, セクション "Introducing CSS (Modules)") ※2026-09-25に実際にfetch成功
+
+**バージョン**: フレームワーク非依存（CSS Modules は Webpack/Vite 等のバンドラでネイティブサポート）
+**確信度**: 高（公式 GitHub Engineering Blog、パターン1採用）
+**最終更新**: 2026-09-25
+
+---

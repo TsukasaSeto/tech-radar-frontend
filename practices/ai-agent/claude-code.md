@@ -3897,3 +3897,36 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+### 50. Claude Code v2.1.282 で project settings 経由のセキュリティ制御上書きが塞がれた — `claude doctor` で診断できる
+
+v2.1.282 以前は、リポジトリ同梱の project settings（`.claude/settings.json`）側から `CLAUDE_CODE_ENABLE_TELEMETRY` や `OTEL_*` エンドポイント指定でテレメトリを有効化したり、`excludedCommands` で admin 強制のサンドボックス制限を部分的に回避できる余地があった。v2.1.282 ではこれらが修正され、`claude doctor` の出力に読み込まれた設定と違反箇所が明示されるようになった。
+
+**根拠**:
+- project settings からテレメトリを「有効化」する方向の上書きは無視されるようになった（無効化方向のみ許可）。同梱設定でテレメトリ/監査ログ送信を勝手に有効化される攻撃面を塞げる
+- `Bash(git:* push)` のように `:*` を含む permission ルールが、以前は解析時に黙って破棄されていたが v2.1.282 で修正された
+- admin が強制したサンドボックス制限は、プロジェクト側の `excludedCommands` では上書きできなくなった
+- `claude doctor` が無視されたテレメトリ変数や不正な permission ルールを実行時に明示するため、モデルを呼ばずに設定差分を診断できる
+
+**コード例**:
+```bash
+# API キーなしで、バージョン間の設定読み込み差分を比較できる
+docker run --rm --network none -v "$PWD/work:/work" \
+  -e CLAUDE_CONFIG_DIR=/work/.config cc-settings-test claude doctor
+```
+
+**アンチパターン**:
+- project settings に `CLAUDE_CODE_ENABLE_TELEMETRY=1` や独自の `OTEL_EXPORTER_OTLP_ENDPOINT` を仕込んで社内監査を回避しようとする（v2.1.282 以降は無効化される）
+- `excludedCommands` を使って admin 強制のサンドボックスを部分的に緩めようとする
+
+**出典引用**:
+> "v2.1.282 の `claude doctor` がこの設定に触れないため、差が出るかどうか以前に観測できませんでした"
+> ([Claude Code v2.1.282 の「設定ファイル経由の改ざん」対策を、旧版と並べて claude doctor で確かめた](https://zenn.dev/motani/articles/claude-code-v2-1-282-settings-security-fix), Zenn, セクション "結果") ※2026-09-25に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の特定バージョン間のセキュリティ設定挙動を `claude doctor` の実出力で検証している）
+
+**バージョン**: Claude Code v2.1.282+
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-25
+
+---
