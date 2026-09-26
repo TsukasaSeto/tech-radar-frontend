@@ -2221,8 +2221,9 @@ auto mode は「全部手動承認」と `--dangerously-skip-permissions` の中
 **根拠**:
 - `claude agents` コマンドはすべてのアクティブセッションを1ダッシュボードに表示し、「人間の承認待ち」になっているタスクを明示する。並列数を増やすほど「どのタスクがブロックされているか」の把握コストが上がるため、統合ビューが必須
 - `/goal` は完了条件を機械的に判定できる形で記述する（「`npm test` が exit 0」「指定ファイルに関数が存在する」など）。曖昧な完了条件（「きれいにリファクタして」）は auto mode 下で無限ループの原因になる
-- auto mode（2026年3月 research preview）はクラシファイアがルーティン承認を処理し、危険操作のみブロックする。有効化前に hard deny ルールを確定させる順序が重要
+- auto mode（2026年3月 research preview → v2.1.283 でプラン不問の全セッションの初期権限モードに変更）はクラシファイアがルーティン承認を処理し、危険操作のみブロックする。有効化前に hard deny ルールを確定させる順序が重要
 - **導入推奨順序**: agents ビューで状況把握 → /goal で完了条件を定義 → hard deny で安全境界を確定 → auto mode を有効化 → Routines で完全自動化
+- v2.1.283 以降、auto mode は Pro/Max/Team 限定の research preview ではなく、インタラクティブなターミナル/VS Code セッションの**デフォルトの初期権限モード**になった。既存導入時に「オプトインの実験機能」という前提で hard deny 整備を先送りしていた場合、新規セッションでは整備前に auto mode が有効な状態から始まる点に注意する
 - 「機械的に判定できる完了条件」という原則は Claude Code 純正機能（`/goal`）以外でも再現できる。カスタム MCP サーバーで `list_tasks` のようなタスク管理ツールを自作し、Stop Hook でタスク完了を通知させる構成でも、完了判定は「ファイルが存在するか」ではなく「MCP 経由で取得した `status` フィールド」で行うことで、前倒しの完了判定を防げる
 
 **コード例**:
@@ -2282,10 +2283,14 @@ claude agents
 
 **出典（追加）**:
 - [Claude Code を並列で回したら「速すぎて怖く」なったので、自分の開発を管制する環境を作った](https://zenn.dev/takerin/articles/c386a8c97f03eb) (Zenn takerin、Stop Hook + カスタム MCP タスクサーバーで `status` フィールドを完了判定に使う実装) ※2026-07-30 fetch
+- [2026-09-26 の公式ドキュメント更新：v2.1.283 で auto モードが全セッションのデフォルトに](https://qiita.com/akihidem/items/7a5c98833b79bd37d33e) (Qiita akihidem、Claude Code公式ドキュメント更新の解説、auto modeがプラン不問の初期権限モードになった変更点) ※2026-09-26に実際にfetch成功
 
-**バージョン**: Claude Code（2026年3月以降）
+> "auto mode is the built-in starting permission mode for interactive terminal and VS Code sessions"
+> ([2026-09-26 の公式ドキュメント更新：v2.1.283 で auto モードが全セッションのデフォルトに](https://qiita.com/akihidem/items/7a5c98833b79bd37d33e), セクション "Auto Mode as Default") ※2026-09-26に実際にfetch成功
+
+**バージョン**: Claude Code（2026年3月 research preview 〜 v2.1.283でデフォルト化）
 **確信度**: 中
-**最終更新**: 2026-07-30
+**最終更新**: 2026-09-26
 
 ---
 

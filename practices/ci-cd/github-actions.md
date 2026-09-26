@@ -598,6 +598,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
 - 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
 - 同じ原則は **Docker Hub でも同様**: OIDC federation を使うと長期有効な Docker アクセストークンをリポジトリ・環境シークレット・Actions キャッシュのどこにも保持せず、短命トークンで `docker/login-action` を認証できる
+- 同じ原則は **Vercel Container Registry（VCR）でも同様**: `vercel/vcr-action/login@v1` が workflow の OIDC トークンを短命の Vercel アクセストークンに交換して `vcr.vercel.com` へログインし、ジョブ終了時にトークンを自動失効させる。`permissions.id-token: write` とチーム ID の変数化のみで導入でき、Vercel 側に長期クレデンシャルを保持しない
 - OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
 - **最も多い失敗は信頼ポリシーの `sub` 条件を絞り込まないこと**: 組織内の任意のワークフロー（フォークされた marketplace action を含む）が role を assume できてしまう。`sub` は `repo:<ORG>/<REPO>:ref:refs/heads/main` のように **リポジトリ＋ブランチ／environment 単位で厳密に**指定し、別ワークフローに権限を広げたい場合は既存ロールを緩めず**別の狭いロールを追加**する
 - 旧クレデンシャルの削除は「新しい経路の疎通確認 → 読み取り専用コマンドで検証 → 本番影響のない操作でテスト → 監査ログ確認」の順で確実に検証してから行う。短命トークンであっても、実行中に奪われた場合の影響範囲は role の権限そのものに比例するため、IAM ロールの権限最小化（`sts:GetCallerIdentity` 相当から段階的に拡張）は OIDC 移行後も引き続き必要
@@ -755,10 +756,14 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 
 **出典（追加）**:
 - [Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392) (dev.to leobaniak、Docker Hub版OIDC federationの`permissions.id-token:write`+`docker/login-action`構成) ※2026-08-01に実際にfetch成功
+- [Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action) (Vercel Changelog公式、`vercel/vcr-action/login@v1`によるVCR版OIDCログイン) ※2026-09-26に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials
+> "It exchanges the workflow's OIDC token for a short-lived Vercel access token, then uses that token to log in to vcr.vercel.com."
+> ([Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action), セクション本文) ※2026-09-26に実際にfetch成功
+
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, vercel/vcr-action/login@v1
 **確信度**: 高
-**最終更新**: 2026-08-22
+**最終更新**: 2026-09-26
 
 ---
 
