@@ -312,3 +312,53 @@ function NavigationButton({ href, children }: { href: string; children: React.Re
 **最終更新**: 2026-05-06
 
 ---
+
+### 6. 大規模コードベースでは CSS-in-JS よりビルド時に静的化される CSS Modules を優先する
+
+`styled-components` の `sx` プロップのような、実行時に評価されるインラインオブジェクトベースの CSS-in-JS は、コンポーネント数が増えるほどサーバーレンダリング時間とクライアント初期化コストを押し上げる。
+CSS Modules（コンポーネントと同じディレクトリに置く `.css` ファイル + ローカルスコープのクラス名）はビルド時に静的な CSS へコンパイルされ、実行時の評価コストがない。
+
+**根拠**:
+- GitHub は全社的に styled-components ベースの CSS-in-JS から CSS Modules へ移行し、「サーバーサイドレンダリングにかかる時間が 55% 減、コンポーネントの初期化にかかる時間が 25% 減」という実測値を報告している
+- CSS-in-JS の実行時コストは `sx` のような動的なインラインオブジェクトの評価に起因する。プロップが変わるたびにスタイルオブジェクトを再計算する構造は、コンポーネント数のスケールに比例して重くなる
+- 移行はブリッジパッケージ（例: `@primer/styled-react`）で移行済み/未移行コンポーネントを共存させ、feature flag と段階的ロールアウト・ビジュアルリグレッションテストで破壊的変更を防ぎながら進められる
+
+**コード例**:
+```tsx
+// Bad: 実行時に評価される CSS-in-JS（動的インラインオブジェクト）
+const Button = styled.button(({ theme, variant }) => ({
+  padding: theme.spacing(2),
+  backgroundColor: variant === 'primary' ? theme.colors.primary : theme.colors.secondary,
+}));
+
+// Good: ビルド時に静的化される CSS Modules
+// Button.module.css
+// .button { padding: 16px; }
+// .primary { background-color: var(--color-primary); }
+import styles from './Button.module.css';
+
+function Button({ variant }: { variant: 'primary' | 'secondary' }) {
+  return (
+    <button className={`${styles.button} ${variant === 'primary' ? styles.primary : ''}`}>
+      Click
+    </button>
+  );
+}
+```
+
+**アンチパターン**:
+- 移行を一括で行い、破壊的変更の検知手段（ビジュアルリグレッションテスト・feature flag）を用意しない
+- パフォーマンス上の理由がないまま、既存の CSS-in-JS 基盤を書き換える（移行コスト自体も無視できないため、大規模化して初めて投資対効果が出る）
+
+**出典引用**:
+> "With CSS Modules, styles would be authored in a CSS file alongside the JavaScript source for the component."
+> ([Improving site performance by shipping more CSS](https://github.blog/engineering/architecture-optimization/improving-site-performance-by-shipping-more-css/), セクション "Introducing CSS (Modules)") ※2026-09-26に実際にfetch成功
+
+> "High runtime cost due to the dynamic nature of inline objects used for `sx`"
+> ([Improving site performance by shipping more CSS](https://github.blog/engineering/architecture-optimization/improving-site-performance-by-shipping-more-css/), セクション "Moving away from CSS-in-JS at GitHub") ※2026-09-26に実際にfetch成功
+
+**バージョン**: 特定フレームワーク非依存（CSS Modules は Next.js / webpack / Vite 標準サポート）
+**確信度**: 高
+**最終更新**: 2026-09-26
+
+---
