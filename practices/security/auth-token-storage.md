@@ -728,3 +728,44 @@ await denylist.add(`${iss}:${jti}`);
 **最終更新**: 2026-08-01
 
 ---
+
+### 9. 署名済み JWT（JWS）はペイロードを暗号化しない — 機密情報を含めるなら JWE でネスト暗号化する
+
+署名（JWS）は完全性・発行者認証を提供するが機密性は提供しない。JWT のペイロードは base64url エンコードされているだけで暗号化されていないため、トークンを入手した者は全クレームを読める。個人情報や機密データをクレームに含めたい場合は、署名済み JWT をさらに JWE で暗号化する「ネスト JWT」構成にする。それ以外は機密データをトークンに含めずサーバー側に保持する設計を優先する。
+
+**根拠**:
+- JWS はメッセージの改ざん検知・発行者認証のための署名であり、ペイロードは平文相当（base64url）でクライアント側から読み取れる
+- JWE は機密性と暗号文の完全性を提供するが、発行者認証は提供しない——JWE 単体では「誰が発行したか」を保証できないため、機密性と認証の両方が必要なら「まず JWS で署名し、その結果を JWE で暗号化する」ネスト構成にする
+- JWE を使う場合も `alg`（鍵管理）・`enc`（コンテンツ暗号化）はアプリケーションが許可するアルゴリズムのみを allowlist 化し、圧縮を避けるなどの追加要件がある
+
+**コード例**:
+```ts
+// Bad: 機密情報をJWSのみのJWTクレームに含める(誰でもデコードして読める)
+const token = await new SignJWT({ ssn: user.ssn, salary: user.salary })
+  .setProtectedHeader({ alg: 'RS256' })
+  .sign(privateKey);
+
+// Good: 機密クレームを含めない、またはJWS→JWEのネスト構成にする
+const signedJwt = await new SignJWT({ sub: user.id, role: user.role })
+  .setProtectedHeader({ alg: 'RS256' })
+  .sign(privateKey);
+const nestedJwt = await new EncryptJWT({ jwt: signedJwt })
+  .setProtectedHeader({ alg: 'RSA-OAEP-256', enc: 'A256GCM' })
+  .encrypt(publicKey);
+```
+
+**出典引用**:
+> "The payload is only base64url encoded, not encrypted, so anyone who obtains the token can read every claim."
+> ([OWASP JSON Web Token Cheat Sheet — Add Token Confidentiality and JWE section (#2321)](https://github.com/OWASP/CheatSheetSeries/commit/327812ee76aac6a87e32fbdce5b5d1cce39b5741), セクション "Signed JWTs are not confidential") ※2026-09-27に実際にfetch成功
+
+> "JWE provides confidentiality and ciphertext integrity, not issuer authentication"
+> ([OWASP JSON Web Token Cheat Sheet — Add Token Confidentiality and JWE section (#2321)](https://github.com/OWASP/CheatSheetSeries/commit/327812ee76aac6a87e32fbdce5b5d1cce39b5741), セクション "Using JWE") ※2026-09-27に実際にfetch成功
+
+**出典**:
+- [OWASP JSON Web Token Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/JSON_Web_Token_Cheat_Sheet.md) (OWASP公式、Token Confidentiality and JWE セクション追加) ※2026-09-27に実際にfetch成功
+
+**バージョン**: JWT（RFC 7519）/ JWE（RFC 7516）全般
+**確信度**: 高
+**最終更新**: 2026-09-27
+
+---
