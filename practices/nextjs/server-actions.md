@@ -71,7 +71,11 @@ Server Actions が適切なケースと API Route が引き続き必要なケー
 
 ### 2. `useActionState` でフォームの状態とエラーを管理する
 
-Server Actions の結果は `useActionState`（React 19）で管理する。
+Server Actions の結果は `useActionState`（React 19）で管理する。フォームの送信結果が「サーバーからの応答内容だけ」で決まる場合は `useActionState` を使い、複数の分岐や条件付き遷移・サーバー呼び出しを伴わないアクションが混在する複雑な状態機械には `useReducer` を使う。
+
+**根拠**:
+- `useActionState` は pending・エラー・成功の各状態遷移を自動管理し、サーバーアクションの実行結果だけで次状態が決まるフォームでは `useReducer` の dispatch 処理を手書きする必要がなくなる
+- 状態遷移がサーバー応答以外の条件分岐を多く含む場合（複数アクション種別・ローカルのみの状態変更など）は `useReducer` の明示的な reducer 関数の方が見通しが良い
 
 **コード例**:
 ```tsx
@@ -99,12 +103,17 @@ export default function NewUserForm() {
 }
 ```
 
+**出典引用**:
+> "useActionState wins when the form submits to a server action and the next state depends entirely on what the server returns. useReducer wins when the state machine has multiple branches, conditional transitions, or actions that do not involve server calls."
+> ([React `useActionState` in 2026: Replacing `useReducer` for Server-Driven Form Logic](https://dev.to/jsmanifest/react-useactionstate-in-2026-replacing-usereducer-for-server-driven-form-logic-4co6), セクション "useActionState vs useReducer") ※2026-09-27に実際にfetch成功
+
 **出典**:
 - [Next.js Docs: useActionState](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#server-side-form-validation) (Next.js公式)
+- [React `useActionState` in 2026: Replacing `useReducer` for Server-Driven Form Logic](https://dev.to/jsmanifest/react-useactionstate-in-2026-replacing-usereducer-for-server-driven-form-logic-4co6) (dev.to、useActionState と useReducer の使い分け基準) ※2026-09-27に実際にfetch成功
 
 **バージョン**: Next.js 14+, React 18/19
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-09-27
 
 ---
 
@@ -199,6 +208,7 @@ export function LikeButton({ post }: { post: Post }) {
 - RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認証チェックが漏れても DB が行単位でアクセスを制御できる（多層防御の最終ライン）
 - ロールベースの権限管理（RBAC）では、認証チェックを Server Action の中だけに置くのでは不十分。少なくとも①ルーティング層（未許可ロールをルート単位でブロック）②UI層（許可されない操作ボタン自体を出さない）③Server層（すべての Server Action 内部で `requirePermission()` 等により権限を再検証）の3層で防御する。UI層での非表示はあくまで見た目の制御であり、Server Action は「実体を伴うネットワークエンドポイント」であるためサーバー側の再検証を省略できない
 - OWASP の Next.js Security Cheat Sheet も Server Actions を独立して呼び出し可能な POST エンドポイントとして扱い、渡された引数を信頼しないことを公式原則として挙げている
+- Server Action の ID はビルドごとに再生成されるため、デプロイ後に古いクライアントバンドル（ブラウザにキャッシュされたページ等）が古い ID で呼び出すと `failed-to-find-server-action` エラーになる。これは「関数に見えるが実体はネットワークエンドポイントである」という性質そのものに起因するため、認証・認可の実装とあわせてロールアウト戦略（キャッシュ無効化・再読み込み誘導）でも考慮する
 
 **コード例**:
 ```tsx
@@ -242,12 +252,16 @@ export async function deleteUser(raw: unknown): Promise<void> {
 > "Validate all arguments as untrusted input"
 > ([OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37), セクション "Secure Server Actions as Endpoints") ※2026-08-31に実際にfetch成功
 
+> "'use server' を書いたファイルで export した関数は、Next.js がビルド時に ID を振り、POSTで叩ける状態になります"
+> ([Next.jsのServer Actionは関数に見えるが、実体はIDつきの公開エンドポイントだった](https://zenn.dev/matsutake_prgrm/articles/a-server-action-is-a-public-endpoint), セクション "1つの事実") ※2026-09-27に実際にfetch成功
+
 **出典（追加）**:
 - [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、Server Actions を独立エンドポイントとして扱う原則の公式裏付け) ※2026-08-31に実際にfetch成功
+- [Next.jsのServer Actionは関数に見えるが、実体はIDつきの公開エンドポイントだった](https://zenn.dev/matsutake_prgrm/articles/a-server-action-is-a-public-endpoint) (Zenn、ビルドごとのID再生成によるstaleクライアント問題) ※2026-09-27に実際にfetch成功
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-08-31
+**最終更新**: 2026-09-27
 
 ---
 
