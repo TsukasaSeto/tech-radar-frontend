@@ -582,6 +582,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 - **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
 - **「どの CLI がどのファイル名を読むか」は推測せず、カナリア値で実測する**: 各候補ファイル名（`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` 等）に固有の合言葉だけを書いた指示を置き、各 CLI にゼロショットで質問して合言葉を復唱させれば、そのツールが実際にどのファイルを読んでいるかが確実に分かる。ツールが「ファイルを開いてはいるが指示に従っていない」ケース（本文中の Antigravity の例）もあるため、復唱の有無まで見ないと「読んでいる」と「従っている」を混同する。正本を1ファイルに絞った後、他ツールの設定ファイルには本文でなく参照 1 行だけを置く場合は、参照行はツールの自動ロード対象ではなく AI 自身が明示的に開かない限り届かない点に注意する
+- **`AGENTS.md` は `CLAUDE.md` が無いときだけ読まれる（Claude Code v2.1.277+）**: 両方が存在する場合は `CLAUDE.md` が優先され、`AGENTS.md` の指示は効かない。他ツール向けに `AGENTS.md` だけを運用していたチームが後から `CLAUDE.md` を 1 枚追加すると、エラーもなく `AGENTS.md` が無効になる。共存させるなら `CLAUDE.md` に `@AGENTS.md` を書いて明示的にインポートするか、`/config` の Project instructions で読む側を切り替える。サブエージェントで `CLAUDE.md` を読ませたくない場合は定義に `omitClaudeMd: true`（v2.1.271）を指定する
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -675,9 +676,12 @@ codex exec --skip-git-repo-check "hello"
 > "参照行は自動ロードではないので、AI が自分で開かなければ届きません。"
 > ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "参照 1 行なんて") ※2026-08-29に実際にfetch成功
 
+> "他のツール向けにAGENTS.mdだけを運用していたチームが、あとからCLAUDE.mdを1枚追加すると、その時点でAGENTS.mdの指示が効かなくなる"
+> ([Claude CodeがAGENTS.mdに対応、CLAUDE.mdがあると読まれない条件を整理](https://zenn.dev/ainewsdaily/articles/20260928_claude_code_t1), セクション "AGENTS.mdが読まれるのは、CLAUDE.mdが無いときだけ") ※2026-09-28に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-08-29
+**最終更新**: 2026-09-28
 
 ---
 
@@ -3335,6 +3339,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 - allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
+- `sandbox.filesystem.denyRead` の glob（例: `**/.env`）は、展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になる（Claude Code v2.1.283 時点で未修正との報告）。対策は (1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）
 
 **コード例**:
 ```json
@@ -3381,13 +3386,17 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 > "bashコマンドについては**フックは確かに発火してdenyを返しているのに、コマンドはそのまま実行されていました**"
 > ([Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0), セクション "きっかけ") ※2026-08-21に実際にfetch成功
 
+> "探索の途中で `EACCES`（権限不足）になるディレクトリに 1 つでもあると、エラーを通知することなくそのパターン全体のパス展開処理を途中で放棄（abort）"
+> ([Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread), セクション "根本原因") ※2026-09-28に実際にfetch成功
+
 **出典**:
 - [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
 - [Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0) (Zenn、Codex CLI の bash 実行フックが deny を無視する再現報告、Windows環境) ※2026-08-21 fetch
+- [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、glob 展開中の EACCES による fail-open と 3 つの回避策) ※2026-09-28 fetch
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-21
+**最終更新**: 2026-09-28
 
 ---
 
