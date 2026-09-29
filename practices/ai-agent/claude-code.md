@@ -2833,6 +2833,7 @@ hookのラッパースクリプトで実行時間を JSONL ログに記録し、
 - 同期フックは完了するまで Claude Code をブロックする。`async: true` フックはバックグラウンド実行のためユーザー体験に影響しない
 - 平均値（mean）はゾンビプロセスや sleep 状態の外れ値で歪む。p95 が「日常的に体験する遅延」を正直に示す
 - どのフックが遅いか特定できなければ最適化対象を絞れない。ラッパーで全フックを一律計測するのが最も低コスト
+- 空振りするフックも実行系の起動コストを払う（node 約100ms / python3 約80ms / bash 約17ms / jq 約15ms、Intel Mac 実測）。同期の Pre/PostToolUse に登録すると 1 回のツール呼び出しで前後 2 回・直列に効くため、連携先が停止済みの「登録だけ残ったフック」は削除する。またフック定義の `timeout` の単位は**秒**であり、`"timeout": 5000` のようなミリ秒取り違え（実質 5000 秒）を 3 桁以上の値として棚卸しで検出する
 
 **コード例（ラッパースクリプト）**:
 ```bash
@@ -2927,10 +2928,13 @@ if pattern.MatchString(line) {
 **出典**:
 - [Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling) (Zenn)
 - [Claude Code hookが遅い原因はpydanticだった ― 起動コストを実測してGoに移植したら約8割削減できた話](https://qiita.com/nomurasan/items/c227b092ba30d18aa8a1) (Qiita、`python3 -X importtime` によるroot cause診断とGo移植による約80%削減の実測。39日間・244万回のフック呼び出しで年間約550 CPU時間の削減) ※2026-08-19 fetch
+- [Claude Codeのフック監査で見つけた、空振りで約200msとtimeoutの1000倍ずれ](https://zenn.dev/starken/articles/claude-code-hook-cost-and-timeout-unit) (Zenn、空振りフックの起動コスト実測と `timeout` 秒単位の取り違え、Claude Code 2.1.261/2.1.270) ※2026-09-29 fetch
+  > "何もしないのだから時間もかからない、と私は考えていました。" / "node の起動だけで約100msかかります。スクリプトの中身が exit(0) だけでも、この時間は減りません。"
+  > ([同記事](https://zenn.dev/starken/articles/claude-code-hook-cost-and-timeout-unit), セクション "何が起きたか" / "どう測ったか")
 
 **バージョン**: Claude Code（全バージョン）、bash 5+ / Python 3 / Go
 **確信度**: 中
-**最終更新**: 2026-08-19
+**最終更新**: 2026-09-29
 
 ---
 
@@ -3335,6 +3339,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 - allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
+- Linux（bubblewrap）の sandbox では `denyRead` のワイルドカード（`**/.env` 等）は実行時に実在パスへ展開されて適用されるため、プロジェクト配下にホストユーザーから読めないディレクトリ（Docker bind mount の UID 999 / 0700 の PostgreSQL data 等）が 1 つでもあると探索が EACCES で中断し、パターン全体が警告なしに無効化（fail-open）される。固定パス（`./.env`）は有効なまま。`sub/**/.env` のように探索起点を限定するか、固定パス指定・ボリューム構成の見直しで回避し、`head -c 1 <file> >/dev/null && echo readable || echo blocked` で実測する（上流 sandbox-runtime では修正済みだが Claude Code 2.1.283 は過渡期）
 
 **コード例**:
 ```json
@@ -3384,10 +3389,13 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 **出典**:
 - [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
 - [Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0) (Zenn、Codex CLI の bash 実行フックが deny を無視する再現報告、Windows環境) ※2026-08-21 fetch
+- [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、bubblewrap のワイルドカード展開が読めないディレクトリで fail-open する最小再現、Claude Code 2.1.283) ※2026-09-29 fetch
+  > "プロジェクト配下にホストユーザーから読めないディレクトリが 1 つでもあると、探索処理が中断され、そのパターン全体が無効化（fail-open）されます。"
+  > ([同記事](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread), セクション "概要")
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-21
+**最終更新**: 2026-09-29
 
 ---
 
