@@ -325,3 +325,57 @@ for (const imagePath of images) {
 **最終更新**: 2026-05-06
 
 ---
+
+### 6. `images.remotePatterns` は必要最小限のホスト・パスに絞り、Next.js を最新パッチ（16.3.8 / 15.5.27 以降）に保つ
+
+`next/image` の Image Optimization は `images.remotePatterns` に許可した外部 URL をサーバー側で取得して最適化する。
+このため、許可リストに載ったホストが攻撃者に制御され得る場合（ユーザー投稿コンテンツのホスト、ワイルドカード許可など）、プライベート IP 帯へのリクエストを誘発する SSRF の経路になる。
+Next.js 2026-09 セキュリティリリース（CVE-2026-94483、High）で修正済みのため、`remotePatterns` を使っているアプリは必ずパッチを適用し、あわせてパターンを最小化する。
+
+**根拠**:
+- 公式アドバイザリは「許可リスト済みの攻撃者制御 URL が Image Optimization 中の SSRF（例: プライベート IP 帯）につながる」と説明している
+- `images.remotePatterns` を設定していなければ影響を受けないため、許可範囲を狭めること自体が攻撃面の縮小になる
+- 修正版は v16.3.8（Active LTS）と v15.5.27（Maintenance LTS）
+
+**コード例**:
+```ts
+// Good: プロトコル・ホスト名・パスを具体的に指定する
+const nextConfig = {
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: 'images.example.com', pathname: '/uploads/**' },
+    ],
+  },
+};
+```
+
+```ts
+// Bad: ワイルドカードで広く許可し、攻撃者が制御できるホストまで含めてしまう
+const nextConfig = {
+  images: {
+    remotePatterns: [{ protocol: 'https', hostname: '**' }],
+  },
+};
+```
+
+```bash
+npm install next@16.3.8   # 16.3 系
+npm install next@15.5.27  # 15.5 系
+```
+
+**アンチパターン**:
+- `hostname: '**'` など過度に広い許可で外部画像を配信する
+- 月次セキュリティリリースのパッチを適用せず、`remotePatterns` の許可範囲だけに防御を依存する
+
+**出典引用**:
+> "An attacker-controlled, allow-listed remote URL can lead to Server-Side Request Forgery (for example to private IP ranges) during Image Optimization. If no `images.remotePatterns` are configured, your application is not affected."
+> ([September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release), セクション "Server-Side Request Forgery in Image Optimization (High Severity)") ※2026-09-30に実際にfetch成功
+
+**出典**:
+- [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js 公式ブログ) ※2026-09-30に実際にfetch成功
+
+**バージョン**: Next.js 16.3.8+ / 15.5.27+
+**確信度**: 高（公式ブログ）
+**最終更新**: 2026-09-30
+
+---
