@@ -84,6 +84,9 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 **出典**:
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 
+> "When an agent omits an ownership check, the rule it broke belongs to the application rather than to a signature database."
+> ([Why AI Coding Agents Keep Writing Broken Access Control](https://snyk.io/blog/ai-coding-agents-broken-access-control/), Snyk Blog, セクション "Why scanners miss these flaws") ※2026-10-01に実際にfetch成功
+
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
@@ -104,6 +107,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 - `verifySession()` を `cache()` でラップすることで、page 冒頭ガード + 複数 DAL 呼び出しの全体で実 DB アクセスが 1 回になる
 - 認可ロジックが DAL に集約されることで「どこを直すべきか」の認知コストが下がる
 - いわゆる IDOR（Insecure Direct Object Reference）は「認証は通っているが認可（本人のリソースか）を忘れる」典型パターン。`fetch → if 文で弾く` ではなく `findOne({ id, userId })` のように**クエリの WHERE 句自体にユーザー条件を含める**と、認可チェックの書き忘れがそもそも成立しにくくなる
+- AI コーディングエージェントが生成した認可ロジックは「コンパイルもレビューも通るが所有者チェックが抜けている」形になりやすく、アプリ固有の認可ルールはシグネチャ型スキャナでは検知できない。エンドポイントごとの所有ルールを明文化し、**別テナントの有効なセッションで他テナントのオブジェクトを取りにいくと 404 になる**クロステナントテストで固定する
 
 **コード例**:
 ```ts
@@ -153,6 +157,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 **出典**:
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [AIで作ったアプリで一番危ない穴：他人のデータが見えてしまう「認可漏れ」の話](https://zenn.dev/heygeek/articles/ai-authorization-idor-deep-dive) (Zenn、IDOR という呼称とクエリ時点でのユーザー条件フィルタという具体的実装の追加) ※2026-07-27 fetch
+- [Why AI Coding Agents Keep Writing Broken Access Control](https://snyk.io/blog/ai-coding-agents-broken-access-control/) (Snyk Blog、エージェント生成コードの BOLA/IDOR とクロステナントテスト) ※2026-10-01 fetch
 
 > "if (!order || order.userId !== req.user.id) { return res.status(404).json({ error: "見つかりません" }) }"（"どう直すか" セクション。さらに安全な形として `findOne({ id: req.params.id, userId: req.user.id })` というクエリ時点フィルタを推奨）
 > ([AIで作ったアプリで一番危ない穴：他人のデータが見えてしまう「認可漏れ」の話](https://zenn.dev/heygeek/articles/ai-authorization-idor-deep-dive), Zenn, セクション "どう直すか") ※2026-07-27に実際にfetch成功
@@ -161,7 +166,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
 **バージョン**: Next.js 16+
 **確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-07-27
+**最終更新**: 2026-10-01
 
 ---
 
