@@ -443,3 +443,41 @@ export async function GET() {
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
 **最終更新**: 2026-05-16
+
+---
+
+### 6. 信頼できないオブジェクトを JSX 要素へスプレッド（`{...untrusted}`）せず、渡す props を明示的に列挙する
+
+React は JSX で描画するテキストを既定でエスケープするが、生 HTML や URL を持つ props（`href` / `src` / `dangerouslySetInnerHTML` 等）には追加の対策が必要になる。
+API レスポンスやユーザー入力のオブジェクトを `<input {...data} />` のようにスプレッドすると、攻撃者が想定外の属性を差し込める。
+受け取る props は分割代入で明示し、許可した属性だけを要素に渡す。
+
+**根拠**:
+- OWASP React Security Cheat Sheet が、信頼できないオブジェクトのスプレッドを避けて明示的な分割代入を使うことを推奨している（コミット差分の要約から確認。cheat sheet 本体は未読のため確信度は中）
+- 同シートは `dangerouslySetInnerHTML` の DOMPurify 利用（Rule #1）、`javascript:` / `data:` スキームの遮断（Rule #2）と並べて、ref 経由の `innerHTML` 直接操作や `eval()` / `new Function()` の回避も挙げている
+
+**コード例**:
+```jsx
+// Good: 許可する props を明示する
+function Field({ placeholder, disabled, value, onChange }) {
+  return <input placeholder={placeholder} disabled={disabled} value={value} onChange={onChange} />;
+}
+
+// Bad: 信頼できないオブジェクトをそのまま展開する
+function Field(untrusted) {
+  return <input {...untrusted} />;
+}
+```
+
+**出典引用**:
+> "React escapes text values rendered through JSX by default, but raw HTML and URL-bearing props require additional controls"
+> ([Feat react security cheat sheet (#2196)](https://github.com/OWASP/CheatSheetSeries/commit/0c4931d2d305a6eeb872c063ebddd55a02f8975b), OWASP CheatSheetSeries コミット, 追加された React Security Cheat Sheet 冒頭) ※2026-10-01に実際にfetch成功
+
+**出典**:
+- [Feat react security cheat sheet (#2196)](https://github.com/OWASP/CheatSheetSeries/commit/0c4931d2d305a6eeb872c063ebddd55a02f8975b) (OWASP CheatSheetSeries 公式リポジトリ、React Security Cheat Sheet 追加コミット) ※2026-10-01 fetch
+
+**バージョン**: React 全バージョン
+**確信度**: 中
+**最終更新**: 2026-10-01
+
+---

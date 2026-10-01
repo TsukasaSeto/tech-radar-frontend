@@ -1126,6 +1126,8 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- 告知済みの修正が上流依存の遅延で**後日分割リリースされる**ことがある。2026-09 は「critical 1件・high 1件の修正を上流遅延のため延期」した上で 2026-09-30 に v16.3.8 / v15.5.27 で提供された。告知時点の想定を固定せず、リリース記事の「Impact」を再確認する
+- 各脆弱性には**影響条件**が明記される（例: SSRF は `images.remotePatterns` 設定時のみ、Draft Mode 漏えいは Cache Components / `experimental.useCache` 有効時のみ、MCP エンドポイントの情報漏えいは `next dev` のみ）。自アプリの設定と突き合わせて優先度を決める
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1135,13 +1137,16 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 **出典引用**:
 > "Today we are moving to a formal security release program, with updates that teams can plan around."
 > ([Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program), Next.js Blog, セクション "A predictable release schedule") ※2026-07-14に実際にfetch成功
+> "A fix for one critical vulnerability and one high severity vulnerability was postponed due to upstream dependency delays."
+> ([September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release), Next.js Blog, 冒頭) ※2026-10-01に実際にfetch成功
 
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js 公式ブログ、延期された critical/high 修正の分割リリースと影響条件の明記) ※2026-10-01 fetch
 
-**バージョン**: Next.js 16.2+ / 15.5+
+**バージョン**: Next.js 16.3.8+ (Active LTS) / 15.5.27+ (Maintenance LTS)
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-10-01
 
 ---
 
@@ -1154,6 +1159,8 @@ pnpm 11 はデフォルトで `minimumReleaseAge: 1440`（分単位、24時間�
 - pnpm 11 は設定を「認証・レジストリ関連（INI形式 `.npmrc`）」と「pnpm 固有設定（YAML形式 `pnpm-workspace.yaml`）」に分離した。`minimumReleaseAge` は後者に属するため `.npmrc` に書いても**エラーにも警告にもならず、単に無視される**
 - ローカル開発でバージョン固定（exact version）指定をすると、pnpm が自動的に `pnpm-workspace.yaml` へ `minimumReleaseAgeExclude` エントリを生成することがある。これを未コミットのまま CI で `--frozen-lockfile` を使うと、同じ lockfile が `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` で失敗する（ローカルでは通り CI だけ落ちる典型パターン）
 - バージョン範囲指定（`^` 等）の場合は、新しいバージョンが age 制限に引っかかると**警告なく古い適合バージョンにフォールバックする**。意図しない古いバージョンが入っていないか lockfile の diff で確認する必要がある
+- 同等のクールダウンは他のパッケージマネージャーにもあり、キー名・単位がそれぞれ異なる（npm `min-release-age`=日、Yarn `npmMinimalAgeGate`=`3d` 形式、Bun `minimumReleaseAge`=秒、pnpm=分）。複数ツールが混在するリポジトリでは単位の取り違えに注意する
+- クールダウンは長いほど安全という単純な話ではなく、長くするほどセキュリティパッチの適用も遅れる。長期間潜伏する攻撃は防げないため、他の対策（Rule #4 など）と併用する
 
 **設定例**:
 ```yaml
@@ -1170,6 +1177,20 @@ allowBuilds:
 # Bad: .npmrc に書いても pnpm 11 では黙って無視される
 minimum-release-age=0
 ```
+```ini
+# 参考: npm（.npmrc）の同等設定（単位は日）
+min-release-age=7
+min-release-age-exclude=@myorg/*
+```
+```yaml
+# 参考: Yarn（.yarnrc.yml）
+npmMinimalAgeGate: 3d
+```
+```toml
+# 参考: Bun（bunfig.toml、単位は秒）
+[install]
+minimumReleaseAge = 259200
+```
 
 **出典引用**:
 > "pnpm no longer reads non-auth settings from `.npmrc`. Configuration is split into two categories: auth/registry in INI format, pnpm-specific settings in YAML."
@@ -1177,7 +1198,11 @@ minimum-release-age=0
 
 **出典**:
 - [pnpm 11のminimumReleaseAge既定24hを踏みに行ったら、手元では通ってCIだけ落ちた](https://zenn.dev/clopy/articles/pnpm11-minimum-release-age-ci-only-failure) (Zenn、`pnpm-workspace.yaml`/`.npmrc` の設定分離とCI専用エラーの実機検証) ※2026-08-19 fetch
+- [様々なツールで導入が進んでいるクールダウン設定の機能や挙動を比較](https://zenn.dev/newt_st21/articles/package-manager-cooldown) (Zenn、npm / Yarn / Bun 等の設定キー・単位の比較と、長期潜伏型攻撃は防げない限界) ※2026-10-01 fetch
+
+> "記事で挙げたように、クールダウンの設定はパッケージマネージャーに限らず様々なツールで整備が進んでいます。"
+> ([様々なツールで導入が進んでいるクールダウン設定の機能や挙動を比較](https://zenn.dev/newt_st21/articles/package-manager-cooldown), Zenn, セクション "おわりに") ※2026-10-01に実際にfetch成功
 
 **バージョン**: pnpm 11+
 **確信度**: 中（単一記事だが公式ツールの設定ファイル形式・エラーコードを直接示す実機検証のためパターン1c扱い）
-**最終更新**: 2026-08-19
+**最終更新**: 2026-10-01

@@ -1090,3 +1090,46 @@ gh api "repos/{owner}/{repo}/actions/runs?created=2026-08-01..2026-08-10&per_pag
 **バージョン**: GitHub Actions（全プラン共通の課金モデル）
 **確信度**: 中
 **最終更新**: 2026-08-18
+
+---
+
+### 13. 2026-09-23 に Node 20 が GitHub Actions から撤去済み — `node20` を宣言するアクションを棚卸しして `node24` 対応版へ更新する
+
+GitHub は 2026-09-23 に Actions ランナーから Node 20 を完全に撤去し、JavaScript アクションは Node 24 で実行される。
+`runs.using: node20` のまま更新されていないアクション（古いメジャータグ・SHA ピン留めされた旧版・サードパーティの composite アクション内部のピン留め）は動作しなくなる可能性があるため、Dependabot / Renovate の自動 PR が届かない参照を含めて棚卸しする。
+GitHub 公式（first-party）アクションは Node 24 対応済みなので、最新版へ更新する。
+
+**根拠**:
+- GitHub 公式 changelog で「Node 20 は GitHub Actions で利用不可」「ランナーは JavaScript アクションに Node 24 を使う」と明言されており、一時回避策は残っていない（回避用環境変数に頼る運用は終了）
+- Node 24 は macOS 13.4 以前と ARM32 を公式サポートしないため、該当するセルフホストランナーは別途対応が必要
+- SHA ピン留め（本ファイル Rule #9）は不変性を保証する一方で、**旧版に固定されたまま更新が止まる**リスクを持つ。ピン留めしたら定期更新（Renovate 等）とセットで運用する
+- 個人ブログの実測では、宣言が `node20` でもランナーが Node 24 を選ぶ挙動が報告されている（公式記述は「動作しなくなる」で表現が異なるため、挙動差は自環境の実行ログで確認する）
+
+**コード例**:
+```bash
+# 利用中アクションの runs.using を確認する（第三者の記事で紹介された手順）
+gh api "repos/actions/checkout/contents/action.yml?ref=v4" --jq .content | base64 -d | grep using:
+
+# 組織内の node20 宣言を検索する
+gh search code node20 --owner YOUR_ORG --filename action.yml
+```
+```yaml
+# アクション自作者向け: action.yml のランタイムを更新して新リリースを出す
+runs:
+  using: node24   # Bad: node20
+  main: dist/index.js
+```
+
+**出典引用**:
+> "update its `runs.using` value to `node24` and publish a new release as soon as possible."
+> ([Node 20 is no longer available in GitHub Actions](https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions), GitHub Changelog, セクション "Recommended migration") ※2026-10-01に実際にfetch成功
+
+**出典**:
+- [Node 20 is no longer available in GitHub Actions](https://github.blog/changelog/2026-09-23-node-20-is-no-longer-available-in-github-actions) (GitHub Changelog、公式) ※2026-10-01 fetch
+- [GitHub Actions Removed Node 20. Find Every node20 Action You Still Run](https://dev.to/devopsdaily/github-actions-removed-node-20-find-every-node20-action-you-still-run-1eai) (dev.to、棚卸しコマンドと SHA ピン留め・composite 内部参照の盲点) ※2026-10-01 fetch
+
+**バージョン**: GitHub Actions ランナー（2026-09-23 以降）
+**確信度**: 高
+**最終更新**: 2026-10-01
+
+---
