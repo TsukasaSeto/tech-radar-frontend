@@ -101,6 +101,7 @@ export default async function Page({ params }: { params: Promise<{ slug: string 
 **根拠**:
 - DAL が「最後の砦」になることで、上位層（Proxy / page / Server Action）で認可を書き忘れても、データに辿り着く手前で確実に止まる
 - Server Action は `"use server"` で export した関数がすべて HTTP エンドポイントとして公開されるため、フォーム経由前提の認可では不十分。DAL 内認可なら攻撃者の直接 POST も塞げる
+- AI コーディングエージェントはアプリ固有の所有権ルールを知らず、認可要件が生成対象のコードのどこにも現れないため、リソース ID だけで引く実装を書きがち。DAL 内で「ID + 呼び出し元の所属組織/ユーザー」を必須条件にし、リソース種別ごとのクロステナントテストと AI 生成 PR の認可レビューで担保する
 - `verifySession()` を `cache()` でラップすることで、page 冒頭ガード + 複数 DAL 呼び出しの全体で実 DB アクセスが 1 回になる
 - 認可ロジックが DAL に集約されることで「どこを直すべきか」の認知コストが下がる
 - いわゆる IDOR（Insecure Direct Object Reference）は「認証は通っているが認可（本人のリソースか）を忘れる」典型パターン。`fetch → if 文で弾く` ではなく `findOne({ id, userId })` のように**クエリの WHERE 句自体にユーザー条件を含める**と、認可チェックの書き忘れがそもそも成立しにくくなる
@@ -153,6 +154,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 **出典**:
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [AIで作ったアプリで一番危ない穴：他人のデータが見えてしまう「認可漏れ」の話](https://zenn.dev/heygeek/articles/ai-authorization-idor-deep-dive) (Zenn、IDOR という呼称とクエリ時点でのユーザー条件フィルタという具体的実装の追加) ※2026-07-27 fetch
+- [Why AI Coding Agents Keep Writing Broken Access Control](https://snyk.io/blog/ai-coding-agents-broken-access-control/) (Snyk Blog、AI 生成コードの認可漏れ対策としてクロステナントテストと認可レビューの必須化) ※2026-10-02に実際にfetch成功
+  > "The correction is one additional condition on the lookup: match the invoice by its identifier, and by the organization the caller belongs to."
+  > (セクション "Why do AI coding agents get authorization wrong so often?")
 
 > "if (!order || order.userId !== req.user.id) { return res.status(404).json({ error: "見つかりません" }) }"（"どう直すか" セクション。さらに安全な形として `findOne({ id: req.params.id, userId: req.user.id })` というクエリ時点フィルタを推奨）
 > ([AIで作ったアプリで一番危ない穴：他人のデータが見えてしまう「認可漏れ」の話](https://zenn.dev/heygeek/articles/ai-authorization-idor-deep-dive), Zenn, セクション "どう直すか") ※2026-07-27に実際にfetch成功
@@ -161,7 +165,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
 **バージョン**: Next.js 16+
 **確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-07-27
+**最終更新**: 2026-10-02
 
 ---
 

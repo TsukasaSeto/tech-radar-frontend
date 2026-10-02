@@ -369,6 +369,7 @@ revalidateTag("posts"); // 将来削除予定
   - `"use cache: private"`（クライアント）: ユーザー固有 △。最終手段
 - フルルート ISR は「HTML ごとキャッシュ」するため最大 **20〜35 倍**の応答速度改善になる（レンダリング自体がボトルネックの重いページで特に有効）
 - `"use cache: private"` を選ぶ前に、引数渡しパターンが本当に成立しないかを必ず検討する。多くのケースは引数渡しで足りる
+- `"use cache: private"` の結果は `cacheLife` の stale 時間（5 分以上など）の間ブラウザのメモリに残りうる（Partial Prefetching 有効時）。共有端末でログアウト後に前ユーザーの値が見えないよう、ログアウト後は `window.location.href` でフルリロードする
 
 **コード例**:
 ```tsx
@@ -425,12 +426,14 @@ async function MyDashboard() {
 **出典**:
 - [Next.jsの考え方 / 3.5 ユーザー固有データの扱いと保存先の使い分け](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [The Caching Playbook: SSR, use cache, Redis and ISR in Next.js 16](https://medium.com/@rezamoosavi.kntu/the-caching-playbook-ssr-use-cache-redis-and-isr-in-next-js-16-30ea8d540d13) (Medium、`use cache: remote` vs インメモリのレイテンシ比較・ISR の効果測定) ※2026-06-05fetch
+- [`use cache: private` のキャッシュはブラウザに残ることもある](https://zenn.dev/chot/articles/362b7a2420ef1a) (Zenn、stale 時間中のブラウザ保持とログアウト時のフルリロード) ※2026-10-02に実際にfetch成功
+  > "The client router can keep the rendered output in browser memory for the stale time configured with cacheLife."
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（Cache Components 前提）
 **確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-06-05
+**最終更新**: 2026-10-02
 
 ---
 
