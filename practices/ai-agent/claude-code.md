@@ -582,6 +582,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 - **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
 - **「どの CLI がどのファイル名を読むか」は推測せず、カナリア値で実測する**: 各候補ファイル名（`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` 等）に固有の合言葉だけを書いた指示を置き、各 CLI にゼロショットで質問して合言葉を復唱させれば、そのツールが実際にどのファイルを読んでいるかが確実に分かる。ツールが「ファイルを開いてはいるが指示に従っていない」ケース（本文中の Antigravity の例）もあるため、復唱の有無まで見ないと「読んでいる」と「従っている」を混同する。正本を1ファイルに絞った後、他ツールの設定ファイルには本文でなく参照 1 行だけを置く場合は、参照行はツールの自動ロード対象ではなく AI 自身が明示的に開かない限り届かない点に注意する
+- **`CLAUDE.md` が存在すると、`AGENTS.md` は既定で黙って無視される**: 実測（`claude 2.1.283`）では、`AGENTS.md` のみがあるリポジトリではネイティブフォールバックで読まれる一方、`CLAUDE.md` を併置すると観測された合言葉は `CLAUDE.md` 側のみで、エラーも警告も出なかった。`.claude/settings.json`（プロジェクトスコープ）に `pluginConfigs["agents-md@builtin"].options.instructionFiles` を書いても無視された。移行時は「`AGENTS.md` を置いたから読まれる」と思い込まず、`CLAUDE.md` 側から `@AGENTS.md` でインポートする。なお、`claude -p` を CI から固定フラグ（`--setting-sources project` 等）で叩く場合、そのフラグがどのメモリファイルを読むかに影響しうる（`CLAUDE.local.md` のみの構成と `--settings` ファイルによる強制は同じ検証で再現せず、原因は未特定）ため、CI で使うフラグ構成のまま実測する
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -675,9 +676,14 @@ codex exec --skip-git-repo-check "hello"
 > "参照行は自動ロードではないので、AI が自分で開かなければ届きません。"
 > ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "参照 1 行なんて") ※2026-08-29に実際にfetch成功
 
-**バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
+> 「`pluginConfigs["agents-md@builtin"].options.instructionFiles`をプロジェクトスコープの`.claude/settings.json`に書いても、観測は`CLAUDE_MD_MARKER`のまま変化しませんでした」
+> ([AGENTS.md移行チェックリスト:確認できた3項目、再現しなかった2項目、そして--setting-sourcesという伏兵](https://zenn.dev/clopy/articles/claude-code-agents-md-fallback-migration-checklist), セクション "3. プロジェクトスコープのsettings.jsonキーは無視される") ※2026-10-03に実際にfetch成功
+
+- [AGENTS.md移行チェックリスト:確認できた3項目、再現しなかった2項目、そして--setting-sourcesという伏兵](https://zenn.dev/clopy/articles/claude-code-agents-md-fallback-migration-checklist) (Zenn clopy、`CLAUDE.md` 併置時に `AGENTS.md` が無視される実測、n=1 の検証で一部は未再現) ※2026-10-03 fetch
+
+**バージョン**: Claude Code（全バージョン、`AGENTS.md` ネイティブフォールバックは 2.1.277 以降）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-08-29
+**最終更新**: 2026-10-03
 
 ---
 
@@ -2224,6 +2230,8 @@ auto mode は「全部手動承認」と `--dangerously-skip-permissions` の中
 - auto mode（2026年3月 research preview）はクラシファイアがルーティン承認を処理し、危険操作のみブロックする。有効化前に hard deny ルールを確定させる順序が重要
 - **導入推奨順序**: agents ビューで状況把握 → /goal で完了条件を定義 → hard deny で安全境界を確定 → auto mode を有効化 → Routines で完全自動化
 - 「機械的に判定できる完了条件」という原則は Claude Code 純正機能（`/goal`）以外でも再現できる。カスタム MCP サーバーで `list_tasks` のようなタスク管理ツールを自作し、Stop Hook でタスク完了を通知させる構成でも、完了判定は「ファイルが存在するか」ではなく「MCP 経由で取得した `status` フィールド」で行うことで、前倒しの完了判定を防げる
+- auto mode のクラシファイアは確率的な判定であり、「暴走しない」ことの担保には使わない。審査対象はユーザーのメッセージ・ツール呼び出し・CLAUDE.md で、**ツールの結果は含まれない**（プロンプトインジェクションの封じ込め）。3 回連続、またはセッション累計 20 回ブロックすると auto mode は一時停止してプロンプト方式に戻る。確実に止めたい操作は `permissions.deny` / `ask` と hook（`PreToolUse` / `Stop`）に置き、組織固有の信頼範囲は `autoMode.environment` に宣言する（`"$defaults"` を残す＝Rule #47）
+- `/loop` やセッション内のスケジュールタスクは**起動したセッションの permission mode を引き継ぐ**。手動承認のセッションから夜間ループを始めると、朝まで承認待ちで止まる。無人ループは起動前に permission mode を決めておく
 
 **コード例**:
 ```bash
@@ -2282,10 +2290,17 @@ claude agents
 
 **出典（追加）**:
 - [Claude Code を並列で回したら「速すぎて怖く」なったので、自分の開発を管制する環境を作った](https://zenn.dev/takerin/articles/c386a8c97f03eb) (Zenn takerin、Stop Hook + カスタム MCP タスクサーバーで `status` フィールドを完了判定に使う実装) ※2026-07-30 fetch
+- [Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes) (Zenn coworker_jp、クラシファイアの審査範囲・一時停止条件・スケジュールタスクの permission mode 継承。本文は code.claude.com の permission-modes / auto-mode-config / hooks を根拠として引用) ※2026-10-03 fetch
+
+> 「分類器が見るのはユーザーのメッセージ、ツール呼び出し、CLAUDE.md で、ツールの結果は除かれる。」
+> ([Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes), セクション "3. auto mode の審査") ※2026-10-03に実際にfetch成功
+
+> 「分類器が 3 回連続、またはセッション累計 20 回ブロックすると、auto mode は一時停止してプロンプト方式に戻ります。」
+> ([Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes), セクション "4. auto mode が止める開発工程") ※2026-10-03に実際にfetch成功
 
 **バージョン**: Claude Code（2026年3月以降）
 **確信度**: 中
-**最終更新**: 2026-07-30
+**最終更新**: 2026-10-03
 
 ---
 

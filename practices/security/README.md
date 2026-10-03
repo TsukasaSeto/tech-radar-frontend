@@ -1,7 +1,7 @@
 # Security Practices
 
 フロントエンドセキュリティに関するベストプラクティス。
-CSP・XSS・認証トークン管理・シークレット管理・依存セキュリティを扱う。
+CSP・XSS・認証トークン管理・シークレット管理・依存セキュリティ・マイクロフロントエンドの信頼境界を扱う。
 
 ## ファイル構成
 
@@ -10,6 +10,7 @@ CSP・XSS・認証トークン管理・シークレット管理・依存セキ�
 - `auth-token-storage.md` — トークン保存（HttpOnly Cookie / Refresh Rotation / CSRF）
 - `secret-management.md` — 環境変数・Secret Manager・バンドル漏洩防止
 - `dependency-security.md` — npm audit / Renovate / lockfile / SBOM
+- `micro-frontend.md` — マイクロフロントエンドの実行時の信頼境界（合成方式 / リモートコード制御 / postMessage・認可）
 
 ## スコープ
 
