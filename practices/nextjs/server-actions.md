@@ -199,6 +199,7 @@ export function LikeButton({ post }: { post: Post }) {
 - RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認証チェックが漏れても DB が行単位でアクセスを制御できる（多層防御の最終ライン）
 - ロールベースの権限管理（RBAC）では、認証チェックを Server Action の中だけに置くのでは不十分。少なくとも①ルーティング層（未許可ロールをルート単位でブロック）②UI層（許可されない操作ボタン自体を出さない）③Server層（すべての Server Action 内部で `requirePermission()` 等により権限を再検証）の3層で防御する。UI層での非表示はあくまで見た目の制御であり、Server Action は「実体を伴うネットワークエンドポイント」であるためサーバー側の再検証を省略できない
 - OWASP の Next.js Security Cheat Sheet も Server Actions を独立して呼び出し可能な POST エンドポイントとして扱い、渡された引数を信頼しないことを公式原則として挙げている
+- **Prisma + PostgreSQL の RLS では、対話型 `$transaction` の中でテナント文脈が外側のトランザクションと別になる落とし穴がある**: 公式の Client extensions レシピは全クエリを `[SET, query]` のバッチトランザクションで包むため、`$transaction` 内ではクエリが外側とは別のトランザクションで走り、原子性が壊れる。トランザクションの入口で `set_config('app.tenant_id', $1, TRUE)`（`SET LOCAL` 相当）を1回実行し、`AsyncLocalStorage` で「適用済み」を印付けして拡張側をパススルーにする。`current_setting('app.tenant_id', true)` は未設定で空文字ではなく **NULL** を返すため、ポリシーで `= ''` と比較せず、NULL との比較が常に偽になる fail closed を前提にする。テーブル所有者にもポリシーを効かせるには `FORCE ROW LEVEL SECURITY` が必要（単一記事の報告・確信度は中）
 
 **コード例**:
 ```tsx
@@ -244,10 +245,14 @@ export async function deleteUser(raw: unknown): Promise<void> {
 
 **出典（追加）**:
 - [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、Server Actions を独立エンドポイントとして扱う原則の公式裏付け) ※2026-08-31に実際にfetch成功
+- [Prisma で Postgres の RLS を入れたら、公式レシピ通りでもトランザクションの中で効かなかった話](https://zenn.dev/glaciermelt/articles/prisma-postgres-rls-interactive-transaction) (Zenn glaciermelt、対話型トランザクション内のテナント文脈と `current_setting` の NULL 挙動という RLS 実装上の反例) ※2026-10-03 fetch
+
+> 「つまり **外側の `$transaction` とは別のトランザクションで走る**。テナントの文脈は付きますが、`order.create` と `stock.update` が同じトランザクションにいる保証が無くなり、原子性が壊れます。」
+> ([Prisma で Postgres の RLS を入れたら、公式レシピ通りでもトランザクションの中で効かなかった話](https://zenn.dev/glaciermelt/articles/prisma-postgres-rls-interactive-transaction), セクション "罠 1: 対話型トランザクションの中で効かない") ※2026-10-03に実際にfetch成功
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-08-31
+**最終更新**: 2026-10-03
 
 ---
 

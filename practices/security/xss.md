@@ -270,6 +270,8 @@ React の外（メール本文・OGP・ログビューア・自前テンプレ�
 - Reflected XSS は OWASP Top 10 で最も多い XSS 種別
 - （手動エスケープの例外条件）HTML エスケープの対象は `& < > " '` の5文字。すべてのエンティティが `&` で始まるため、`&` を最初に置換しないと `&lt;` が `&amp;lt;` になる二重エスケープが起きる。アンエスケープは逆順で、`&amp;` を最後に戻す
 - （エンティティ選択）シングルクォートは名前付き参照の `&apos;` ではなく数値参照の `&#39;` を使う。`&apos;` は XML / HTML5 で定義されたエンティティで、HTML4 等の古い仕様では未定義のため、レガシーパーサでは復元されない
+- （URL を組み立てる側）JavaScript で URL を構築するときは、信頼できないクエリパラメータの**値ごとに** `encodeURIComponent()` を適用する。これは URL の構成要素をエンコードするだけで、組み立てた URL 全体の安全性（スキームの検証＝Rule 2）は保証しない。さらに `<a href>` に入れる場面では「URL エンコード → HTML 属性エンコード」の2段階が必要になる（OWASP XSS Prevention Cheat Sheet）
+- （属性・インラインスクリプト側）属性値のエンコードは「全ての非英数字を `&#xHH;` 化する」方式ではなく、フレームワーク／ライブラリのエンコーダで引用符付き属性に対して行う（値は必ず `"` か `'` で囲む）。`onclick` 等のイベントハンドラ属性は HTML パーサが文字参照をデコードしてから JavaScript として解釈されるため、HTML 属性エンコードだけでは守れない。信頼できる関数を `addEventListener()` で登録し、ユーザー値はデータとして渡す
 
 **コード例**:
 ```tsx
@@ -331,6 +333,8 @@ export async function generateMetadata({ searchParams }: Props): Promise<Metadat
 - URL パラメータを SQL / API クエリに渡す → そちらでも別途エスケープ（サーバー責務）
 - URL パラメータをエラーメッセージ等で reflect する → React の `{}` 経由のみ
 - React 外で自前エスケープ関数を書く → `&` を最初に置換しているか、シングルクォートが `&#39;` かを確認する
+- JS で URL を組み立てる → クエリ値ごとに `encodeURIComponent()`、URL 全体やパス断片には使わない。`encodeURIComponent()` は URL の検証ではない
+- ユーザー値をイベントハンドラ属性（`onclick="..."` 等）に展開しない → `addEventListener()` で登録し、値は `data-*` かクロージャで渡す
 
 **React 外で手動エスケープする場合**:
 ```typescript
@@ -366,10 +370,17 @@ function unescapeHtml(text: string): string {
 
 > "`&apos;` はXMLとHTML5で定義されたエンティティで、**HTML4など古い仕様では未定義**"
 > ([HTMLエスケープの5文字と処理順序 — なぜ「&」を最初に変換しないと二重エスケープになるか](https://zenn.dev/sktt_panda/articles/html-escape-entity-order-xss-browser), セクション "シングルクォートのエンコード") ※2026-08-28に実際にfetch成功
+- [OWASP Cross Site Scripting Prevention Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md) (OWASP CheatSheetSeries 公式、PR #2504 / #2518 で明確化された `encodeURIComponent()` の守備範囲と属性・JavaScript コンテキスト別エンコード) ※2026-10-03 fetch
+
+> "When using JavaScript to construct a URL, use `encodeURIComponent()` to encode each untrusted query parameter value. It encodes a URL component; it does not validate a complete URL."
+> ([Cross Site Scripting Prevention Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md), セクション `Output Encoding for "URL Contexts"` > "Common Mistake") ※2026-10-03に実際にfetch成功
+
+> "HTML attribute encoding alone does not protect JavaScript in an event-handler attribute: the HTML parser decodes character references before the JavaScript is interpreted."
+> ([Cross Site Scripting Prevention Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md), セクション `Output Encoding for "HTML Attribute Contexts"`) ※2026-10-03に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-08-28
+**最終更新**: 2026-10-03
 
 ---
 
@@ -432,14 +443,18 @@ export async function GET() {
 | `X-Content-Type-Options` | `nosniff` | MIME sniffing 無効化 |
 | `X-Frame-Options` | `DENY` または `SAMEORIGIN` | clickjacking 防御 |
 | `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | HTTPS 強制 |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | リファラ漏洩防止 |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | リファラ漏洩防止（モダンブラウザの既定値と同じだが、既定に頼らず**明示的に設定する**） |
 | `Permissions-Policy` | feature を明示的に拒否 | カメラ・位置情報等の権限制御 |
 
 **出典**:
 - [MDN: X-Content-Type-Options](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options) (MDN Web Docs)
 - [OWASP: Secure Headers Project](https://owasp.org/www-project-secure-headers/) (OWASP)
 - [Next.js Docs: Security Headers](https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy#applying-the-csp-header) (Next.js 公式)
+- [OWASP HTTP Headers Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md) (OWASP CheatSheetSeries 公式、PR #2501 で明確化された Referrer-Policy 既定動作と明示設定の推奨) ※2026-10-03 fetch
+
+> "Modern browsers default to `strict-origin-when-cross-origin`: same-origin requests include the origin, path, and query string in the `Referer` header; cross-origin requests include only the origin, except HTTPS-to-HTTP requests, which omit the header. Set the header explicitly rather than relying on browser defaults."
+> ([HTTP Headers Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md), セクション "Referrer-Policy" > "Recommendation") ※2026-10-03に実際にfetch成功
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-03
