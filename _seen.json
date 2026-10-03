@@ -4182,5 +4182,22 @@
   "https://dev.to/mahdi_benrhouma_fe1c6005/fix-react-18-hydration-mismatch-in-nextjs-371m",
   "https://zenn.dev/fd_ai_teacher/articles/tech-20260908172014-1",
   "https://medium.com/@entepazhe/next-js-hydration-errors-why-they-happen-and-how-to-actually-fix-them-61fcd724b90b",
-  "https://techblog.zozo.com/entry/screen-analyze-v2"
+  "https://techblog.zozo.com/entry/screen-analyze-v2",
+  "https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Micro_Frontend_Security_Cheat_Sheet.md",
+  "https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.md",
+  "https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md",
+  "https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Workload_Identity_Federation_Cheat_Sheet.md",
+  "https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes",
+  "https://zenn.dev/clopy/articles/claude-code-agents-md-fallback-migration-checklist",
+  "https://zenn.dev/glaciermelt/articles/prisma-postgres-rls-interactive-transaction",
+  "https://zenn.dev/aicoding_guide/articles/acg-claude-code-mcp-allow-tools",
+  "https://zenn.dev/jisaku_net/articles/geolocation-stale-result-session-token",
+  "https://zenn.dev/shimo4228/articles/harness-scope-writing-harness",
+  "https://medium.com/@thebuildersplaybook/turborepo-cached-8-2gb-of-next-js-builds-in-six-days-97-of-it-was-the-dev-servers-folder-c402460cb99a",
+  "https://medium.com/skillstuff/the-most-expensive-use-client-is-the-one-you-did-not-need-45762f0a9548",
+  "https://medium.com/@lotfi-habbiche/zero-downtime-micro-frontends-with-next-js-app-router-module-federation-and-tailwind-css-cc4aa5290777",
+  "https://medium.com/@yappatyih/i-removed-my-chinese-web-font-every-page-lost-1-mb-ef6159683bc5",
+  "https://medium.com/skillstuff/a-form-error-is-not-helpful-until-someone-can-find-it-774de1ca80d5",
+  "https://medium.com/@shailendrakawadkar/next-js-16-3-is-getting-smarter-about-javascript-chunks-6f439f8e1ad1",
+  "https://medium.com/@jsmanifest/typescript-interface-extends-vs-intersection-when-the-difference-actually-breaks-your-code-8d26fcea9fc9"
 ]
