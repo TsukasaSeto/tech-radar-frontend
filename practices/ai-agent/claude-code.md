@@ -3897,3 +3897,46 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+### 50. チーム共有の MCP サーバーは `.mcp.json`（project スコープ）に置き、コミット済み `enableAllProjectMcpServers: true` は workspace trust 承認後にのみ効くことを前提に運用する
+
+チームで MCP サーバーを配るときは `claude mcp add --scope project` で `.mcp.json` に登録し、必要なら `.claude/settings.json` に `enableAllProjectMcpServers: true` をコミットする。この設定は workspace trust ダイアログを承認したプロジェクトでしか効かず、trust 未承認の新規 clone や CI チェックアウトでは無視される（trust ゲートのバイパスにはならない）。新規 clone で `claude mcp get <name>` が `Pending approval` のままなのはバグではなく仕様。
+
+**根拠**:
+- 検証記事の再現実験（claude CLI 2.1.284）で、trust 未承認 + コミット済みバイパス設定の状態では `Pending approval` のまま変化せず、trust 承認後に接続試行へ進み、trust を取り消すと再び承認待ちに戻った。設定ファイルを変えずに状態だけが連動する
+- スコープの使い分け: `local` は登録元プロジェクトのパスに厳密に紐づき兄弟プロジェクトから見えない（パス固有設定・個人の認証情報向け）、`user` は全プロジェクトから見える（個人用の共通サーバー向け）、`project` はチーム共有向け
+- 既に起動中の Claude Code セッション内（Bash ツール経由を含む）から入れ子で `claude mcp add/list/get` を実行すると、継承された `CLAUDECODE=1` の影響で実際の設定に関係なく「未登録」と誤報告される。検証は通常のターミナルか `env -i` で環境を切り離して行う
+
+**コード例**:
+```json
+// .claude/settings.json（コミットしてよい。各利用者の trust 承認後にのみ有効）
+{ "enableAllProjectMcpServers": true }
+```
+```json
+// .mcp.json（チーム共有）
+{ "mcpServers": { "proj-srv": { "type": "stdio", "command": "echo", "args": ["hello"], "env": {} } } }
+```
+```bash
+# Good: project スコープで登録し、各自が一度 trust を承認する
+claude mcp add --scope project proj-srv -- echo hello
+# Bad: 稼働中の Claude Code セッション内から入れ子で mcp コマンドを検証する（CLAUDECODE=1 を継承し誤報告）
+```
+
+**アンチパターン**:
+- 「承認待ちを直すために `enableAllProjectMcpServers: true` をコミットすれば未 trust でも動く」と期待する（trust 未承認では効かない）
+- パス固有・個人認証情報を含むサーバーを project スコープで共有する
+
+**出典引用**:
+> "未trustのworkspaceでは、コミット済みの enableAllProjectMcpServers: true は無視されるか yes"
+> ([committedなenableAllProjectMcpServers: trueはworkspace trust未承認なら効かない](https://zenn.dev/clopy/articles/claude-mcp-server-scope-decision), セクション "スコープ×trustの決定表") ※2026-10-04に実際にfetch成功
+
+**出典**:
+- [committedなenableAllProjectMcpServers: trueはworkspace trust未承認なら効かない](https://zenn.dev/clopy/articles/claude-mcp-server-scope-decision) (Zenn、claude CLI 2.1.284 での単一ケース再現。承認後にツール呼び出しが成功するかは未検証) ※2026-10-04 fetch
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の `.mcp.json` / `.claude/settings.json` の実設定と CLI 挙動を直接検証している）
+
+**バージョン**: Claude Code 2.1.284 で観測
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-10-04
+
+---
