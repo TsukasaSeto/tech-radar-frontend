@@ -86,7 +86,7 @@ URL のスキームを必ず allow list で検証する。
 **根拠**:
 - React は `href` を文字列としてエスケープするが、**スキーム自体は検証しない**
 - `javascript:` `data:` `vbscript:` 等はクリックでスクリプト実行に直結する
-- React 19 以降は `javascript:` スキームに警告が出るが、エラーではなく動く
+- OWASP は「React 19 は `src` / `href` の `javascript:` URL をブロックするが、アプリ固有の URL 検証の代わりにはならない」と明記している。ブロックの有無はバージョン・属性・文脈に依存するため、バージョンに頼らず allow list 検証を必ず行う
 - URL parser を使うのが最も確実。スキームと host を分離して検証する
 
 **コード例**:
@@ -173,15 +173,16 @@ function validateExternalUrl(userInput: string): URL {
 **出典**:
 - [OWASP: DOM-based XSS](https://owasp.org/www-community/attacks/DOM_Based_XSS) (OWASP)
 - [React Docs: javascript: URL warning](https://react.dev/reference/react-dom/components/common#applying-css-styles) (React 公式)
+- [Cross Site Scripting Prevention Cheat Sheet — commit "Qualify React URL protection by version and context"](https://github.com/OWASP/CheatSheetSeries/commit/2691c6bb814dc4b2261334049929a9031207e368) (OWASP、React 19 のブロック挙動の限定記述への修正。旧記述「警告のみで動く」を訂正) ※2026-10-05に実際にfetch成功
 - [MDN: URL constructor](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) (MDN Web Docs)
 - [SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb) (Qiita、サーバーサイド SSRF への同パターンの適用とバイパス例) ※2026-05-25に実際にfetch成功
 
 > "URL を検査するときは、文字列の見た目だけで判断しない方が安全です。"
 > ([SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb), セクション "なぜ文字列検査だけでは不十分か") ※2026-05-25に実際にfetch成功
 
-**バージョン**: React 18+
+**バージョン**: React 18+（React 19 は `javascript:` URL をブロックするが検証の代替にならない）
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-10-05
 
 ---
 
