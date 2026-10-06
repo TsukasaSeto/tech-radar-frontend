@@ -2947,6 +2947,7 @@ Next.js 16.3 以降、`next dev` 起動時に AGENTS.md へのポインタが自
 - **自動更新は `<!-- BEGIN:nextjs-agent-rules -->` 〜 `END` の管理ブロックだけを書き換える** — マーカーの外側に書いたユーザー独自のルールは `next dev` の再実行後も保持される。自動生成部分と手書き部分を安全に同居させられる
 - **発火条件はエージェント検出ベースで、人間のみの開発では起動しない** — `@vercel/detect-agent` 相当の判定で AI エージェントのセッションを検知した時だけ書き込みが走るため、人間だけで作業している間は AGENTS.md が勝手に生成・更新されることはない
 - **モノレポでは `next` パッケージへの相対パス解決に注意が必要** — AGENTS.md からの相対パスでコンテンツを解決するため、リポジトリルートから `next` が直接見えない構成（ワークスペース跨ぎ）だと解決に失敗しうる。配置場所を検証してから運用に乗せる
+- **Next.js 16.4 の `next upgrade --agent` と `experimental.agentUpgrade` でバージョンアップもエージェントに委譲できる** — 現行バージョンの確認・移行ガイド・codemod・検証手順をエージェントに渡し、`next dev` / `next build` 時に更新を通知する（`'security'` が既定 / `'latest'` / `false`）。`experimental.agentFeedback` はエージェントが作る不具合レポート草稿をブラウザで確認し、送信を選んだ時だけ送る（テレメトリ有効が前提、CI では動かない）
 
 **コード例**:
 ```bash
@@ -2968,6 +2969,18 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+```
+
+```bash
+# Next.js 16.4: エージェントにバージョンアップを委譲する
+npx next@canary upgrade --agent=latest
+```
+
+```typescript
+// next.config.ts — アップグレード通知ポリシー
+const nextConfig: NextConfig = {
+  experimental: { agentUpgrade: 'security' }, // 'latest' | false も指定可
+};
 ```
 
 ```bash
@@ -2996,10 +3009,12 @@ curl https://nextjs.org/docs/llms.txt
 **出典**:
 - [Next.js 16.3: AI Improvements](https://nextjs.org/blog/next-16-3-ai-improvements) (Next.js 公式ブログ、2026-06-26)
 - [Next.js 16.3で入ったAGENTS.md自動生成を実際に検証する](https://zenn.dev/orisend/articles/nextjs-agents-md-auto-generation) (Zenn、管理ブロックの保持範囲・エージェント検出ベースの発火条件・モノレポでの相対パス解決を実機検証) ※2026-08-11に実際にfetch成功
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、`next upgrade --agent` / `experimental.agentUpgrade` / `agentFeedback`) ※2026-10-06 fetch
+  > "The new `--agent` option for `next upgrade` helps your agent upgrade your app from start to finish."
 
-**バージョン**: Next.js 16.3+
+**バージョン**: Next.js 16.3+（`next upgrade --agent` / `agentUpgrade` は 16.4+）
 **確信度**: 高（公式ブログ一次情報 + 実機検証記事）
-**最終更新**: 2026-08-11
+**最終更新**: 2026-10-06
 
 ---
 

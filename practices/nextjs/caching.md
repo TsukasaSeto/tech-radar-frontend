@@ -192,6 +192,7 @@ Next.js 15 で導入された実験的な `use cache` ディレクティブは�
 - `unstable_cache` より宣言的で直感的な構文を提供する
 - コンポーネント単位でのキャッシュが可能になり、Partial Prerendering との親和性が高い
 - Next.js 16 では `unstable_cache` の公式後継として位置づけられている
+- Next.js 16.4 で Cache Components（`'use cache'`）が全 Next.js アプリに推奨され、`create-next-app` の新規アプリでデフォルト有効、Next.js 17 でデフォルト化される予定。「将来の標準」から「現行の推奨」へ位置づけが進んだ
 
 **コード例**:
 ```tsx
@@ -219,10 +220,12 @@ const getCachedProductList = unstable_cache(
 **出典**:
 - [Next.js Docs: use cache directive](https://nextjs.org/docs/app/api-reference/directives/use-cache) (Next.js公式 / 2025)
 - [Vercel Blog: Our Journey with Caching](https://nextjs.org/blog/our-journey-with-caching) (Next.js公式ブログ / 2024)
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、全アプリへの推奨化・新規アプリのデフォルト有効化) ※2026-10-06 fetch
+  > "Starting with Next.js 16.4, we're excited to recommend Cache Components as the best choice for every Next.js app."
 
 **バージョン**: Next.js 15+
 **確信度**: 中
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-06
 
 ---
 
@@ -567,5 +570,51 @@ export default async function WorkspacePage() {
 **バージョン**: Next.js 16.3+, `@next/playwright`
 **確信度**: 高（Next.js 公式ブログ）
 **最終更新**: 2026-08-07
+
+---
+
+### 11. 静的であるべきルートには `ensureStatic` を宣言し、動的コンポーネントの混入をビルドで失敗させる
+
+`'use cache'` は静的シェルと動的コンテンツを 1 レスポンスにストリームできる反面、ECサイト・マーケティングページ・ブログのように「常に静的」であるべきページでも、動的コンポーネントが 1 つ紛れ込むだけでコストと性能特性が崩れる。Next.js 16.4 の `export const ensureStatic` をルートまたはレイアウトに宣言し、意図しないリクエスト時レンダリングをビルド失敗として検知する。
+
+**根拠**:
+- `"navigation"`（最も厳格: ナビゲーション全体が静的）/ `"prefetch"`（明示プリフェッチで静的コンテンツのみ取得）/ `"shell"`（初回発見時に静的コンテンツのみ取得）の 3 段階で保証範囲を選べる
+- ルートレイアウトに `"navigation"` を置けばサイト全体のナビゲーションが静的であることを保証でき、動的コンテンツが必要になったページだけ入れ子レイアウト側へ宣言を押し下げられる
+- 回帰を実行時の性能劣化ではなくビルド時に検知できるため、サーバーコストの意図しない増加を防げる
+- 動的ページが中心のアプリでは不要。静的を維持したいルートにだけ使う
+
+**コード例**:
+```tsx
+// Good: ブログ記事ルートを常に静的として保証する
+export const ensureStatic = 'navigation';
+
+export default function Page() {
+  return (
+    <>
+      <UserAvatar /> {/* 🔴 動的コンポーネントが混入するとビルドが失敗する */}
+      <Content />
+    </>
+  );
+}
+
+// Good: ルートレイアウトでサイト全体のナビゲーションを静的に保証する
+// app/layout.tsx
+export const ensureStatic = 'navigation';
+```
+
+**アンチパターン**:
+- 静的を前提としたマーケティング/ブログ/EC 一覧ページで宣言を置かず、動的コンポーネント混入に本番のコスト増で気づく
+- 動的コンテンツが必要なページを含むレイアウトに `"navigation"` を置いてビルドを壊す（必要なページ配下のレイアウトへ押し下げる）
+
+**出典引用**:
+> "In Next.js 16.4, `ensureStatic` offers a simple way to guarantee that a route's shell, prefetch, or full navigation is static."
+> ([Next.js 16.4](https://nextjs.org/blog/next-16-4), セクション "Ensuring shells, prefetches, or pages are static") ※2026-10-06に実際にfetch成功
+
+**出典**:
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、2026-10-06公開) ※2026-10-06に実際にfetch成功
+
+**バージョン**: Next.js 16.4+（`cacheComponents: true` 前提）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-10-06
 
 ---
