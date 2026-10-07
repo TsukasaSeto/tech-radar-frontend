@@ -539,3 +539,51 @@ html {
 **最終更新**: 2026-08-28
 
 ---
+
+### 12. `<Link prefetch>` が重くなるときは `await navigation()` で prefetch 対象から重いデータを除外する
+
+`<Link prefetch>` / `useRouter().prefetch()` はキャッシュ済み UI を事前描画してローディングを消せるが、表示中の全リンクが重いデータ（例: メールスレッド全文）まで先読みするとサーバー負荷が過大になる。prefetch を無効化するのではなく、Suspense で囲んだ重い部分のコンポーネント先頭で `await navigation()` を呼び、実際の遷移まで描画を遅延させる。シェルに含まれてしまうキャッシュ済みコンテンツを「明示 prefetch まで」遅延したい場合は `prefetch()` を await する。
+
+**根拠**:
+- 先頭の 1 件だけ prefetch し、残りは遷移時に取得する、といった eager / lazy の配分をコンポーネント単位で制御できる
+- 「prefetch を丸ごと OFF」より UX を保ったままコストを下げられる
+
+**コード例**:
+```tsx
+import { navigation } from 'next/cache';
+
+async function Message({ id }: { id: string }) {
+  const message = await getMessage(id); // prefetch に含まれる
+  return (
+    <>
+      <p>{message.subject}</p>
+      <Suspense fallback={<Spinner />}>
+        <Thread id={id} />
+      </Suspense>
+    </>
+  );
+}
+
+async function Thread({ id }: { id: string }) {
+  await navigation(); // prefetch ではここで止まり、遷移時に描画される
+  const thread = await getThread(id);
+  return thread.map((m) => <div key={m.id}>{m.body}</div>);
+}
+```
+
+**アンチパターン**:
+- 一覧の全リンクに `prefetch` を付けて詳細データ全件を先読みさせる
+- コスト懸念を理由に prefetch を完全に外し、初回表示のローディングを放置する
+
+**出典引用**:
+> "The new `navigation` API lets you exclude loading cached content during a prefetch, effectively deferring it until an actual navigation takes place."
+> ([Next.js 16.4](https://nextjs.org/blog/next-16-4), セクション "Excluding content from a prefetch") ※2026-10-07に実際にfetch成功
+
+**出典**:
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、2026-10-06公開) ※2026-10-07に実際にfetch成功
+
+**バージョン**: Next.js 16.4+（`cacheComponents: true` + `partialPrefetching: true`）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-10-07
+
+---
