@@ -569,3 +569,48 @@ export default async function WorkspacePage() {
 **最終更新**: 2026-08-07
 
 ---
+
+### 11. 静的であるべきルートには `ensureStatic` を宣言し、動的コンポーネントの混入をビルドで検知する
+
+Cache Components では、1 ルート内に静的部分と動的部分を同一レスポンスでストリームできる。この柔軟性の裏返しとして、ブログ・EC・マーケティングページなど「完全に静的であるべき」ルートに動的コンポーネントが 1 つ紛れ込むと、コストとパフォーマンス特性が静かに劣化する。`export const ensureStatic` でルート（または layout）に静的保証を宣言すると、動的コンテンツが含まれた時点でビルドが失敗する。
+
+**根拠**:
+- 値は `'navigation'`（遷移が一切リクエスト時レンダリングにならない・最も厳格）/ `'prefetch'`（明示 prefetch で取得されるのが静的内容のみ）/ `'shell'`（ルート初回発見時に取得されるのが静的内容のみ）の 3 段階で、保証の強さを選べる
+- layout に書くと配下の全ページに同じ保証が適用される。ルート layout に `'navigation'` を置き、動的が必要になったページ側の layout に押し下げる運用ができる
+- 「意図せぬ動的化」を目視レビューではなくビルド失敗として検知できる
+
+**コード例**:
+```tsx
+// Good: ブログ記事ページは常に静的であることを保証する
+export const ensureStatic = 'navigation';
+
+export default function Page() {
+  return (
+    <>
+      <UserAvatar /> {/* 動的コンポーネント → ビルド失敗 */}
+      <Content />
+    </>
+  );
+}
+
+// Good: サイト全体の遷移を静的に保証（必要なページだけ配下 layout で緩める）
+// app/layout.tsx
+export const ensureStatic = 'navigation';
+```
+
+**アンチパターン**:
+- 静的さが売りのルートにガードを置かず、動的 API（`cookies()` 等）の混入に本番コスト増で気づく
+- 動的が必要なルートまで一律に `'navigation'` を設定する（動的が必要なら layout 階層を分けて適用範囲を絞る）
+
+**出典引用**:
+> "By setting `ensureStatic` to \"navigation\", Next.js will fail the build if any dynamic content is ever included in this page, ensuring that navigations to this route will never render at request time."
+> ([Next.js 16.4](https://nextjs.org/blog/next-16-4), セクション "Ensuring shells, prefetches, or pages are static") ※2026-10-07に実際にfetch成功
+
+**出典**:
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、2026-10-06公開) ※2026-10-07に実際にfetch成功
+
+**バージョン**: Next.js 16.4+（`cacheComponents: true`）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-10-07
+
+---
