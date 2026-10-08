@@ -1126,22 +1126,28 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- 月次枠とは別に、上流依存（upstream dependencies）の脆弱性修正は out-of-band の臨時リリースになることがある。2026-10-08 には「10/14 に Critical 2件・High 1件（うち2件は上流調整のため9月リリースから延期）を修正する臨時アップデート」が事前告知され、詳細アドバイザリ（影響範囲・対象バージョン・手順）は当日公開とされた。告知日と公開日の間にアップグレード検証環境と担当を確保しておく
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
 - 月次告知で「high 深刻度を含む」と分かった時点で、次回リリース日までにアップグレード検証環境を用意しておく
 - ad-hoc（緊急）パッチの告知は深刻度に関わらず最優先でトリアージする
+- 告知に「Critical を含む」と書かれていたら、公開当日にアドバイザリを読んで対象バージョンを確認し、同日中に patch を適用できるよう日程を空けておく（詳細は公開当日まで出ない前提で計画する）
 
 **出典引用**:
 > "Today we are moving to a formal security release program, with updates that teams can plan around."
 > ([Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program), Next.js Blog, セクション "A predictable release schedule") ※2026-07-14に実際にfetch成功
 
+> "Next Wednesday, October 14, 2026, we plan to publish an out-of-band Next.js security update. It will address three vulnerabilities in upstream dependencies: two Critical and one High."
+> ([Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026), Next.js Blog, 冒頭段落) ※2026-10-08に実際にfetch成功
+
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026) (Next.js 公式ブログ、上流依存の Critical 2件・High 1件を対象とする 2026-10-14 の臨時アップデート事前告知) ※2026-10-08 fetch
 
 **バージョン**: Next.js 16.2+ / 15.5+
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-10-08
 
 ---
 
