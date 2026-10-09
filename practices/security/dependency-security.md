@@ -1126,6 +1126,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- 2026-10-08 の告知では、翌週水曜 2026-10-14 に上流依存の脆弱性（Critical 2件・High 1件）に対する out-of-band の更新を予告している。うち 2件は 9月のリリースから上流調整のため延期されたもので、**予定リリースにも持ち越しが起こり得る**。詳細な advisory（影響範囲・対象バージョン）は更新公開時に出るため、告知段階では検証環境の準備と当日のアップグレード枠の確保までを行う
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1138,10 +1139,12 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026) (Next.js 公式ブログ、Critical 2件を含む事前告知と延期の実例) ※2026-10-09 fetch
+  > "Two of these fixes were postponed from the September security release due to upstream coordination."
 
 **バージョン**: Next.js 16.2+ / 15.5+
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-10-09
 
 ---
 
