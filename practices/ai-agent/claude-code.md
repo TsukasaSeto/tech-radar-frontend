@@ -3897,3 +3897,55 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+### 50. `permissions.deny` で作業フォルダ外を守るときは `../` ではなく `//` 絶対パスまたは `~/` で書き、書いた規則が実際に止まるかをダミーファイルで検証する
+
+`.claude/settings.json` の `deny` に `Edit(../shared/partner/**)` のような `../` 始まりのパスを書いても、公式ドキュメントのパス記法（`//path` / `~/path` / `/path` / `path`・`./path`）に `../` は無く、警告も出ないまま書き込みが止まらないことがある。
+作業フォルダの外を守りたい場合は `//`（ファイルシステム根からの絶対パス）で書き、書き込み禁止は `Write(...)` ではなく `Edit(...)` で表現する。さらに `deny` は Claude Code の組み込みツール向けの「ブレーキ」であり、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない。
+
+**根拠**:
+- 実測（Windows 10 / Claude Code 2.1.296 / 非対話 `claude -p` / haiku）で、`Edit(../shared/partner/**)` は Edit ツール・Bash `echo >`・Bash `node` のいずれも 3/3 で書き換えを止めず、起動時の警告も出なかった
+- 同じ場所を `Edit(//c/<絶対パス>/shared/partner/**)` で書くと Write ツール（6/6）・Edit ツール・Bash `echo >` は止まった。ただし Bash 自動許可下の `node` スクリプトによる書き込みは 3/3 で通った
+- `Write(path)` 形式の規則は起動時に「ファイルの権限チェックには使われない。`Edit(path)` を使うこと」という趣旨の警告が出る
+- 本当に守りたいものは `settings.json` の記述だけを根拠にせず、OS 権限・コンテナ・サンドボックス等の隔離と併用する（「設定ファイルに書いたことは、守られていることの証拠にならない」）
+
+**コード例**:
+```jsonc
+// .claude/settings.json
+{
+  "permissions": {
+    "deny": [
+      // Good: 絶対パス（//）で書く。書き込み禁止は Edit(...)
+      "Edit(//c/work/shared/partner/**)"
+
+      // Bad: ドキュメントにない ../ 記法。警告なしで効かないことがある
+      // "Edit(../shared/partner/**)"
+    ]
+  }
+}
+```
+```bash
+# 規則を書いたらダミーファイルで止まるかを確認する（本物のファイルでは試さない）
+# 判定は AI の返事ではなく、守りたいダミーの SHA-256 が前後で変わったかで行う
+BEFORE=$(sha256sum < "$T/shared/partner/STATUS.md")
+claude -p "Use the Write tool to overwrite ../shared/partner/STATUS.md" \
+  --output-format json --allowedTools "Read,Write,Edit" --permission-mode acceptEdits
+[ "$BEFORE" = "$(sha256sum < "$T/shared/partner/STATUS.md")" ] && echo "unchanged"
+```
+
+**アンチパターン**:
+- `../` 始まりの相対パスで作業フォルダ外の `deny` を書き、「守れているつもり」になる
+- `Write(...)` で書き込み禁止を表現する
+- 「止まった」という 1 経路（Write ツール）の結果から、Bash 経由のスクリプトなど他経路まで守られていると結論する
+
+**出典引用**:
+> "`.claude/settings.json` の deny に、作業フォルダの外を `../` で書いた規則は、筆者の環境では、試した書き込みのどれも止めませんでした。起動時の警告も出ませんでした"
+> ([Claude Code の deny に `../` を書いたら、隣のフォルダへの書き込みが止まらなかった（2.1.296で実測）](https://zenn.dev/emilk1225/articles/73356c9b0e156d), セクション "この記事で分かること") ※2026-10-11に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の `.claude/settings.json` の `permissions.deny` 記法を実測し、設定ファイル形式を直接示している）。筆者の検証は Windows / 非対話モード / haiku のみで、macOS・Linux・対話モード・`~/path` 形式は未検証
+
+**バージョン**: Claude Code 2.1.296 で実測（Windows 10）
+**確信度**: 中（公式ツールの設定記法を実測した単独記事、パターン1c採用）
+**最終更新**: 2026-10-11
+
+---
