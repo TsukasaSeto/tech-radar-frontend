@@ -712,6 +712,7 @@ Vercel は環境変数の「Sensitive」トグルを廃止し、Config（保存�
 - 既存の Sensitive フラグ付き変数は自動的に Secret 扱いとなり、移行作業は不要（後方互換）
 - 旧ポリシー「Enforce Sensitive Environment Variables」は廃止され、新ポリシー「Separate Production Secret Values」に置き換えられた。このポリシーは Secret 型の本番値が Preview/Development/カスタム環境の値と異なることを強制する
 - レガシーの `--sensitive` / `--no-sensitive` CLI フラグは引き続き動作し、それぞれ Secret / Config にマッピングされる
+- Vercel のダッシュボードは値を生の文字列のまま保存するため、末尾改行つきで登録すると本番だけ `Invalid character in header content ["host"]`（`ERR_INVALID_CHAR`）が出る（ローカルの `.env.local` は読み込み時に改行が除かれるため再現しない）。登録時は `echo` ではなく `printf` を使い、`vercel env pull` した結果を `cat -A` で確認し、URL 等の値は読み込み側でも `trim()` する
 - Rule #4（Secret Manager 採用）とは補完関係にある: #4 は「本番で平文 `.env` を使わない」というプラットフォーム非依存の原則、本ルールは Vercel 自身の環境変数システムが提供する write-only な値保護と環境間の値分離強制という、プラットフォーム固有の具体的な実装手段
 
 **コード例**:
@@ -732,9 +733,11 @@ vercel env add API_KEY production --value "sk_live_..." --visibility secret --ye
 
 **出典**:
 - [Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types) (Vercel 公式 changelog) ※2026-08-24 fetch
+- [Next.js 本番だけ ERR_INVALID_CHAR が出る原因と直し方 — 環境変数末尾改行の罠](https://zenn.dev/joemike/articles/nextjs-err-invalid-char-env-newline-sentry-2026) (Zenn joemike、Vercel 環境変数の末尾改行混入と `trim()` 対策) ※2026-10-13 fetch
+  > "ローカルは自動で安全、Vercel は生の文字列をそのまま保存する。" (セクション "なぜローカルで再現しないか")
 
 **バージョン**: Vercel（環境変数 Config/Secret 種別、2026-08時点）
 **確信度**: 高
-**最終更新**: 2026-08-24
+**最終更新**: 2026-10-13
 
 ---

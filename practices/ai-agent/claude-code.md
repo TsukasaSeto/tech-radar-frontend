@@ -3334,6 +3334,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - キー名だけでなく **ツール名の形式** も同様に「受理されるが適用されない」ケースがある。`Write()` / `Glob()` / `NotebookEdit()` / `MultiEdit()` 形式の deny ルールはパーサーに受理されるが実際の enforcement では機能しない（有効なのは `Edit()` / `Read()` 形式のみ）。公開されている設定の 16% がこの種のデッドルールを含んでいたという実測報告があり、153件の deny リストを持つ実運用設定でも 26 件のデッドルールが見つかっている
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 - allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
+- `.env` の読み取り防止では `Read(**/.env)` の deny 単体だと Read ツールと単純な `cat`/`head` は止まるが、Node.js / Python スクリプトや複合ワンライナー経由の読み取りは止まらない（Bash を全許可していた実測で完走）。`sandbox.filesystem.denyRead` を併用すると読み取りは止まるが、アプリ自体も `.env` を開けず起動しなくなるため、`.env.example`（変数名のみ）を併置し、deny glob `Read(**/.env.*)` が `.env.example` も巻き込む点に注意する（15 試行・各条件 1 回の検証で再現性は限定的）
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
 
 **コード例**:
@@ -3381,13 +3382,17 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 > "bashコマンドについては**フックは確かに発火してdenyを返しているのに、コマンドはそのまま実行されていました**"
 > ([Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0), セクション "きっかけ") ※2026-08-21に実際にfetch成功
 
+> "何も設定しなければ、AIは.envを開けます。"
+> ([Claude Code に .env を読ませない設定を入れても、読めてしまう場面があった（Codex と比較）](https://zenn.dev/bpr_prot/articles/c3c58f88e594ef), セクション "設定なしでは値を伏せるかどうかをAIが決めた") ※2026-10-13に実際にfetch成功
+
 **出典**:
 - [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
 - [Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0) (Zenn、Codex CLI の bash 実行フックが deny を無視する再現報告、Windows環境) ※2026-08-21 fetch
+- [Claude Code に .env を読ませない設定を入れても、読めてしまう場面があった（Codex と比較）](https://zenn.dev/bpr_prot/articles/c3c58f88e594ef) (Zenn、`permissions.deny` 単体ではスクリプト経由の `.env` 読み取りを止められず sandbox 併用が必要、Claude Code 2.1.295 で検証) ※2026-10-13 fetch
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-08-21
+**最終更新**: 2026-10-13
 
 ---
 
