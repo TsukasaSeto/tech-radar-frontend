@@ -3897,3 +3897,60 @@ EOF
 **最終更新**: 2026-09-07
 
 ---
+
+### 50. 自動コンパクトのタイミングは `/autocompact`・`autoCompactWindow`・`idleCompaction` で明示し、statusLine の使用率で判断しない
+
+Claude Code の自動コンパクトは、トークン数・割合・モデル別・サブエージェント別・アイドル時間で制御できる。
+1M コンテキストのモデルで早めに圧縮したい場合は、まず `/autocompact <トークン数>` で閾値を指定する。閾値の設定経路は複数あり、優先関係と書式の差（`500k` が使えるのはコマンド／フラグのみ）を把握しておく。
+
+**根拠**:
+- `/autocompact <value>` は現在のモデルのメイン会話の閾値をユーザー設定に保存する（`/autocompact auto` で既定に戻る）。`claude --autocompact <value>` は 1 回の起動限り
+- `settings.json` の `autoCompactWindow` は全モデル共通、`modelSettings` 内のモデル別値が優先される。サブエージェントの frontmatter でも `autoCompactWindow` を指定できるが、継承した閾値より**早める方向にのみ**効く（v2.1.296+）
+- 環境変数 `CLAUDE_CODE_AUTO_COMPACT_WINDOW` はメイン会話とサブエージェントの両方に効き、他のトークン系設定より優先される。`CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`（割合指定）は閾値を下げる方向にのみ効く
+- `idleCompaction` は既定で有効で、1 時間のプロンプトキャッシュが切れる直前に会話を要約する。最小コンテキストサイズは `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS`（既定 200K）
+- statusLine の使用率は全コンテキストウィンドウ基準のため、表示が半分でもコンパクトされうる。使用率だけでタイミングを予測しない
+
+**コード例**:
+```jsonc
+// Good: モデル別に閾値を指定する（settings.json）
+{
+  "modelSettings": {
+    "claude-opus-5-5": { "autoCompactWindow": 200000 }
+  }
+}
+
+// アイドル時の自動要約を止める場合
+{ "idleCompaction": false }
+
+// アイドル要約の最小サイズを引き上げる場合
+{ "env": { "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS": "300000" } }
+```
+
+```bash
+# コマンド／フラグでは 500k 表記が使える
+/autocompact 500k
+# 環境変数・frontmatter では整数で書く（500k は正しく解釈されない）
+CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000 claude
+```
+
+**アンチパターン**:
+- statusLine の使用率を見て「まだ半分だからコンパクトされない」と判断する
+- 環境変数や subagent frontmatter に `500k` 表記を書く
+
+**出典引用**:
+> "自動コンパクトのタイミングを早めたい場合は、まず`/autocompact`でトークン数を指定するのがおすすめです。"
+> ([Claude Codeの自動コンパクト、何で・どこで・いつ効かせるか](https://zenn.dev/zozotech/articles/1a26d1775c06f7), セクション "先に結論") ※2026-10-15に実際にfetch成功
+
+> "表示がまだ半分でもコンパクトされるので、使用率だけを見てコンパクトのタイミングを判断しないようにしてください。"
+> ([同上](https://zenn.dev/zozotech/articles/1a26d1775c06f7), セクション "注意点：statusLineの使用率とコンパクトのタイミングはずれる") ※2026-10-15に実際にfetch成功
+
+**出典**:
+- [Claude Codeの自動コンパクト、何で・どこで・いつ効かせるか（/autocompact・autoCompactWindow・idle…）](https://zenn.dev/zozotech/articles/1a26d1775c06f7) (Zenn ZOZO Tech、2026-10-15) ※2026-10-15 fetch
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の settings.json キー・環境変数・CLI フラグを直接示している）。Rule #14（コンテキスト消費の閾値管理）の設定面を扱う別角度のルール
+
+**バージョン**: Claude Code（subagent frontmatter の `autoCompactWindow` は v2.1.296+）
+**確信度**: 中（単独ソースのパターン1c採用）
+**最終更新**: 2026-10-15
+
+---

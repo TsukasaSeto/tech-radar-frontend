@@ -1126,11 +1126,13 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- 月次枠の外でも臨時（out-of-band）パッチは出る。2026-10-14 には、9月の定例リリースから上流依存の遅延で延期されていた 2 件を含む臨時更新（v16.4.1 / v15.5.28）が公開され、`use cache` 関数が typed array を複数返す場合の認証不要 RCE（Critical、**回避策なし**）、Image Optimization の SVG 処理経由の RCE（Critical、`sharp` 0.35.5 以上が回避策）、Server Actions を 1 つでも持つ App Router での DoS（High）が修正された。「次の月次枠まで待つ」ではなく、Critical かつ回避策なしの告知は即日アップグレード対象として扱う
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
 - 月次告知で「high 深刻度を含む」と分かった時点で、次回リリース日までにアップグレード検証環境を用意しておく
 - ad-hoc（緊急）パッチの告知は深刻度に関わらず最優先でトリアージする
+- 告知の「回避策なし」「Cache Components / Server Actions を使うアプリのみ影響」といった適用条件を確認し、自アプリが該当しなくても（告知が "upgrade immediately even if ..." と明記する場合）アップグレードを優先する
 
 **出典引用**:
 > "Today we are moving to a formal security release program, with updates that teams can plan around."
@@ -1138,10 +1140,13 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 
 **出典**:
 - [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/nextjs-security-update-october-14-2026) (Next.js 公式ブログ、月次枠外の臨時パッチと「回避策なし RCE は即時アップグレード」の根拠) ※2026-10-15 fetch
+  > "There is no known workaround for affected applications. You should upgrade immediately even if your application does not have similar functions."
+  > (セクション "Impact" — Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays)
 
-**バージョン**: Next.js 16.2+ / 15.5+
+**バージョン**: Next.js 16.4.1+ / 15.5.28+（2026-10-14 臨時パッチ以降）
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-10-15
 
 ---
 
