@@ -77,9 +77,11 @@ const nextConfig = {
 
 `next/image` の `sizes` 属性はブラウザが適切な解像度の画像を選択するために使う。
 不正確な `sizes` は必要以上に大きな画像をダウンロードさせる。
+`display:none` で隠す重複画像（PC 用 / モバイル用の二重配置）は、非表示側に最小の派生を選ばせる `sizes` を渡し、LCP 画像から `loading="lazy"` を外す前に非表示コピーの有無を確認する。
 
 **根拠**:
 - `sizes` を省略すると常に `100vw` として扱われ、不必要に大きな画像が配信される
+- `loading="lazy"` は `display:none` の画像の読み込みも抑止していた。LCP 画像を eager にすると非表示側の複製も（大きなサイズで）読み込まれるため、非表示側には最小の派生を選ばせる `sizes` を渡す
 - 正確な `sizes` によって、モバイルでは小さな画像が配信されデータ転送量が削減される
 - レスポンシブレイアウトに合わせた `sizes` の記述が LCP 改善に直結する
 
@@ -119,10 +121,12 @@ const nextConfig = {
 
 **出典**:
 - [web.dev: Responsive images](https://web.dev/responsive-images/) (web.dev)
+- [LCP の画像を eager にしたら、隠れている側の画像も読み込まれた](https://zenn.dev/kodomo_news/articles/243-eager-lcp-image-loads-hidden-twin) (Zenn、非表示複製と lazy の関係) ※2026-10-16 fetch
+  > "これは `loading="lazy"` が付いていたから成り立っていたことで、eager にすると `display:none` の側の画像も読み込まれます。" (セクション "外れた前提")
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-16
 
 ---
 
