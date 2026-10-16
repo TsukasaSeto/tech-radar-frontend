@@ -539,3 +539,61 @@ html {
 **最終更新**: 2026-08-28
 
 ---
+
+### 12. 大きなリスト・グリッドは「ユーザー意図（hover / focus / touch）」で `prefetch={true}` に昇格させ、後回しにしてよい部分は `navigation()` で遷移後に回す
+
+Partial Prefetching 環境では `prefetch={true}` が動的ルート（`/products/[id]` 等）の「キャッシュ済みコンテンツ」までプリフェッチ対象に含める。
+ビューポートに入ったカード全件に `prefetch={true}` を付けると、開かれないページまで取得してリクエスト数が跳ね上がるため、大きなグリッドでは hover / focus / touch を検知してから昇格させる（デフォルトは `'auto'`）。
+また、ルート内で「クリック時に不要だが戻り時には再利用したい」低優先度コンテンツは、`await navigation()` をその手前に置いて遷移後まで待たせつつキャッシュだけ維持する。
+
+**根拠**:
+- v0 では全カードに richer prefetch を入れた結果、`/templates/[id]` へのプリフェッチリクエストが **2.9 倍** に増えた。意図ベースに切り替えて抑制した
+- 件数が少なく固定のリンク群は、ビューポート進入時プリフェッチのままで問題ない（グリッド・長いリストだけが対象）
+- 共有可能な公開データは `'use cache: remote'` + `cacheTag` + `cacheLife`、ユーザー固有データは `'use cache: private'`（ブラウザ内保持）と分け、更新系 Server Action では `updateTag()` で即時失効させる
+- 効果は Runtime Cache 費用・リクエスト数・Active CPU・プリフェッチのデータ転送量の 4 指標で PR ごとに検証する。全体の日次コストは 2.9% 減、Runtime Cache 費用は 4.3 倍（約 $3.44/日増）で、リクエスト処理コストは 14.4% 減
+
+**コード例**:
+```tsx
+// Good: 意図を検知してから richer prefetch に昇格（大きなグリッド向け）
+'use client';
+const [intent, setIntent] = useState(false);
+
+<Link
+  href={href}
+  prefetch={intent ? true : 'auto'}
+  onMouseEnter={() => setIntent(true)}
+  onFocus={() => setIntent(true)}
+  onTouchStart={() => setIntent(true)}
+/>;
+
+// Bad: 全カードを一律 prefetch={true}（開かれないページまで取得）
+<Link href={`/templates/${t.id}`} prefetch={true} />
+```
+
+```tsx
+// Good: Recent Chats はプリフェッチせず、遷移後に取得してキャッシュのみ維持
+import { navigation } from 'next/cache';
+
+async function RecentChats({ projectId }: { projectId: string }) {
+  await navigation();
+  const chats = await loadProjectChats(projectId);
+  return <ChatList chats={chats} />;
+}
+```
+
+**アンチパターン**:
+- 大きなグリッドの全リンクに `prefetch={true}` を付け、プリフェッチ量とキャッシュ費用の増加を計測しない
+- ユーザー固有コンテンツを共有キャッシュ（`'use cache: remote'`）に載せる（`scope` 等をキャッシュキーに含めた `'use cache: private'` を使う）
+
+**出典引用**:
+> "The agent changed the richer prefetch to wait for user intent, starting on hover, focus, or touch rather than when the card entered the viewport."
+> ([Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4), セクション "Avoiding unnecessary prefetches in large grids") ※2026-10-16に実際にfetch成功
+
+> "Cached work after `navigation()` waits until the page opens, then stays available when users return."
+> ([Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4), セクション "Balancing prefetching and cost") ※2026-10-16に実際にfetch成功
+
+**バージョン**: Next.js 16.4+（`cacheComponents: true` + `partialPrefetching: true`、`navigation()` は 16.4 の新 API）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-10-16
+
+---
