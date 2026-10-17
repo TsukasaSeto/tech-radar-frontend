@@ -416,12 +416,17 @@ export async function middleware(request: NextRequest) {
 Next.js 16.3 Preview で導入された「Instant Navigations」を使うと、サーバー駆動モデルを維持しながら SPA と同等のクリック即応性を得られる。
 ルートが `<Suspense>` でストリームするか `"use cache"` でキャッシュしていれば、クリック後にサーバーレスポンスを待たずにシェルが即座に表示される。
 `partialPrefetching: true` を有効化すると、ビューポート内の全リンクに対して個別プリフェッチする代わりに、**ルートごとに再利用可能なシェルを 1 回だけプリフェッチ**するため、プリフェッチリクエスト数が大幅に削減される。
+Next.js 16.4 以降は `create-next-app` が両フラグを既定で有効化する。大きなリスト/グリッドでは `prefetch={true}` を hover / focus / touch 後にだけ昇格させ、優先度の低いキャッシュ済みコンテンツは `await navigation()` でプリフェッチ対象から外す。
 
 **根拠**:
 - サーバー駆動アプリのナビゲーションが「遅く感じる」根本原因は、クリック後のネットワーク往復とサーバー処理の 2 つ。`<Suspense>`（ストリーム）か `"use cache"`（キャッシュ）でサーバー処理ブロックを排除し、シェルプリフェッチでネットワーク往復を隠蔽することで両方を解消する
 - 旧来の per-link プリフェッチは同一ルートに 20 個のリンクがあれば 20 リクエストを発行していた。`partialPrefetching` は同じルートを 1 リクエスト（シェル）で済ませ、キャッシュされたシェルをすべてのリンクで再利用する
 - `export const instant = false` を page.tsx / layout.tsx に書くことで、特定ルートをサーバーバウンド（クリック後にサーバー完了を待つ従来動作）に戻せる。ブログ記事など「ローディング UI を見せたくない」ルートに用いる
 - `instant()` Playwright テストヘルパーでナビゲーション後に「何が即座に表示されるか」を Assertion できる。CI でインスタントナビゲーションのリグレッションを防止できる
+- v0 の実測では、グリッドの全カードに `prefetch={true}` を付けると `/templates/[id]` へのプリフェッチリクエストが **2.9 倍**に増えた。ユーザー意図（hover / focus / touch）を検知してからリッチなプリフェッチに切り替えると、選択中カードの内容は即時に出しつつ無駄なプリフェッチを避けられる。固定の小グループは可視時プリフェッチのままでよい
+- Next.js 16.4 の `navigation()` は `await` 以降のキャッシュ済み処理を「ページを開くまで待つ（プリフェッチしない）が、戻ったときには再利用できる」扱いにする。Recent Chats のような低優先度コンテンツに使い、タイトル等の主要 UI だけをクリック前に準備する
+- プリフェッチ可能にするデータは「全ユーザー共有の公開データ（`'use cache: remote'` + `cacheTag` / `cacheLife`）」と「ブラウザ内に留めるパーソナライズ済みデータ（`'use cache: private'`、スコープを引数に渡してキー分離）」に分ける。ユーザーが変更できるデータは Server Action で `updateTag()` を呼び、同一ラウンドトリップで反映する（関連: `caching.md` Rule #8）
+- リファクタ全体の効果は本番メトリクス（Runtime Cache 費用・リクエスト数・Active CPU・データ転送）で確認する。v0 では Runtime Cache 費用が 4.3 倍になっても総コストは 2.9% 低下した（ただし同期間のトラフィック変動があるため「悪化しなかった確認」として扱う）
 
 **コード例**:
 ```ts
@@ -447,6 +452,24 @@ export default async function ProductPage({ params }) {
 // Good: 特定ルートをブロック（ローディング UI なしでサーバー完了を待つ）
 // app/blog/[slug]/page.tsx
 export const instant = false; // このルートはサーバーバウンドで動作
+
+// Good: 大きなグリッドは hover / focus / touch で意図を検知してからリッチにプリフェッチ
+const [intent, setIntent] = useState(false);
+<Link
+  href={href}
+  prefetch={intent ? true : 'auto'}
+  onMouseEnter={() => setIntent(true)}
+  onFocus={() => setIntent(true)}
+  onTouchStart={() => setIntent(true)}
+/>;
+
+// Good: 低優先度のキャッシュ済みコンテンツはプリフェッチから外す（戻る時は再利用される）
+import { navigation } from 'next/cache';
+async function RecentChats({ projectId }: { projectId: string }) {
+  await navigation();
+  const chats = await loadProjectChats(projectId);
+  return <ChatList chats={chats} />;
+}
 ```
 
 ```ts
@@ -469,6 +492,8 @@ test('product title is immediately visible', async ({ page }) => {
 - `cacheComponents: true` だけ有効化して `partialPrefetching` を忘れる（プリフェッチの最適化が効かない）
 - ローディング UI を絶対に見せたくないルートで `export const instant = false` を書き忘れ、スケルトンが意図せず表示される
 - `instant()` テストを書かずにインスタント性をリリース後に壊す
+- 数十件のカードが並ぶ一覧の全リンクに `prefetch={true}` を付け、見られないページのプリフェッチを大量に発行する
+- パーソナライズ済みデータを `'use cache: remote'` に入れてユーザー間で共有してしまう
 
 **出典引用**:
 > "You get the full benefits of a server, but navigations are instant like in a single-page app."
@@ -477,9 +502,15 @@ test('product title is immediately visible', async ({ page }) => {
 > "Instead of prefetching a page *per link*, Next.js will now prefetch a reusable shell *per route*."
 > ([Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations), セクション "Rethinking prefetching") ※2026-06-25に実際にfetch成功
 
-**バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須）
+> "Cached work after `navigation()` waits until the page opens, then stays available when users return."
+> ([Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4), セクション "Balancing prefetching and cost") ※2026-10-17に実際にfetch成功
+
+**出典**:
+- [Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4) (Next.js 公式ブログ、intent プリフェッチ・`navigation()`・公開/個人データのキャッシュ分離・コスト計測) ※2026-10-17 fetch
+
+**バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須。16.4+ は `create-next-app` の既定、`navigation()` は 16.4+）
 **確信度**: 高（Next.js 公式ブログ）
-**最終更新**: 2026-06-25
+**最終更新**: 2026-10-17
 
 ---
 
