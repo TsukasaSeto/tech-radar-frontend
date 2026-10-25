@@ -449,6 +449,7 @@ async function MyDashboard() {
 - 並列化はボトルネックが計算（CPU）のときにのみ有効。メモリ帯域・データロードがボトルネックの構成では並列度を上げるほどメモリ使用量が増え、OOM やビルド遅延を招く
 - Full Route Cache のオンメモリ上限は `cacheMaxMemorySize` で調整でき、ISR 方式でもキャッシュヒット率を制御できる
 - 全件を一度に読み込むデータ取得は、集計クエリ1本に置き換えることでメモリ使用量を抑えられる
+- **例外**: `output: "export"`（静的エクスポート）ではサーバーがないため、空配列を返すと `Page "/x/[id]" is missing "generateStaticParams()"` でビルドが失敗する（関数は存在するのに「無い」と報告される誤解を招くメッセージ。Next.js 16.2.6 で確認）。ISR + 空配列は静的エクスポートでは使えず、データが0件になり得る場合はプレースホルダーのパスを1件返して `notFound()` に倒し、0件データでのビルドを一度は通しておく
 - `generateStaticParams` を**定義しないまま省略する**のは、空配列を明示的に返すのとは異なる挙動になりうる。ビルド時エラーも警告も出ないまま ISR が効かず全体が動的レンダリングにフォールバックすることがあり、`searchParams` を読むコンポーネントを含む場合は特に気づきにくい。`curl -sI <url> | grep -i cache-control` でレスポンスヘッダを見て ISR が実際に効いているか確認する
 
 **コード例**:
@@ -490,10 +491,12 @@ export async function generateStaticParams() {
 **出典**:
 - [24万ページのNext.jsを、RAM 4GBのVPS 1台で動かす](https://zenn.dev/shiorisuimoku/articles/nextjs-240k-pages-on-4gb-vps) (Zenn、`generateStaticParams`/`experimental.cpus`/`cacheMaxMemorySize` の実測検証) ※2026-08-02に実際にfetch成功
 - [revalidate を書いてもISRされていなかった](https://zenn.dev/figurehub/articles/nextjs-isr-never-worked) (Zenn figurehub、`generateStaticParams` 省略時の黙った動的化フォールバックと `curl` でのキャッシュ検証手順) ※2026-08-23 fetch
+- [Next.jsのoutput: exportは、generateStaticParamsが空配列だとビルドを落とす](https://zenn.dev/gzer0/articles/nextjs-export-empty-generatestaticparams) (Zenn gzer0、静的エクスポートでは空配列がビルドエラーになる例外とプレースホルダー回避策) ※2026-10-13 fetch
+  > "空配列を返したときのエラーは「missing」、つまり関数が無いという言い方です。" (セクション "空配列でも「関数が無い」と言われる")
 
 **バージョン**: Next.js 15+ App Router
 **確信度**: 中（公式APIの検証記事、パターン1c：単独ソース）
-**最終更新**: 2026-08-23
+**最終更新**: 2026-10-13
 
 ---
 

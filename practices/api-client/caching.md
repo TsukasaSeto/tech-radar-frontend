@@ -280,6 +280,8 @@ Server Component でデータをプリフェッチし、`HydrationBoundary` と 
 - Server Component でプリフェッチすることで、クライアントに届いた段階でデータがキャッシュ済みになり初期ローディングを排除できる
 - `React.cache()` で `QueryClient` の再生成を防ぎ、同一リクエスト内で1インスタンスを保証する
 - `useSuspenseQuery` と組み合わせるとローディング/エラー管理を `<Suspense>` / `<ErrorBoundary>` に委譲できる（v5 では `useQuery` の `suspense: true` は廃止済み）
+- `QueryClient` はリクエストごとに生成し、ユーザー・リクエスト間で共有しない。共有すると個人情報が別ユーザーへ漏れうる。サーバー側で API 待ちを減らしたい場合は `QueryClient` を共有せず、リクエスト関数側に SWR 方式のキャッシュを足す（LINEスキマニの事例では SSR 導入後に TTFB の大半が API 待ちとなり、キャッシュヒット時の待ちは約403ms→約1ms。開発環境・単一リクエストの計測）
+- 検索条件が URL に載る一覧では、プリフェッチ側とクライアント側で `queryKey` が一致しないとキャッシュが効かない。表示に影響しないパラメータの除外・重複除去・整列・既定値の省略で正規化してから `queryKey` に使う
 
 **コード例**:
 ```tsx
@@ -328,10 +330,11 @@ function PostList() {
 
 **出典**:
 - [TanStack Query実践パターン ： キャッシュ・楽観的更新・無限スクロール](https://zenn.dev/correlate_dev/articles/react-query-patterns) (Zenn correlate_dev / 2026) ※2026-05-06に実際にfetch成功
+- [LINEスキマニのトップページにおけるパフォーマンス改善（インターンレポート）](https://techblog.lycorp.co.jp/ja/20261013a) (LINEヤフー Tech Blog、SSR プリフェッチ時の `QueryClient` リクエスト単位生成・`queryKey` 用パラメータ正規化・サーバー側 SWR キャッシュ) ※2026-10-13 fetch
 
 **バージョン**: TanStack Query 5+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-13
 
 ---
 
