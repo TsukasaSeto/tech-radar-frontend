@@ -501,7 +501,7 @@ CSS の `@media (prefers-reduced-motion: reduce)` または JS の `matchMedia` 
 - macOS / iOS / Windows / Android すべてに OS レベルの reduce motion 設定が存在し、ブラウザに伝播する
 - ホバーフィードバック等の小さなアニメーションは保持してよい。「動きの大きさ」と「持続時間」を抑える
 - 共有デバイスでは OS 設定を変更できないケースがある。「OS は全体オフ、このアプリだけオン」または「OS は通常だがこのアプリだけオフ」という個別制御のニーズも存在する
-- **複数ステップのタイムラインアニメーション（GSAP 等）では、全トゥイーンの `duration` を単純に `0` にすると中間状態が1フレームに重なって表示される不具合が起きる**。個々の tween を止めるのではなく、`gsap.set()` 等で最終状態を直接書き込みトゥイーン自体をスキップする方が安全
+- GSAP では、reduced motion 時に `duration` を `0` にして最後まで飛ばす書き方が公式の `gsap.matchMedia()` の例にもある。複数ステップのタイムラインで全トゥイーンを `0` にしても、中間の値は同じ tick 内で上書きされ、描画されるのは最終状態だけになる（GSAP 3.15.0 で、DOM を使わないオブジェクトの tween で確認）。ただし各トゥイーンの `onUpdate` / `onComplete` などのコールバックは同じ tick 内でまとめて走る。コールバックに副作用がある場合や最終状態だけが要る場合は、タイムラインを作らず `gsap.set()` で最終状態を書き込む方が意図が明確
 - reduced motion は「動きの時間」だけでなく「描画の複雑さ」も削減対象に含めて検討する（例: 多層 `backdrop-filter` を1層に減らす等）。動きを止めても計算・描画コストの重い演出が残ると体感の改善が薄い
 - reduced-motion 分岐の実装漏れ（早期 return によるデッドコード化等）は grep での「hook を呼んでいるか」チェックだけでは検出できない。`no-preference` / `reduce` 両方の状態をレンダリングするスナップショットテストでカバレッジを検証する
 
@@ -604,16 +604,22 @@ const useSystemReducedMotion = () => {
 ```
 
 ```ts
-// Bad: 複数ステップの GSAP タイムラインで duration を単純に 0 にする
-// → 中間状態が1フレームに重なって表示される
+import { gsap } from 'gsap';
+
+// Good: 単純な演出なら、公式の gsap.matchMedia() の例と同じく duration を 0 にして最後まで飛ばしてよい
+// （描画されるのは最終状態だけ。各トゥイーンのコールバックは同じ tick 内でまとめて走る）
 function playCardFlip(el: HTMLElement, reduce: boolean) {
   gsap.timeline()
     .to(el, { rotateY: 90, duration: reduce ? 0 : 0.3 })
     .to(el, { rotateY: 180, duration: reduce ? 0 : 0.3 })
     .to(el, { scale: 1, opacity: 1, duration: reduce ? 0 : 0.3 });
 }
+```
 
-// Good: reduced motion 時はトゥイーンをスキップし、最終状態を直接書き込む
+```ts
+import { gsap } from 'gsap';
+
+// Good: コールバックに副作用がある場合や最終状態だけが要る場合は、タイムラインを作らず最終状態を直接書き込む
 function playCardFlip(el: HTMLElement, reduce: boolean) {
   if (reduce) {
     gsap.set(el, { rotateY: 180, scale: 1, opacity: 1 }); // 最終状態のみ反映
@@ -637,7 +643,8 @@ function playCardFlip(el: HTMLElement, reduce: boolean) {
 - [WebAIM: Designing for Accessibility - Animations](https://webaim.org/articles/seizure/) (WebAIM)
 - [web.dev: prefers-reduced-motion](https://web.dev/articles/prefers-reduced-motion) (web.dev)
 - [OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b) (Zenn、共有デバイス対応・アプリ内設定 UI・useSyncExternalStore + atomWithStorage 実装) ※2026-06-06 fetch
-- [prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m) (dev.to、Medium に同著者が同一内容をクロスポスト、単一ソース扱い。GSAP タイムラインの `gsap.set()` 最終状態パターン・描画複雑さの削減・両 preference 状態のスナップショットテスト) ※2026-07-11 fetch
+- [prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m) (dev.to、Medium に同著者が同一内容をクロスポスト、単一ソース扱い。GSAP タイムラインの `gsap.set()` 最終状態パターン・描画複雑さの削減・両 preference 状態のスナップショットテスト。「duration 0 で中間状態が 1 フレームに重なる」はスクロール連動のカードスタックについての著者の推測で、再現は示されていない) ※2026-07-11 fetch
+- [GSAP Docs: gsap.matchMedia()](https://gsap.com/docs/v3/GSAP/gsap.matchMedia()/) (GSAP 公式、`prefers-reduced-motion` で分岐する例と `duration: reduceMotion ? 0 : 2, // skip to the end if prefers-reduced-motion`) ※2026-10-25 確認
 - [Your AI-generated UI probably breaks prefers-reduced-motion](https://dev.to/kevinfroeba/your-ai-generated-ui-probably-breaks-prefers-reduced-motion-1akh) (dev.to、WCAG 2.2.2 の追加言及。本文の技術的主張は既存出典と重複するため引用は WCAG 条項の追加に留める) ※2026-07-14に実際にfetch成功
 - [React: useSyncExternalStore](https://react.dev/reference/react/useSyncExternalStore) (React 公式、`getServerSnapshot` を省くとサーバーでのレンダリングが例外になり、サーバーと hydration で同じ値を返す必要があること) ※2026-10-25 確認
 

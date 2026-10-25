@@ -363,7 +363,7 @@ layout はクライアント遷移のたびに再レンダリングされない�
 - layout が子を隠したり差し替えたりしても、子のルートセグメントと parallel route のスロットはルーターが描画するので、実行も RSC Payload への出力も止まらない
 - Server Action は layout とは別の POST エンドポイントとして呼ばれるので、layout のガードを通らない。Action 内でも認証・認可が必要（`server-actions.md` #5）
 - `layout.tsx` はファイル数を増やすためではなく、「共有 UI が変わる」または「Provider のスコープを分けたい」場合にだけ追加する
-- 既存コードで layout に `redirect()` のゲートを置いている場合、redirect 先を同じ layout の配下に置くと、遷移先でも layout が再評価されず、リダイレクトが繰り返されて `_rsc` リクエストが連続発行される無限ループになる（ページ単体のテストでは検出しづらい）。ゲートは page と DAL に移す
+- 既存コードで layout に `redirect()` のゲートを置いている場合、redirect 先を同じ layout の配下に置くと、クライアント遷移で遷移先の `?_rsc=` リクエストが繰り返し発行され、画面が使えなくなる無限ループになったという報告がある（Qiita の記事と、Next.js 15.1.7・16.3.8・16.4.0-canary.57 で再現したとする GitHub issue #99568。遷移先の URL を直接開くと起きない。2026-10-25 時点で issue は open で、原因は Next.js チームによる確認前）。ページ単体のテストでは検出しづらい。ゲートは page と DAL に移す
 - 優先順位 A（`README.md`）と `practices/architecture/data-access-layer.md` #4 の「layout では認可しない」に合わせる
 
 **コード例**:
@@ -435,9 +435,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 - [Next.js App Router：layout で redirect する先をその layout の配下に置くと、クライアント遷移で無限ループする](https://qiita.com/20051215kaito/items/3ea9e7765fe60d98f244) (Qiita 20051215kaito、layout ゲートの redirect 先を route group で layout 外へ出す。単一記事) ※2026-10-15 fetch
   > "App Router は、共通の layout をクライアント遷移のたびに作り直しません。"
   > (セクション "原因")
+- [vercel/next.js#99568: Layout redirect loops on Link navigation despite returned middleware response](https://github.com/vercel/next.js/issues/99568) (GitHub issue、open。layout の redirect 先が同じ layout の配下にあるとき、Link での遷移で `?_rsc=` リクエストが繰り返される。前身の #76308 はアプリ側の不備として close されたが、その修正後も再現するという報告) ※2026-10-25 確認
+  > "Link navigation changes the URL to `/test/1/1`, but the page remains blank and repeatedly requests its RSC payload. Direct destination navigation succeeds."
 
 **バージョン**: Next.js 14+, App Router
-**確信度**: 高（layout でガードしない理由は公式ドキュメントで確認。`_rsc` の無限ループは単一記事の報告）
+**確信度**: 高（layout でガードしない理由は公式ドキュメントで確認。`_rsc` の無限ループは記事 1 本と未解決の GitHub issue の報告で、Next.js 側の原因は未確認）
 **最終更新**: 2026-10-25
 
 ---
@@ -595,6 +597,10 @@ test('product title is immediately visible', async ({ page }) => {
 **出典**:
 - [Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations) (Next.js 公式ブログ)
 - [Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4) (Next.js 公式ブログ、16.4 で両フラグが `create-next-app` の既定になった点) ※2026-10-17 fetch
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、新規アプリは Cache Components が既定で有効。Cache Components を使うときは `partialPrefetching` も併せて有効にする) ※2026-10-25 確認
+  > "As of today, all new apps created with `create-next-app` will have Cache Components enabled by default."
+- [vercel/next.js `packages/create-next-app/templates/index.ts`（v16.4.0）](https://github.com/vercel/next.js/blob/v16.4.0/packages/create-next-app/templates/index.ts) (Next.js 公式リポジトリ、Cache Components の質問の既定値は Yes で、有効時に `cacheComponents: true` と `partialPrefetching: true` の両方を next.config に書き込む。`--no-cache-components` で無効にできる) ※2026-10-25 確認
+- [Next.js Docs: instant](https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config/instant) (Next.js 公式、`instant` は v16.3.0 で安定化した route segment config で、`true` / `false` / `{ level }` を受け付ける。Cache Components 有効時のみ) ※2026-10-25 確認
 - [Next.js Docs: Migrating to Cache Components — Opting out of validation](https://nextjs.org/docs/app/guides/migrating-to-cache-components#opting-out-of-validation) (Next.js 公式、`instant = false` の意味と段階移行の手順) ※2026-10-25 確認
   > "`instant = false` marks a segment as *allowed to block*. It does not force the route to be dynamic, so a genuinely prerenderable route still ships a static shell."
 

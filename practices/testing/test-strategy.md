@@ -168,8 +168,10 @@ import '@testing-library/jest-dom';
 - [Vitest Docs](https://vitest.dev/guide/) (Vitest公式)
 - [Next.js Docs: Setting up Vitest](https://nextjs.org/docs/app/building-your-application/testing/vitest) (Next.js公式)
 - [Vitestの「vite-tsconfig-pathsは不要」警告に従う前に、プラグインを外して落としてみた](https://zenn.dev/matsutake_prgrm/articles/remove-it-first-before-migrating) (Zenn matsutake_prgrm、警告に従う前にプラグインを外して壊れることを確認する移行手順) ※2026-09-24 fetch
+- [Vite Docs: resolve.tsconfigPaths](https://vite.dev/config/shared-options#resolve-tsconfigpaths) / [Announcing Vite 8](https://vite.dev/blog/announcing-vite8) (Vite 公式、既定は `false`・小さな性能コストがある・tsconfig の `include` / `files` に含まれるファイルにだけ効く) ※2026-10-25 確認
+- [vitejs/vite: packages/vite/src/node/config.ts](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/config.ts) (Vite 公式リポジトリ、`vite-tsconfig-paths` / `vite-plugin-tsconfig-paths` を検出すると `resolve.tsconfigPaths: true` への置き換えを勧める警告を出す。8.0.0 の CHANGELOG で追加) ※2026-10-25 確認
 
-**バージョン**: Vitest 1+, Next.js 13+（`resolve.tsconfigPaths` は Vite 8+）
+**バージョン**: Vitest 1+, Next.js 13+（`resolve.tsconfigPaths` は Vite 8+。Vite 8 に対応するのは Vitest 4.1+）
 **確信度**: 高
 **最終更新**: 2026-10-25
 
@@ -384,6 +386,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { loadProductionSamples } from './data/production-samples';
 
 const client = new Anthropic();
+// モデル ID は世代交代で古くなるので、コードを変えずに環境変数で差し替えられるようにする
+const JUDGE_MODEL = process.env.EVAL_JUDGE_MODEL ?? 'claude-opus-5-5';
 
 interface EvalResult {
   sampleId: string;
@@ -394,8 +398,9 @@ interface EvalResult {
 async function evaluateSample(input: string, expected: string): Promise<EvalResult> {
   // LLM-as-a-judge: 評価用プロンプトで採点
   const response = await client.messages.create({
-    model: 'claude-opus-4-7',
-    max_tokens: 100,
+    model: JUDGE_MODEL,
+    // Claude Opus 5.5 は thinking が常に有効で、max_tokens は thinking と回答の合計の上限になる
+    max_tokens: 16000,
     messages: [{
       role: 'user',
       content: `以下の回答を 0〜1 のスコアで評価してください（1が最高）。
@@ -405,7 +410,10 @@ async function evaluateSample(input: string, expected: string): Promise<EvalResu
     }],
   });
 
-  const score = parseFloat((response.content[0] as { text: string }).text.trim());
+  // content の先頭は thinking ブロックのことがあるので、text ブロックを探す
+  const text = response.content.find((b): b is Anthropic.TextBlock => b.type === 'text')?.text;
+  if (!text) throw new Error(`採点結果を取得できませんでした（stop_reason: ${response.stop_reason}）`);
+  const score = parseFloat(text.trim());
   return { sampleId: input.slice(0, 20), score, passed: score >= 0.7 };
 }
 
@@ -456,6 +464,7 @@ jobs:
 
 **出典**:
 - [Why Unit Tests Aren't Enough for LLM Features](https://dev.to/benchwright/why-unit-tests-arent-enough-for-llm-features-18m6) (dev.to benchwright / 2026-05) ※2026-05-06に実際にfetch成功
+- [Claude Docs: Models overview](https://platform.claude.com/docs/en/about-claude/models/overview) (Anthropic 公式、現行の Claude API ID は `claude-fable-5-1` / `claude-opus-5-5` / `claude-sonnet-5-5` / `claude-haiku-5-5`。迷ったら Claude Opus 5.5 から始めるよう案内。`claude-opus-4-7` は利用可能なレガシー扱い。Claude Opus 5.5 の thinking は常に有効) ※2026-10-25 確認
 
 **バージョン**: Node.js 20+, @anthropic-ai/sdk 0.30+
 **確信度**: 中（ブログ記事 2 本。本ルールの dev.to と追加根拠の Zenn）

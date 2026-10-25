@@ -212,11 +212,12 @@ export async function getUserUnsafe(id: number) {
 
 ### 5. 接続断時は `useOffline` フックで自動リトライ中の UI を出す（実験的機能）
 
-Next.js 16.3 の実験的機能 `experimental.useOffline` を有効にすると、RSC フェッチ・prefetch・Server Actions がオフライン/接続断で失敗した際に自動的にリトライされる。アプリ側は `useOffline` フックの戻り値を見て「再接続中」等のフィードバック UI を出す責務だけを持てばよい。本番運用は非推奨の実験的機能である点に注意する。
+Next.js 16.3 の実験的機能 `experimental.useOffline` を有効にすると、RSC フェッチ・prefetch・Server Actions がオフライン/接続断で失敗した際に自動的にリトライされる。アプリ側は `next/offline` の `useOffline` フックの戻り値を見て「再接続中」等のフィードバック UI を出す責務だけを持てばよい。本番運用は非推奨の実験的機能である点に注意する。
 
 **根拠**:
 - 接続断のハンドリングを各 fetch 呼び出し側で個別に実装せず、フレームワーク側の自動リトライに委譲できる
 - `useOffline` はリトライの実施有無ではなく「現在オフライン状態かどうか」の可視化に専念させる設計になっている。UI 側の責務を再接続中インジケータの表示だけに絞れる
+- `useOffline()` は引数を取らず `boolean` を返す。`true` はリクエストの失敗かブラウザの `offline` イベントでオフラインと判定された状態。サーバーでのレンダリング中とハイドレーション前は `false`。`experimental.useOffline` を有効にしていないと常に `false` を返す
 
 **コード例**:
 ```ts
@@ -234,7 +235,7 @@ export default nextConfig;
 ```tsx
 // Good: useOffline で再接続中のフィードバックのみを担当する
 'use client';
-import { useOffline } from 'next/navigation';
+import { useOffline } from 'next/offline';
 
 export function ReconnectingBanner() {
   const isOffline = useOffline();
@@ -249,7 +250,11 @@ export function ReconnectingBanner() {
 
 **出典**:
 - [Building App-like Experiences with Next.js 16.3](https://nextjs.org/blog/building-app-like-experiences-with-nextjs-16-3) (Next.js 公式ブログ、`useOffline` フックと `experimental.useOffline` 設定の解説) ※2026-08-18 fetch
+- [Next.js Docs: useOffline](https://nextjs.org/docs/app/api-reference/functions/use-offline) (Next.js 公式、`import { useOffline } from 'next/offline'`、引数なしで `boolean` を返す、フラグなしでは常に `false`) ※2026-10-25 確認
+  > "Without the flag, this hook always returns `false`."
+- [Next.js Docs: experimental.useOffline](https://nextjs.org/docs/app/api-reference/config/next-config-js/useOffline) (Next.js 公式、接続断の検出とリトライの仕組み。フックは `next/offline` から使える) ※2026-10-25 確認
+  > "Make the `useOffline` hook available from `next/offline`."
 
 **バージョン**: Next.js 16.3+（`experimental.useOffline`、本番非推奨）
 **確信度**: 高
-**最終更新**: 2026-08-18
+**最終更新**: 2026-10-25

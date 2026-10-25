@@ -636,7 +636,7 @@ npm view @scope/package@1.2.4 version
 **根拠**:
 - 大規模な脆弱性（log4shell / xz-utils）発生時に「自分の組織のどのアプリが影響を受けるか」を 1 時間で答えられるかが BCP の差
 - SBOM は CycloneDX / SPDX 形式が標準。CISA や OpenSSF が推奨
-- `@cyclonedx/cyclonedx-npm` 等でビルドパイプラインに組み込める
+- ビルドパイプラインに組み込める。pnpm 11 以降は `pnpm sbom --sbom-format cyclonedx`（または `spdx`）で直接出力できる。`@cyclonedx/cyclonedx-npm` は `npm ls` で依存を集める npm プロジェクト向けのツールで、README に pnpm 対応の記述はない。CycloneDX の pnpm 版（cyclonedx-node-pnpm）は pnpm 本体が CycloneDX 出力に対応したためアーカイブされた
 - 米国大統領令 14028 で連邦政府ベンダーに SBOM 提出義務化、業界全体で普及中
 
 **SBOM 生成**:
@@ -662,9 +662,9 @@ jobs:
         with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次で明示する
       - run: pnpm install --frozen-lockfile
 
-      # CycloneDX 形式
+      # CycloneDX 形式（pnpm の組み込みコマンド。`--out` は v11.8.0 以降）
       - name: Generate CycloneDX SBOM
-        run: npx @cyclonedx/cyclonedx-npm --output-file sbom.cyclonedx.json
+        run: pnpm sbom --sbom-format cyclonedx --out sbom.cyclonedx.json
 
       # SPDX 形式（必要に応じて）
       - uses: anchore/sbom-action@v0
@@ -808,6 +808,8 @@ multipart/form-data で送るときは `POST`、`PUT` は Base64 にした BOM �
 
 **出典**:
 - [CycloneDX Specification](https://cyclonedx.org/specification/overview/) (OWASP)
+- [pnpm sbom](https://pnpm.io/cli/sbom) (pnpm 公式、v11.0.0 で追加。`--sbom-format cyclonedx|spdx`、`--out` は v11.8.0 で追加) ※2026-10-25 確認
+- [CycloneDX/cyclonedx-node-npm](https://github.com/CycloneDX/cyclonedx-node-npm) (CycloneDX 公式、npm プロジェクト向けで `npm ls` の出力から生成) / [CycloneDX/cyclonedx-node-pnpm](https://github.com/CycloneDX/cyclonedx-node-pnpm) (pnpm 本体の CycloneDX 対応を理由にアーカイブ) ※2026-10-25 確認
 - [SPDX Specification](https://spdx.dev/) (Linux Foundation)
 - [CISA: Software Bill of Materials](https://www.cisa.gov/sbom) (CISA)
 - [Anchore: SBOM Action](https://github.com/anchore/sbom-action) (Anchore 公式、リリース時は SBOM を release asset に添付し `contents: write` が必要) ※2026-10-25 確認
@@ -818,7 +820,7 @@ multipart/form-data で送るときは `POST`、`PUT` は Base64 にした BOM �
 - [GitHub EnterpriseでDependabotとSBOMを使ったサプライチェーンセキュリティ入門](https://zenn.dev/itsdaichi/articles/a11a58c15919da) (Zenn、GHE-native SBOM + CycloneDX/VEX フォーマット比較) ※2026-05-31 fetch
 - [SBOMで始めるサプライチェーンセキュリティ実践](https://zenn.dev/geniee/articles/751e4305d6b97a) (Zenn、OWASP Dependency-Track 集中管理・ソース/コンテナ二重スキャン) ※2026-06-04 fetch
 
-**バージョン**: CycloneDX 1.5+, SPDX 2.3+, OWASP Dependency-Track 4.x+, actions/attest v4
+**バージョン**: CycloneDX 1.5+, SPDX 2.3+, OWASP Dependency-Track 4.x+, actions/attest v4, pnpm 11.8+（`pnpm sbom --out`）
 **確信度**: 高
 **最終更新**: 2026-10-25
 
@@ -898,7 +900,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 - read-access（ファイル読み取り）と external-send（外部送信）MCP を同時に有効化すると間接プロンプトインジェクションで情報流出が起きる
 - 設定ファイルはパーミッションが評価される「前」に処理されるケースがある（TrustFall の仕組み）
 - 承認ダイアログは「approval fatigue」を意図した UI デザインが存在し、ユーザーが内容を確認せずに承認してしまう
-- postmark-mcp 経由の感染事例で約300組織が影響を受けた（2026年確認）
+- postmark-mcp（Postmark 公式の MCP サーバーのコードを複製し、同じ名前で npm に公開されたなりすましパッケージ）は 1.0.16 で送信メールを攻撃者のアドレスへ BCC するバックドアが入り、2025-09-25 に npm から削除された。Koi Security の報告（2025-09-25）は、週 1,500 ダウンロードのうち 20% が実際に使われていると仮定して約 300 組織と推計している（実測の被害件数ではない）
 - アジェンティック開発ではリスクがリポジトリ到達前に発生する——「コードは安全か？」から「コードを生成したシステムは信頼できるか？」へのパラダイムシフトが必要（エージェント入力の監視・アクションのガバナンス・生成コードの即時検査という3段階）
 - **Snyk の 10,000 開発環境調査（2026年）**: 43% の開発者が 2 つ以上の AI コーディング環境を同時運用、50.8% が MCP サーバーをインストール済み、そのうち 1 in 7 がセキュリティ所見を経験。公開 Agent Skill の 13.4% に critical な問題（資格情報窃取・バックドア等）、36.82% に 1 件以上の脆弱性。ツール定義の説明文から 392 件のプロンプトインジェクション脆弱性が確認された
 
@@ -1007,6 +1009,8 @@ class ToolPinStore:
 - [MCPのツールポイズニングを実演し、クライアント側で防ぐ](https://zenn.dev/libercraft/articles/20260630-mcp-security-tool-poisoning) (Zenn libercraft、ツール定義フィンガープリンティングによる rug-pull 検知の実装例) ※2026-06-30に実際にfetch成功
 - [AIモデルファイルは本当に「安全」か — スキャナを実機で回してわかった、防げる攻撃・防げない攻撃](https://zenn.dev/kta1kri/articles/mcp-supply-chain-model-scanners) (Zenn kta1kri、modelscan/picklescan の検知範囲比較・ブロックリスト方式の限界) ※2026-07-05に実際にfetch成功
 - [OWASP MCP Top 10 の「動く検知ルール集」をOSSで公開した（依存ゼロで検証できる）](https://zenn.dev/kta1kri/articles/mcp-detection-oss) (Zenn kta1kri、SOC向けランタイム検知の Sigma ルール・監査テレメトリ設計) ※2026-07-05に実際にfetch成功
+- [First Malicious MCP in the Wild: The Postmark Backdoor That's Stealing Your Emails](https://web.archive.org/web/20250929094654/https://www.koi.security/blog/postmark-mcp-npm-malicious-backdoor-email-theft) (Koi Security、2025-09-25。元 URL は現在 paloaltonetworks.com へリダイレクトするため Wayback Machine の 2025-09-29 版。1.0.16 で BCC 追加、「週 1,500 ダウンロード × 20% ≒ 300 組織」の推計) ※2026-10-25 確認
+- [OSV: MAL-2025-47604 Malicious code in postmark-mcp (npm)](https://osv.dev/vulnerability/MAL-2025-47604) (OpenSSF Malicious Packages、2025-09-26 公開。npm レジストリ上は 2025-09-25 に unpublish) ※2026-10-25 確認
 
 > "エージェントがオープンなWebをブラウズしつつ、特権を持つローカルサービスとも通信できるようになった時点で、localhostは信頼境界ではなくなる"
 > ([localhostを信頼するAIエージェントをWebページ1枚で乗っ取るAutoJack](https://zenn.dev/okssusucha/articles/20260620-autojack-autogen-studio-localhost-rce), セクション "なぜ「localhostは安全」が崩れるのか") ※2026-06-20に実際にfetch成功
@@ -1050,7 +1054,7 @@ class ToolPinStore:
 ```
 
 **OSS 構成（Trivy MCP + Claude Code hooks）**:
-Trivy MCP は Trivy 本体に組み込まれたコマンドではなくプラグインなので、先に `trivy plugin install mcp` で導入してから `trivy mcp` で起動する。
+Trivy MCP は Trivy 本体に組み込まれたコマンドではなくプラグインなので、先に `trivy plugin install mcp` で導入してから `trivy mcp` で起動する。プラグイン名での導入はプラグインインデックスに対応した Trivy v0.52.0 以降で使える（trivy-mcp の README は最小版を明記していない）。
 
 ```json
 // .mcp.json: Trivy MCP サーバー登録
@@ -1083,8 +1087,9 @@ trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --quiet .
 - [Claude Code × Trivy MCPで依存ライブラリの脆弱性を検出→修正→再スキャンする](https://zenn.dev/virtualcraft/articles/claude-code-trivy-mcp-security-check) (Zenn、Trivy MCP + Claude Code hooks によるOSSのみのSCA自動化構成) ※2026-06-12に実際にfetch成功
 - [OWASP Cheat Sheet Series: Vulnerable Dependency Management](https://github.com/OWASP/CheatSheetSeries/commit/b994fb6623eff9fac19e9d19697aedce77114074) (OWASP公式、修正版へアップグレードできない場合の「保守されたバックポート」評価基準4点) ※2026-08-31に実際にfetch成功
 - [aquasecurity/trivy-mcp](https://github.com/aquasecurity/trivy-mcp) (Aqua Security 公式、`trivy plugin install mcp` で導入するプラグイン、`trivy mcp` で起動) ※2026-10-25 確認
+- [Trivy CHANGELOG 0.52.0](https://github.com/aquasecurity/trivy/blob/main/CHANGELOG.md#0520-2024-06-03) (Aqua Security 公式、「add support for plugin index (#6674)」) ※2026-10-25 確認
 
-**バージョン**: Snyk CLI 1.0+, Trivy 0.50+
+**バージョン**: Snyk CLI 1.0+, Trivy 0.52+
 **確信度**: 中
 **最終更新**: 2026-10-25
 

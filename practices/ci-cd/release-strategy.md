@@ -15,7 +15,7 @@
 - Conventional Commits → 自動的に semver の判定が機械化できる（`fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` → major）
 - Changesets は「PR ごとに changeset ファイルを置く」ワークフローでモノレポに最適
 - リリースノートが自動で生成され、開発者が手動編集する必要がない
-- npm 公開は Trusted Publishing（OIDC）にすると `NPM_TOKEN` を保存せずに済む。publish ジョブに `permissions.id-token: write` を付けるだけで OIDC トークンを取得でき、`contents: write`（バージョン更新コミット・タグ・Release）と `pull-requests: write`（Version Packages PR）はジョブ単位で付与し、ワークフロー既定は `contents: read` にする。パッケージが未公開だと Trusted Publisher を設定できないため、初回バージョンだけは手動公開が必要
+- npm 公開は Trusted Publishing（OIDC）にすると `NPM_TOKEN` を保存せずに済む。publish ジョブに `permissions.id-token: write` を付けるだけで OIDC トークンを取得でき、`contents: write`（バージョン更新コミット・タグ・Release）と `pull-requests: write`（Version Packages PR）はジョブ単位で付与し、ワークフロー既定は `contents: read` にする。パッケージが未公開だと Trusted Publisher を設定できないため、初回バージョンだけは手動公開が必要。設定した Trusted Publisher は、作成から 2 日以内にその workflow からの公開を 1 回成功させないと失効する（最初の公開で設定が検証され、リポジトリの不変 ID に結び付く）ので、設定したらすぐに 1 回リリースを流す
 
 **選択肢**:
 
@@ -150,7 +150,8 @@ pnpm add -D semantic-release @semantic-release/git @semantic-release/changelog
 - [release-please](https://github.com/googleapis/release-please) (Google)
 - [Conventional Commits](https://www.conventionalcommits.org/) (Conventional Commits)
 - [Changesets と npm Trusted Publishing を利用して npm パッケージ公開フローを作った](https://zenn.dev/su3_hokkaido/articles/2026-10-24_publish_npm_package) (Zenn、Changesets + OIDC 公開の `permissions` 構成と初回手動公開の制約。Qiita に同一著者のクロスポストあり) ※2026-10-24 fetch
-- [npm Docs: Trusted publishing](https://docs.npmjs.com/trusted-publishers) (npm 公式、npm CLI 11.5.1+ / Node 22.14.0+、`id-token: write`、リリースビルドではキャッシュを使わない例) ※2026-10-25 確認
+- [npm Docs: Trusted publishing](https://docs.npmjs.com/trusted-publishers) (npm 公式、npm CLI 11.5.1+ / Node 22.14.0+、`id-token: write`、リリースビルドではキャッシュを使わない例。設定はパッケージの Settings から行い、新しい設定は 2 日以内に最初の公開が成功しないと失効する) ※2026-10-25 確認
+- [npm Docs: npm trust](https://docs.npmjs.com/cli/v11/commands/npm-trust) (npm 公式、設定対象のパッケージは registry に存在している必要がある。`npm trust` は npm 11.15.0+ とアカウントの 2FA が前提) ※2026-10-25 確認
 - [changesets/action README（v2）](https://github.com/changesets/action/blob/v2/README.md) (Changesets 公式、v2 は Changesets v3 対応。入力名 `version-script` / `publish-script` / `commit-message` / `pr-title`、必要な `permissions`) ※2026-10-25 確認
 
 > "これがあるとジョブが OIDC トークンを取得でき、npm へのログインがトークンなしで済みます。"

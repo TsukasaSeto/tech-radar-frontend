@@ -323,7 +323,7 @@ export function LikeButton({ post }: { post: Post }) {
 - ロールベースの権限管理（RBAC）では、認証チェックを Server Action の中だけに置くのでは不十分。少なくとも①ルーティング層（未許可ロールをルート単位でブロック）②UI層（許可されない操作ボタン自体を出さない）③Server層（すべての Server Action 内部で `requirePermission()` 等により権限を再検証）の3層で防御する。UI層での非表示はあくまで見た目の制御であり、Server Action は「実体を伴うネットワークエンドポイント」であるためサーバー側の再検証を省略できない
 - OWASP の Next.js Security Cheat Sheet も Server Actions を独立して呼び出し可能な POST エンドポイントとして扱い、渡された引数を信頼しないことを公式原則として挙げている
 - Server Action はビルド時に ID が振られる公開エンドポイントであり、ID はビルドごとに導出されるため、デプロイをまたいだ古いページからの呼び出しは `Failed to find Server Action` になる。セルフホストでの対策は Rule #8（`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` をビルド時に固定する）を参照
-- **Prisma + PostgreSQL の RLS では、対話型 `$transaction` の中でテナント文脈が外側のトランザクションと別になる落とし穴がある**: 公式の Client extensions レシピは全クエリを `[SET, query]` のバッチトランザクションで包むため、`$transaction` 内ではクエリが外側とは別のトランザクションで走り、原子性が壊れる。トランザクションの入口で `set_config('app.tenant_id', $1, TRUE)`（`SET LOCAL` 相当）を1回実行し、`AsyncLocalStorage` で「適用済み」を印付けして拡張側をパススルーにする。`current_setting('app.tenant_id', true)` は未設定で空文字ではなく **NULL** を返すため、ポリシーで `= ''` と比較せず、NULL との比較が常に偽になる fail closed を前提にする。テーブル所有者にもポリシーを効かせるには `FORCE ROW LEVEL SECURITY` が必要（単一記事の報告・確信度は中）
+- **Prisma + PostgreSQL の RLS では、対話型 `$transaction` の中でテナント文脈が外側のトランザクションと別になる落とし穴がある**: 公式の Client extensions レシピは全クエリを `[SET, query]` のバッチトランザクションで包むため、`$transaction` 内ではクエリが外側とは別のトランザクションで走り、原子性が壊れる。トランザクションの入口で `set_config('app.tenant_id', $1, TRUE)`（`SET LOCAL` 相当）を1回実行し、`AsyncLocalStorage` で「適用済み」を印付けして拡張側をパススルーにする。`current_setting('app.tenant_id', true)` は、その接続で一度も設定されていなければ NULL を返す（PostgreSQL 公式）。ただし同じ接続で `set_config(..., TRUE)` を使ったトランザクションが終わった後は、NULL ではなく空文字を返す（PostgreSQL 16.15 / 17.11 で確認。Prisma はプールの接続を使い回すので、この状態は普通に起きる）。`::uuid` にキャストするポリシーは空文字でキャストエラーになり、クエリが失敗する。`NULLIF(current_setting('app.tenant_id', true), '')::uuid` のように空文字を NULL に寄せ、文脈がないときはどちらの場合も 0 行になる（fail closed）ようにする。テーブル所有者にもポリシーを効かせるには `FORCE ROW LEVEL SECURITY` が必要（バッチトランザクションの問題と `FORCE` は Prisma 公式の RLS サンプルでも確認）
 - フォームの hidden 項目（`userId` / `role` 等）は改ざん可能。更新対象のユーザーは `getCurrentUser()` のセッションから決め、受け付けるフィールドは Zod で許可したものだけに絞る（AI 生成コードは hidden 項目の ID でそのまま UPDATE し `role` まで受け取る実装になりがち）
 
 **コード例**:
@@ -381,7 +381,8 @@ export async function deleteUser(userId: string) {
 
 ```ts
 // app/_lib/dal/document.mutations.ts — RLS を併用する場合（Prisma + PostgreSQL の例）
-// ポリシー例: CREATE POLICY owner_only ON documents USING (owner_id = current_setting('app.user_id', true)::uuid);
+// ポリシー例: CREATE POLICY owner_only ON documents USING (owner_id = NULLIF(current_setting('app.user_id', true), '')::uuid);
+// （使い回した接続では未設定時に空文字が返るので、NULLIF で NULL に寄せて 0 行にする）
 import 'server-only';
 import { unauthorized } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
@@ -426,6 +427,10 @@ export async function deleteDocument(documentId: string) {
 
 > 「つまり **外側の `$transaction` とは別のトランザクションで走る**。テナントの文脈は付きますが、`order.create` と `stock.update` が同じトランザクションにいる保証が無くなり、原子性が壊れます。」
 > ([Prisma で Postgres の RLS を入れたら、公式レシピ通りでもトランザクションの中で効かなかった話](https://zenn.dev/glaciermelt/articles/prisma-postgres-rls-interactive-transaction), セクション "罠 1: 対話型トランザクションの中で効かない") ※2026-10-03に実際にfetch成功
+- [prisma/prisma-client-extensions: Row Level Security](https://github.com/prisma/prisma-client-extensions/tree/main/row-level-security) (Prisma 公式のサンプル、全クエリを `$transaction([set_config, query])` のバッチで包むので明示的な `$transaction()` は意図どおりに動かないことがある、`set_config(..., TRUE)` で LOCAL に設定する、`FORCE ROW LEVEL SECURITY` で所有者にも効かせる) ※2026-10-25 確認
+  > "Because this example extension wraps every query in a new batch transaction, explicitly running transactions with `companyPrisma.$transaction()` may not work as intended."
+- [PostgreSQL Docs: System Administration Functions — current_setting / set_config](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SET) (PostgreSQL 公式、`missing_ok` が `true` で設定が存在しなければ NULL、`is_local` が `true` なら現在のトランザクションの間だけ有効。設定後の接続で空文字に戻る挙動は記載がなく、16.15 / 17.11 で実測) ※2026-10-25 確認
+  > "If there is no such setting, `current_setting` throws an error unless `missing_ok` is supplied and is `true` (in which case NULL is returned)."
 - [AIに書かせたNext.jsのコードで起きやすいセキュリティの穴と、直し方](https://zenn.dev/yakankun/articles/nextjs-ai-code-security-pitfalls) (Zenn yakankun、hidden 項目の userId/role を信用せずセッションから対象を決める・許可フィールドのみ更新) ※2026-10-10に実際にfetch成功
 
 > "更新する相手はセッションから取り、受け付ける項目は名前だけにします。"
@@ -638,6 +643,14 @@ RUN npm run build
 > 「Version Skew の節は「ナビゲーション」の話」
 > ([【Next.js】デプロイをまたぐと Server Actions が失敗する問題は `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` で直る](https://qiita.com/bsj-k-hioki/items/03ba0d5f1801065522ad), セクション "Version Skew の節は「ナビゲーション」の話") ※2026-08-28に実際にfetch成功
 
+**出典**:
+- [Next.js Docs: Self-Hosting — Server Functions encryption key](https://nextjs.org/docs/app/guides/self-hosting#server-functions-encryption-key) (Next.js 公式、既定ではビルドごとに鍵が生成され、全インスタンスで同じ鍵が必要。鍵はビルド出力に埋め込まれる) ※2026-10-25 確認
+  > "The key is embedded in the build output and used automatically at runtime."
+- [Next.js Docs: Failed to find Server Action](https://nextjs.org/docs/messages/failed-to-find-server-action) (Next.js 公式のエラーページ、解決策として鍵をビルド時に設定する) ※2026-10-25 確認
+  > "Set this variable at build time—the key is embedded in the build output and used automatically at runtime."
+- [Next.js Docs: Data Security — Overwriting encryption keys (advanced)](https://nextjs.org/docs/app/guides/data-security#overwriting-encryption-keys-advanced) (Next.js 公式、`openssl rand -base64 32` で作る AES 鍵。Action ID はコンパイル時に作られ、最大 14 日キャッシュされる) ※2026-10-25 確認
+- [vercel/next.js `server-action-period-hash-custom-key.test.ts`（v16.4.3）](https://github.com/vercel/next.js/blob/v16.4.3/test/production/app-dir/server-action-period-hash/server-action-period-hash-custom-key.test.ts) (Next.js 公式リポジトリのテスト、`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` を変えてビルドすると Action ID が変わり、同じ鍵ならビルドキャッシュを消しても同じ ID になる。ビルド設定では鍵が Action ID のハッシュの salt に使われる) ※2026-10-25 確認
+
 **バージョン**: Next.js 14+（16.3 のセルフホスト構成で確認）
-**確信度**: 中（Next.js 公式の環境変数・エラー仕様を実機で検証した単独記事、パターン1c採用）
-**最終更新**: 2026-08-28
+**確信度**: 高（鍵がビルド出力に埋め込まれる点は公式ドキュメント、Action ID が鍵から導出される点は公式リポジトリのテストとソースで確認）
+**最終更新**: 2026-10-25

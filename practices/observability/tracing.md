@@ -324,6 +324,7 @@ span.end();
 - [OpenTelemetry JS README](https://github.com/open-telemetry/opentelemetry-js/blob/main/README.md) (open-telemetry/opentelemetry-js)
 - [opentelemetry-js: sdk-trace-web README（v2.12.0）](https://github.com/open-telemetry/opentelemetry-js/blob/v2.12.0/packages/opentelemetry-sdk-trace-web/README.md) (OpenTelemetry公式、`ZoneContextManager` は ES2017+ ターゲットで動かない) ※2026-10-25 確認
 - [opentelemetry-js: sdk-trace-web README（main）](https://github.com/open-telemetry/opentelemetry-js/blob/main/packages/opentelemetry-sdk-trace-web/README.md) (OpenTelemetry公式、`@opentelemetry/sdk-trace` への統合) ※2026-10-25 確認
+- [Upgrade to OpenTelemetry JS SDK 3.x](https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/3.x/migration-guide.md) (OpenTelemetry公式、3.0 で sdk-trace-web は削除され `TracerProvider` + 手動での context manager / propagator 登録に変わる。2.x は 3.0.0 のリリースから 1 年サポート) ※2026-10-25 確認
 
 **バージョン**: @opentelemetry/api 1.x, @opentelemetry/sdk-trace-web 2.x, @opentelemetry/context-zone 2.x（OTel JS SDK 3.0 では sdk-trace-web は `@opentelemetry/sdk-trace` に統合され、2.12.0 が最終版）
 **確信度**: 中
@@ -342,7 +343,7 @@ OTLP エクスポートは現時点でログ・トレースのみサポートし
 - Sentry SDK はスタックトレース・セッションリプレイ・パフォーマンス詳細など**アプリケーションコンテキスト**の収集に強い
 - 2者は OTLP 経由で共存でき、`traceparent` / `baggage` ヘッダーを通じてトレースを連結できる
 - どちらか一方に統一しようとすると、相手の強みを失う
-- Sentry の `OtlpIntegration` はアクティブな OTel トレースコンテキストを読み取り、発生した Sentry イベントへ自動でスタンプする。これにより「エラーから原因スパンへ」「スパンから発生したエラーへ」の双方向ナビゲーションが可能になる
+- Sentry の `openTelemetryIntegration()`（v10 では `@sentry/node-core/light/otlp` の `otlpIntegration`）はアクティブな OTel トレースコンテキストを読み取り、発生した Sentry イベントへ自動でスタンプする。これにより「エラーから原因スパンへ」「スパンから発生したエラーへ」の双方向ナビゲーションが可能になる
 - 典型的なハイブリッド構成は、フロントエンドで Session Replay・source maps・ブラウザエラー追跡に強い Sentry SDK を使い、バックエンドは既存の OTel 計装を維持して OTLP スパンを Sentry に送る形。SDK を置き換えずに単一の分散トレースにまとまる
 - `tracePropagationTargets` の既定は、ブラウザでは同一オリジンへのリクエストだけ、サーバーではすべての送信リクエストにトレースヘッダーを付ける。別オリジンの API へ伝播したいときは、そのオリジンを明示的に加える
 
@@ -368,7 +369,7 @@ allow_headers = ["sentry-trace", "baggage", "traceparent"]
 
 **ハイブリッド構成の留意点**:
 - フロントエンド: `@sentry/nextjs` で ブラウザエラー・Session Replay・source maps を取得
-- バックエンド: 既存 OTel の OTLP スパンを `https://o<id>.ingest.sentry.io/api/<proj>/otlp/` へ Export（SDK 置き換え不要）
+- バックエンド: 既存 OTel の OTLP スパンを `https://o<orgId>.ingest.sentry.io/api/<projectId>/integration/otlp/v1/traces` へ、`x-sentry-auth: sentry sentry_key=<公開鍵>` ヘッダー付きで Export（SDK 置き換え不要。Node の Sentry SDK v11 なら `Sentry.getOtlpTracesEndpoint(dsn)` が DSN から URL とヘッダーを組み立てる。#7 参照）
 - CORS 許可: `sentry-trace`, `baggage`, `traceparent` ヘッダーを許可し、cross-origin トレース断絶を防ぐ
 
 **現時点の制限事項**:
@@ -385,6 +386,9 @@ allow_headers = ["sentry-trace", "baggage", "traceparent"]
 - [Your OTel spans, our errors: A Sentry love story in one trace](https://blog.sentry.io/otel-spans-errors-sentry-trace/) (Sentry公式ブログ、`OtlpIntegration` によるトレースコンテキスト自動付与の実装詳細) ※2026-08-05に実際にfetch成功
 - [Sentry Docs: Next.js Configuration Options](https://docs.sentry.io/platforms/javascript/guides/nextjs/configuration/options/) (Sentry公式、`tracePropagationTargets` の既定と `propagateTraceparent`) ※2026-10-25 確認
 - [Sentry Docs: Next.js Distributed Tracing](https://docs.sentry.io/platforms/javascript/guides/nextjs/tracing/distributed-tracing/) (Sentry公式、`tracePropagationTargets` の設定例と CORS) ※2026-10-25 確認
+- [Sentry Docs: Direct OTLP Traces](https://docs.sentry.io/concepts/otlp/direct/traces/) (Sentry公式、トレースの OTLP エンドポイントと `x-sentry-auth` ヘッダー) ※2026-10-25 確認
+- [Sentry Docs: OpenTelemetry Protocol (OTLP)](https://docs.sentry.io/concepts/otlp/) (Sentry公式、取り込めるのはトレースとログで、OTLP のメトリクスは未対応) ※2026-10-25 確認
+- [sentry-javascript MIGRATION.md: `otlpIntegration` renamed to `openTelemetryIntegration`](https://github.com/getsentry/sentry-javascript/blob/develop/MIGRATION.md#otlpintegration-renamed-to-opentelemetryintegration) (Sentry公式リポジトリ、v11 での改名) ※2026-10-25 確認
 
 > "Fewer moving parts and a short path from service to Sentry"
 > ([You don't need to pick one: how Sentry and OpenTelemetry work together](https://blog.sentry.io/sentry-opentelemetry-work-together/), セクション "Direct OTLP vs Collector forwarding") ※2026-05-29に実際にfetch成功
@@ -464,23 +468,30 @@ Sentry JavaScript SDK v11 は、OpenTelemetry の instrumentation クラス（`r
 
 **根拠**:
 - v10 までの `@sentry/node/preload` / `preloadOpenTelemetry()` / `SENTRY_PRELOAD_INTEGRATIONS` は v11 で削除され（`--import` による初期化は v11 でも推奨）、「ライブラリは読み込み時に自ら instrument する」という単一の順序ルールに統一された
-- `--require` で preload すると Node がローダースレッドで再実行し `Sentry.init()` が二重実行される。CommonJS アプリでも `--import` を使う
+- `--require` での初期化は v11 でサポート外になった。`--require` した instrument ファイルは Node がローダースレッドで再実行するため、v10 までは `Sentry.init()` が二重に走っていた（v11 はそのスレッドでの初期化をスキップして警告を出す）。CommonJS アプリでも `--import` を使う（instrument ファイルの拡張子で CommonJS として読み込まれる）
+- `node --import @sentry/node/import` は hooks だけを先に登録し、`Sentry.init()` を後から呼ぶための「遅延初期化」の方法。DSN を外部から取得するなど、instrument ファイルで初期化できない場合に限る（`Sentry.init()` より前のエラーは送られない）
 - external 指定された依存は変換されない。Sentry のビルドプラグインは既知パッケージを `external` から外し、直せないものは警告する
 - 初回は `debug: true` で「実行時 hook が登録されたか・バンドラープラグインが動いたか・どのモジュールに注入されたか」を確認できる
-- OTel 連携は 3 択: Sentry のみ（`tracesSampleRate`）/ `enableOpenTelemetrySetup: true`（`@opentelemetry/api` のスパンを Sentry スパン化、`@sentry/nextjs` ではデフォルト `true`）/ 自前 OTel + `Sentry.otlpIntegration()`（`tracesSampleRate` は未設定）
+- OTel 連携は 3 択: Sentry のみ（`tracesSampleRate`）/ `enableOpenTelemetrySetup: true`（`@opentelemetry/api` のスパンを Sentry スパン化、`@sentry/nextjs` ではデフォルト `true`）/ 自前 OTel + `Sentry.openTelemetryIntegration()`（`tracesSampleRate` は未設定。11.0.0 で `otlpIntegration` から改名された。`@sentry/nextjs` では `enableOpenTelemetrySetup: false` を明示する）
 
 **コード例**:
 ```bash
-# Good: Node は --import で hooks を先に登録（Deno は --preload）
-node --import @sentry/node/import app.js
-deno run --preload=@sentry/deno/import app.ts
+# Good: Node は --import で instrument ファイル（Sentry.init() を書いたファイル）を先に読み込む
+node --import ./instrument.mjs app.mjs
 
-# Bad: --require は loader thread で再実行され Sentry.init() が二重実行される
+# Good（遅延初期化）: hooks だけを先に登録し、Sentry.init() はアプリ側で後から呼ぶ
+node --import @sentry/node/import app.mjs
+
+# Good: Deno は --preload で import hook を読み込み、Sentry.init() は main.ts の先頭で呼ぶ
+deno run --preload=@sentry/deno/import --allow-net=o<orgId>.ingest.sentry.io --allow-env --allow-read=. --allow-sys=hostname,osRelease main.ts
+
+# Bad: --require は v11 ではサポート外（ローダースレッドでの初期化はスキップされ、警告が出る）
 node --require ./instrument.js app.js
 ```
 
 ```ts
-// Good: バンドラー利用時はビルド時 transform プラグインを使う
+// Good: --import を渡せない環境では、ビルド時に依存ライブラリを計装するバンドラープラグインを使う
+// エントリーファイルの先頭で instrument ファイルを import し、起動は `node app.mjs`（--import は不要）
 // vite.config.ts
 import { sentryVitePlugin } from '@sentry/node/vite';
 export default {
@@ -490,6 +501,12 @@ export default {
 
 ```js
 // Good: 自前の OTel を使い Sentry は OTLP で連携（v11 では provider のスパンを Sentry ネイティブスパンにはできない）
+// OTel JS SDK 2.x の API（3.x では @opentelemetry/sdk-trace の TracerProvider を trace.setGlobalTracerProvider() で登録し、new BatchSpanProcessor({ exporter }) と書く）
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+import { BatchSpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import * as Sentry from '@sentry/node';
+
 const provider = new NodeTracerProvider({
   spanProcessors: [
     new BatchSpanProcessor(
@@ -501,7 +518,9 @@ provider.register();
 
 Sentry.init({
   dsn: '__DSN__',
-  integrations: [Sentry.otlpIntegration()],
+  // tracesSampleRate は設定しない（スパンは OTel が持ち、Sentry はエラーとログを担当する）
+  // @sentry/nextjs では既定が true なので enableOpenTelemetrySetup: false を明示する
+  integrations: [Sentry.openTelemetryIntegration()],
 });
 ```
 
@@ -515,11 +534,17 @@ Sentry.init({
 > ([Sentry JavaScript SDK v11 adds tracing for all JS platforms](https://blog.sentry.io/tracing-for-all-js-platforms/), セクション "Pitfalls & Caveats") ※2026-10-09に実際にfetch成功（原文 HTML で逐語確認済み）
 
 **出典**:
-- [Sentry JavaScript SDK v11 adds tracing for all JS platforms](https://blog.sentry.io/tracing-for-all-js-platforms/) (Sentry公式ブログ) ※2026-10-09に実際にfetch成功
+- [Sentry JavaScript SDK v11 adds tracing for all JS platforms](https://blog.sentry.io/tracing-for-all-js-platforms/) (Sentry公式ブログ。記事中の `otlpIntegration` は 11.0.0 の正式版で `openTelemetryIntegration` に改名済み) ※2026-10-09に実際にfetch成功
+- [sentry-javascript MIGRATION.md: Upgrading from 10.x to 11.x](https://github.com/getsentry/sentry-javascript/blob/develop/MIGRATION.md) (Sentry公式リポジトリ、`--require` のサポート終了、`enableOpenTelemetrySetup` と 3 つの構成、`openTelemetryIntegration()`、`@sentry/node/preload` の削除) ※2026-10-25 確認
+- [Sentry Docs: Node.js Installation](https://docs.sentry.io/platforms/javascript/guides/node/install/) (Sentry公式、`node --import ./instrument.mjs app.mjs`) ※2026-10-25 確認
+- [Sentry Docs: Late Initialization](https://docs.sentry.io/platforms/javascript/guides/node/install/late-initialization/) (Sentry公式、`node --import @sentry/node/import` と後からの `Sentry.init()`) ※2026-10-25 確認
+- [Sentry Docs: With a Bundler](https://docs.sentry.io/platforms/javascript/guides/node/install/bundler/) (Sentry公式、`@sentry/node/vite` の `sentryVitePlugin`) ※2026-10-25 確認
+- [Sentry Docs: Use Your Own OpenTelemetry Pipeline](https://docs.sentry.io/platforms/javascript/guides/node/opentelemetry/custom-setup/) (Sentry公式、`getOtlpTracesEndpoint()` と `openTelemetryIntegration()`) ※2026-10-25 確認
+- [Sentry Docs: Deno](https://docs.sentry.io/platforms/javascript/guides/deno/) (Sentry公式、`--preload` と Deno 2.8.3+) ※2026-10-25 確認
 
-**バージョン**: Sentry JavaScript SDK 11+（Deno は 2.8.3+）
+**バージョン**: Sentry JavaScript SDK 11+（Deno は 2.8.3+）。OTLP 連携の例は OTel JS SDK 2.x（`@opentelemetry/sdk-trace-node` / `sdk-trace-base` 2.x）の API
 **確信度**: 高
-**最終更新**: 2026-10-09
+**最終更新**: 2026-10-25
 
 ---
 

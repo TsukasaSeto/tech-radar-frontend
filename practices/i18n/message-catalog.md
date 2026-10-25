@@ -253,13 +253,15 @@ i18n/
 
 | ツール | 強み | 料金 |
 |---|---|---|
-| **Crowdin** | 無料枠あり、GitHub 統合、業界スタンダード | 無料〜 |
-| **Lokalise** | UI 良好、TypeScript 型生成サポート | 有料（無料枠なし） |
-| **Phrase** | 大企業向け、用語管理が強力 | 有料 |
-| **Localazy** | 開発者向け、無料枠が大きい | 無料〜 |
-| **Tolgee** | OSS / self-host 可、in-context 編集 | OSS 無料 |
+| **Crowdin** | 無料枠あり、GitHub 統合、業界スタンダード | 無料〜（OSS も無料プランを使える） |
+| **Lokalise** | UI 良好 | 有料（常設の無料プランはなく 14 日間の試用のみ。非営利の OSS は無償） |
+| **Phrase** | 大企業向け、用語管理が強力 | 有料（14 日間の試用あり） |
+| **Localazy** | 開発者向け、無料プランあり | 無料〜（無料プランはソースキー 200 まで） |
+| **Tolgee** | OSS / self-host 可、in-context 編集 | self-host は無料、クラウドにも無料プランあり |
 | **Transifex** | 長年の実績、CLI 強力 | 有料 |
-| **Weblate** | OSS / self-host、Linux Foundation 採用 | OSS 無料 |
+| **Weblate** | OSS（GPLv3+）/ self-host、Fedora・LibreOffice・openSUSE などが利用 | self-host は無料、クラウドは有料（libre なプロジェクトは申請で無料） |
+
+料金欄は 2026-10-25 時点の各社公式の料金ページによる。プランと無料枠は変わりやすいので、導入前に公式ページで確認する。
 
 **運用フロー（Crowdin の場合）**:
 ```yaml
@@ -342,6 +344,8 @@ jobs:
 - [crowdin/github-action](https://github.com/crowdin/github-action) (Crowdin 公式、`GITHUB_TOKEN` に contents / pull-requests の write 権限が必要なこと、`export_only_approved` の既定が `false` であること、最新メジャーが v3 であること) ※2026-10-25 確認
 - [Lokalise Docs](https://docs.lokalise.com/) (Lokalise)
 - [Tolgee](https://tolgee.io/) (Tolgee)
+- 各社公式の料金ページ: [Crowdin](https://crowdin.com/pricing)（Free Plan $0、OSS も利用可）/ [Lokalise](https://lokalise.com/pricing)（Explorer $149/月〜、14 日間の試用、非営利 OSS は無償）/ [Phrase](https://phrase.com/pricing/)（14 日間の試用のみ）/ [Localazy](https://localazy.com/pricing)（無料プランはソースキー 200 まで）/ [Tolgee](https://tolgee.io/pricing)（クラウドの Free は 30,000 語・3 シート、self-host は OSS）/ [Transifex](https://www.transifex.com/pricing)（無料プランの記載なし）/ [Weblate](https://weblate.org/en/)（GPLv3+、self-host は無料、libre プロジェクト向けの無料ホスティングあり。利用例に openSUSE・LibreOffice・Fedora。Linux Foundation の記載はない） ※2026-10-25 確認
+- [Lokalise Docs: Structured JSON](https://docs.lokalise.com/en/articles/3229161-structured-json) (Lokalise、TypeScript については `keyof typeof import(...)` で自前のコードからキー補完する書き方の紹介だけで、型の生成機能ではない) ※2026-10-25 確認
 - [FormatJS: Translation Management](https://formatjs.io/docs/getting-started/message-distribution) (FormatJS)
 
 **バージョン**: パターン（ツール依存）。例は crowdin/github-action v3

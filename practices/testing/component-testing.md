@@ -403,19 +403,32 @@ Playwright のコンポーネントテスト（Component Testing）は 1.62 で�
 
 **根拠**:
 - 新方式では Playwright がバンドラを持たなくなり、アプリ自身の dev server（Vite 等）が配信する gallery HTML を経由してコンポーネントをマウントするため、`playwright.config.ts` の `webServer` / `baseURL` を gallery URL に向ける設定が必須になる
-- `fixtures.mount()` は gallery に遷移して story id でマウントし、story のルート要素にスコープした `Locator` を返す設計になっている
-- 1.62.0 自体にリグレッションが報告されているため、導入時は `1.62.1` 以降を明示的に指定する
+- `fixtures.mount()` は gallery（`baseURL`）に遷移して `window.mount({ story, props })` を呼び、story を描画した `#root` 要素の `Locator` を返す。返り値には `update(props)`（再マウントせずに props だけ変える）と `unmount()` が付く。未知の story id や描画エラーで `window.mount` が reject すると、テスト側の `mount()` が例外になる
+- 1.62.1 のリリースノートには、1.62 から起きたリグレッション（tsconfig の `extends` の bare specifier や、ディレクトリ形式の project references が解決できず致命的エラーになる、など）の修正が載っている。導入時は `1.62.1` 以降を明示的に指定する
+- 旧方式の `@playwright/experimental-ct-react` / `-ct-react17` / `-ct-vue` は 1.63 で更新終了が告知され、公式ドキュメントでは削除済みで公開されないと書かれている（npm の最終版は 1.62.1）。旧パッケージのままでは 1.63 以降に上げられないので、移行が済むまでは 1.62 に留め、gallery と `components` プロジェクトを旧構成と並べて spec ごとに移す
 - story は「コンポーネントの 1 つの状態」を表す単位であり、ハードコードした props・モックデータ・Provider・必要なコールバックを 1 か所に束ねる。テストは story を指定して `mount()` するだけになるため、テストごとに JSX を書き直す必要がなくなり、同じ状態を複数テストで再利用できる
 - 使い分けは機能ごとに決める。カタログ（人が目視で確認する）は Storybook、操作テスト（実ブラウザでの自動検証）は Playwright CT か、Storybook のストーリーをそのまま Vitest で実行する `@storybook/addon-vitest`（#8）のどちらか、視覚差分は `toHaveScreenshot()`（`practices/testing/e2e-testing.md` #5）か Storybook 連携の VRT のどちらか。同じ状態定義を Playwright の story と Storybook のストーリーに二重に書かないよう、操作テストの置き場所はどちらか一方に寄せる
 
 **コード例**:
 ```typescript
 // playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
 const GALLERY_URL = 'http://localhost:5173/playwright/gallery/index.html';
 
 export default defineConfig({
-  // ...
-  use: { baseURL: GALLERY_URL },
+  projects: [
+    {
+      name: 'components',
+      testDir: './tests/components',
+      use: {
+        ...devices['Desktop Chrome'],
+        baseURL: GALLERY_URL,
+        serviceWorkers: 'block', // アプリの Service Worker が page.route() のモックを横取りしないようにする
+        reuseContext: true, // worker 内でブラウザコンテキストを使い回す（旧パッケージが暗黙に行っていた高速化）
+      },
+    },
+  ],
   webServer: {
     command: 'npm run dev',
     url: GALLERY_URL,
@@ -424,18 +437,42 @@ export default defineConfig({
 });
 ```
 
-```typescript
-// gallery 側（index.html から読み込まれるスクリプト）が実装する mount/unmount 契約
-window.mount = async ({ story, props }) => {
-  const Story = await resolveStory(story);
+```html
+<!-- playwright/gallery/index.html（アプリの dev server が配信する） -->
+<!DOCTYPE html>
+<div id="root"></div>
+<script type="module" src="./main.tsx"></script>
+```
+
+```tsx
+// playwright/gallery/main.tsx（React + Vite の例。mount/unmount の契約を実装する）
+import { StrictMode } from 'react';
+import { flushSync } from 'react-dom';
+import { createRoot, type Root } from 'react-dom/client';
+
+const stories = import.meta.glob('../../src/**/*.story.{tsx,jsx}');
+const id = (f: string) => f.replace(/^(\.\.\/)+src\//, '').replace(/\.story\.\w+$/, '');
+
+async function resolve(storyId: string) {
+  const sep = storyId.lastIndexOf('/');
+  const [path, name] = [storyId.slice(0, sep), storyId.slice(sep + 1)];
+  const file = Object.keys(stories).find((f) => id(f) === path || id(f).endsWith('/' + path));
+  const mod = (file && (await stories[file]())) as Record<string, any> | undefined;
+  return mod?.[name] ?? mod?.default;
+}
+
+const rootEl = document.getElementById('root')!;
+let root: Root | undefined;
+
+(window as any).mount = async ({ story, props }: { story: string; props?: Record<string, any> }) => {
+  const Story = await resolve(story);
   if (!Story) throw new Error(`Unknown story: ${story}`);
-  root ??= createRoot(rootEl);
-  flushSync(() => {
-    root!.render(<StrictMode><Story {...props} /></StrictMode>);
-  });
+  root ??= createRoot(rootEl); // root を使い回すと update() で state が保たれる
+  // flushSync にすると描画エラーが握りつぶされず、Promise の reject になる
+  flushSync(() => root!.render(<StrictMode><Story {...props} /></StrictMode>));
 };
 
-window.unmount = async () => {
+(window as any).unmount = async () => {
   root?.unmount();
   root = undefined;
 };
@@ -453,13 +490,17 @@ window.unmount = async () => {
 > ([Playwright の component testing と `mount()` を整理する](https://zenn.dev/pug/articles/playwright-component-testing-story-mount), セクション "mount とは" / "何が変わるか") ※2026-08-28に実際にfetch成功
 
 **story を再利用するテストの書き方**:
-```typescript
-// story 側: コンポーネントの 1 状態を props ごと固定する
-export const Disabled = {
-  args: { label: 'Submit', disabled: true },
-};
+```tsx
+// src/components/Button.story.tsx（story 側）: コンポーネントの 1 状態を props ごと固定する。名前付き export 1 つが story 1 つ
+import { Button } from './Button';
 
-// テスト側: story id を渡すだけ。JSX をテストに書かない
+export const Disabled = () => <Button title="Submit" disabled />;
+```
+
+```typescript
+// tests/components/button.spec.ts（テスト側）: story id を渡すだけ。JSX をテストに書かない
+import { test, expect } from '@playwright/test';
+
 test('disabled button is disabled', async ({ mount }) => {
   const component = await mount('components/Button/Disabled');
   await expect(component.getByRole('button')).toBeDisabled();
@@ -476,9 +517,11 @@ test('button becomes enabled after input', async ({ mount }) => {
 **出典**:
 - [Playwright 1.62 の stories & galleries でコンポーネントテストを最小構成から作ってみた](https://zenn.dev/clopy/articles/playwright162-ct-stories-galleries) (Zenn clopy、`webServer` / `baseURL` と gallery 契約の最小構成) ※2026-08-23 fetch
 - [Playwright の component testing と `mount()` を整理する](https://zenn.dev/pug/articles/playwright-component-testing-story-mount) (Zenn pug、story を状態定義として再利用する書き方・Storybook との役割分担という追加観点) ※2026-08-28 fetch
+- [Playwright v1.62.0 リリースノート](https://github.com/microsoft/playwright/releases/tag/v1.62.0) / [v1.62.1](https://github.com/microsoft/playwright/releases/tag/v1.62.1) / [v1.63.0](https://github.com/microsoft/playwright/releases/tag/v1.63.0) (microsoft/playwright、stories and galleries への移行・リグレッション修正・experimental-ct パッケージの更新終了) ※2026-10-25 確認
+- [Playwright Docs: Component testing](https://playwright.dev/docs/test-components) / [Fixtures.mount](https://playwright.dev/docs/api/class-fixtures#fixtures-mount) (Playwright 公式、gallery の契約・config 例・story id の規則・移行ガイド。gallery の実装例は skill の `references/gallery-spec.md`) ※2026-10-25 確認
 
 **バージョン**: Playwright 1.62.1+
-**確信度**: 高（異なる著者による2記事＋コード例でパターン2を満たすため 2026-08-28 に「中」から格上げ）
+**確信度**: 高（公式のリリースノートとドキュメントで確認）
 **最終更新**: 2026-10-25
 
 ---

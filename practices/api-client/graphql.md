@@ -178,22 +178,47 @@ export function TeamPage() {
 
 Fragment Colocation をさらに強制するのが Data Masking。有効化すると、**コンポーネントは自分のフラグメントで宣言したフィールドにしかアクセスできない**。ネットワークレスポンスに他のコンポーネントが要求した `avatarUrl` が含まれていても、そのフィールドを宣言していないコンポーネントには `undefined` が返る。これにより「フラグメントを書き忘れても動く」という穴を型安全で塞ぐ。
 
-```tsx
-// Apollo Client 3.12+: @unmask ディレクティブで親からフラグメントにアクセス
-// 子コンポーネントのフラグメントを親クエリに展開
-const TeamPageQuery = graphql(`
+Apollo Client で使う場合は、上の例の client-preset の fragment masking（`FragmentType` / `useFragment()`）と Apollo の data masking を併用しない。Apollo 公式は、この 2 つは実行時の挙動が両立せず同時には使えないとしており、Apollo Client のアプリでは client-preset 自体を推奨していない。型は公式推奨の typescript-operations 構成（#4 を参照）で生成し、data masking 用に `inlineFragmentTypes: 'mask'` と `customDirectives: { apolloUnmask: true }` を設定する。
+
+```ts
+// Apollo Client 3.12+ の Data Masking（Apollo の書き方。client-preset の graphql() / useFragment() は使わない）
+import { ApolloClient, HttpLink, InMemoryCache, gql } from '@apollo/client';
+
+export const client = new ApolloClient({
+  link: new HttpLink({ uri: 'https://api.example.com/graphql' }),
+  cache: new InMemoryCache(),
+  dataMasking: true,
+});
+
+export const USER_CARD_FRAGMENT = gql`
+  fragment UserCard_User on User {
+    id
+    name
+    avatarUrl
+    role
+  }
+`;
+
+// 子コンポーネントは Apollo の useFragment({ fragment: USER_CARD_FRAGMENT, from: member }) で自分のフィールドを読む
+// （4.x は @apollo/client/react から import する。from に渡すオブジェクトの id は親のクエリで選択しておく）
+// 親が子のフィールドを直接読む必要があるときだけ、スプレッドに @unmask を付ける（公式は逃げ道と位置づけ、まず親のクエリにフィールドを足すよう勧めている）
+export const TEAM_PAGE_QUERY = gql`
   query TeamPage {
     team {
       members {
-        ...UserCard_User @unmask  # データマスキングを解除して型アクセス
+        id
+        ...UserCard_User @unmask
       }
     }
   }
-`);
+  ${USER_CARD_FRAGMENT}
+`;
 ```
 
 **出典**:
 - [Apollo Docs: Fragments](https://www.apollographql.com/docs/react/data/fragments/) (Apollo公式)
+- [Apollo Docs: Fragments - Data masking](https://www.apollographql.com/docs/react/data/fragments#data-masking) (Apollo公式、`dataMasking: true`、`useFragment` の `from`、`@unmask`、typescript-operations の `inlineFragmentTypes: "mask"` / `customDirectives`、client-preset の Fragment Masking とは同時に使えない) ※2026-10-25 確認
+- [Apollo Docs: GraphQL Codegen - A note about the client preset](https://www.apollographql.com/docs/react/development-testing/graphql-codegen#a-note-about-the-client-preset) (Apollo公式、Apollo Client のアプリでは client-preset を推奨しない) ※2026-10-25 確認
 - [urql Docs: Fragments](https://commerce.nearform.com/open-source/urql/docs/basics/core-logic/) (urql公式)
 - [GraphQL Code Generator: client-preset - Fragment Masking](https://the-guild.dev/graphql/codegen/plugins/presets/preset-client#fragment-masking) (The Guild公式、既定で有効・`FragmentType` / `useFragment()` での受け渡し) ※2026-10-25 確認
 - [GraphQL Fragments: Let Each Component Own Its Data](https://dev.to/grimicorn/graphql-fragments-let-each-component-own-its-data-5359) (dev.to、Data Masking の解説と導入タイミングの判断基準) ※2026-06-25 fetch
@@ -202,7 +227,7 @@ const TeamPageQuery = graphql(`
 > "a component can only access fields it explicitly requested in its own fragment. Even if the network response contains avatarUrl because another component requested it, your component gets undefined unless it declared the field itself."
 > ([GraphQL Fragments: Let Each Component Own Its Data](https://dev.to/grimicorn/graphql-fragments-let-each-component-own-its-data-5359), セクション "Data Masking for Type Safety") ※2026-06-25に実際にfetch成功
 
-**バージョン**: Apollo Client 3.12+（Data Masking）, urql 4+, GraphQL 16+
+**バージョン**: Apollo Client 3.12+（Data Masking）, @graphql-codegen/typescript-operations 4.4.0+（`@unmask` の型）, urql 4+, GraphQL 16+
 **確信度**: 高
 **最終更新**: 2026-10-25
 
@@ -216,8 +241,9 @@ TypeScript 7.1+ では Content Mappers で `*.graphql` を生成ファイル無�
 
 **根拠**:
 - スキーマ変更時に型エラーが即座に検出される
-- TypeScript 7.1 の Content Mappers（`tsconfig.json` の `contentMappers` + マッパー側 `package.json` の `typescript.contentMapper`）で `graphql-codegen` コアを外部プロセスから呼べば、codegen 出力ファイルを作らずに型解決できる。外部プロセスが任意コードを実行するため `tsc --runExternalCode` が必須で、信頼できるマッパーのみ使う（Zenn 単一記事の検証、7.1.0-beta 前提）
+- TypeScript 7.1 の Content Mappers（`tsconfig.json` の `contentMappers` + マッパー側 `package.json` の `typescript.contentMapper`）で `graphql-codegen` コアを外部プロセスから呼べば、codegen 出力ファイルを作らずに型解決できる。マッパーは TypeScript が起動する外部プロセス（標準入出力の JSON-RPC）で任意のコードを実行できるため `tsc --runExternalCode` が必須で、信頼できるマッパーのみ使う（仕組みと設定名は TypeScript 公式で確認。GraphQL 用の公開マッパーはまだなく、Zenn 記事は自作のマッパーで検証している。7.1.0-beta 前提）
 - `client-preset` プラグインで Fragment の型も自動生成される
+- Apollo Client を使う場合は、client-preset ではなく Apollo 公式が推奨する typescript-operations 構成（#4 を参照）にし、client-preset の fragment masking と Apollo の data masking を併用しない。Apollo は、client-preset は実行時コードでバンドルが増え、Apollo Client と両立しない機能を含むとして推奨していない（以下の client-preset の例は urql など Apollo 以外のクライアント向け）
 - `graphql-tag` の代わりに Codegen の `graphql()` 関数を使うことで型推論が働く
 - CI でスキーマとのチェックを自動化できる
 
@@ -276,12 +302,16 @@ const [{ data }] = useQuery({ query: GetUserQuery, variables: { id } });
 
 **出典**:
 - [GraphQL Code Generator Docs](https://the-guild.dev/graphql/codegen/docs/getting-started) (The Guild / GraphQL Code Generator公式)
+- [Apollo Docs: GraphQL Codegen - A note about the client preset](https://www.apollographql.com/docs/react/development-testing/graphql-codegen#a-note-about-the-client-preset) (Apollo公式、Apollo Client のアプリでは client-preset を推奨せず typescript-operations を使う。client-preset を残す場合は fragment masking を無効にする) ※2026-10-25 確認
+- [Apollo Docs: Fragments - Data masking](https://www.apollographql.com/docs/react/data/fragments#data-masking) (Apollo公式、client-preset の Fragment Masking と Apollo の data masking は同時に使えない) ※2026-10-25 確認
 - [Next.js で TypeScript7.1 の Content Mappers を使い、*.graphql ファイルを直接使用する](https://zenn.dev/sora_kumo/articles/typescript7-content-mappers) (Zenn、codegen 出力無しの代替構成) ※2026-10-22 fetch
   > "外部プロセスが任意のコードを実行できるため、安全機能としてコンパイル時には `--runExternalCode` フラグの指定が必須となっています。"
   > (セクション "Content Mappers の仕組み")
+- [Announcing TypeScript 7.1 Beta](https://devblogs.microsoft.com/typescript/announcing-typescript-7-1-beta/) (TypeScript公式ブログ、`contentMappers` の設定と `--runExternalCode`。公式に挙がっているマッパーは Vue / Svelte / Astro / MDX / CSS Modules / Ember で GraphQL はない) ※2026-10-25 確認
+- [microsoft/typescript-go#4712](https://github.com/microsoft/typescript-go/pull/4712) (TypeScript公式リポジトリ、マッパー側 `package.json` の `typescript.contentMapper` と JSON-RPC での呼び出し) ※2026-10-25 確認
 
-**バージョン**: @graphql-codegen/cli 5+, @graphql-codegen/client-preset 4+（Content Mappers 構成は TypeScript 7.1+）
-**確信度**: 高（codegen 本体）/ 中（Content Mappers 構成は単一記事・beta）
+**バージョン**: @graphql-codegen/cli 5+, @graphql-codegen/client-preset 4+（Content Mappers 構成は TypeScript 7.1+。2026-10-25 時点では beta）
+**確信度**: 高（codegen 本体）/ 中（Content Mappers の仕組みは公式で確認。GraphQL への適用は単一記事・beta）
 **最終更新**: 2026-10-25
 
 ---
@@ -302,6 +332,7 @@ stale なデータをUIに表示し続けないよう必ず対処する。
 import { useMutation } from 'urql';
 import { graphql } from '@/gql';
 import type { CreatePostInput } from '@/gql/graphql';
+import { showErrorToast } from '@/lib/toast'; // アプリ側で用意するトースト表示関数（(message: string) => void）
 
 const CreatePostMutation = graphql(`
   mutation CreatePost($input: CreatePostInput!) {
@@ -326,38 +357,70 @@ function CreatePostForm() {
 ```
 
 ```tsx
-// Apollo Client での楽観的更新（urql とは別のクライアントの例）
+// Apollo Client 4 での楽観的更新（urql とは別のクライアントの例。ApolloProvider の配下の Client Component から呼ぶ）
+import { gql, type TypedDocumentNode } from '@apollo/client';
 import { useMutation } from '@apollo/client/react';
+// Apollo は client-preset ではなく typescript-operations（near-operation-file）で型だけを生成する構成を推奨している
+import type { CreatePostMutation, CreatePostMutationVariables } from './use-create-post.generated';
 
-const [createPost] = useMutation(CREATE_POST_MUTATION, {
-  optimisticResponse: {
-    createPost: {
-      __typename: 'Post',
-      id: 'temp-id',
-      title: input.title,
-    },
-  },
-  update(cache, { data }) {
-    cache.modify({
-      fields: {
-        posts(existingPosts = []) {
-          const newPostRef = cache.writeFragment({
-            data: data?.createPost,
-            fragment: PostFragment,
-          });
-          return [...existingPosts, newPostRef];
+// 型なしの gql のままだと data が unknown になるので、生成した型で注釈する
+const CREATE_POST_MUTATION: TypedDocumentNode<CreatePostMutation, CreatePostMutationVariables> = gql`
+  mutation CreatePost($input: CreatePostInput!) {
+    createPost(input: $input) {
+      id
+      title
+    }
+  }
+`;
+
+const NEW_POST_FRAGMENT = gql`
+  fragment NewPost on Post {
+    id
+    title
+  }
+`;
+
+export function useCreatePost() {
+  const [createPost, { loading, error }] = useMutation(CREATE_POST_MUTATION, {
+    update(cache, { data }) {
+      if (!data) return;
+      cache.modify({
+        fields: {
+          posts(existingPosts = []) {
+            const newPostRef = cache.writeFragment({
+              data: data.createPost,
+              fragment: NEW_POST_FRAGMENT,
+            });
+            return [...existingPosts, newPostRef];
+          },
         },
+      });
+    },
+  });
+
+  // 楽観的な値は、入力が決まる mutate の呼び出し時に渡す
+  // errorPolicy が既定の 'none' のとき、エラーで Promise が reject されるので呼び出し側で catch する
+  function submit(input: CreatePostMutationVariables['input']) {
+    return createPost({
+      variables: { input },
+      optimisticResponse: {
+        createPost: { __typename: 'Post', id: 'temp-id', title: input.title },
       },
     });
-  },
-});
+  }
+
+  return { submit, loading, error };
+}
 ```
 
 **出典**:
-- [Apollo Docs: Optimistic UI](https://www.apollographql.com/docs/react/performance/optimistic-ui/) (Apollo公式)
+- [Apollo Docs: Optimistic UI](https://www.apollographql.com/docs/react/performance/optimistic-ui/) (Apollo公式、`optimisticResponse` を mutate の呼び出しに渡す例) ※2026-10-25 確認
+- [Apollo Docs: Mutations](https://www.apollographql.com/docs/react/data/mutations) (Apollo公式、`useMutation` の import 元と `update` での `cache.modify` / `cache.writeFragment`) ※2026-10-25 確認
+- [Apollo Docs: TypeScript with Apollo Client](https://www.apollographql.com/docs/react/development-testing/static-typing) (Apollo公式、型を決められない `data` は `unknown` になる、`TypedDocumentNode` での注釈) ※2026-10-25 確認
+- [Apollo Docs: GraphQL Codegen](https://www.apollographql.com/docs/react/development-testing/graphql-codegen) (Apollo公式、Apollo Client では client-preset を推奨せず typescript-operations を使う) ※2026-10-25 確認
 - [urql Docs: Cache Updates](https://commerce.nearform.com/open-source/urql/docs/graphcache/cache-updates/) (urql公式)
 
-**バージョン**: Apollo Client 3+, urql 4+
+**バージョン**: Apollo Client 4+（例の import と型付けは 4.x 基準。2026-10-25 時点の最新は 4.3.5）, urql 4+
 **確信度**: 高
 **最終更新**: 2026-10-25
 

@@ -369,11 +369,11 @@ const invalidCategory = "その他" satisfies IngredientCategory;
 ```
 
 **出典引用**:
-> "型チェックはするが型推論は維持する" ── `satisfies` の本質
-> ([TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator), TypeScript公式)
+> "The new `satisfies` operator lets us validate that the type of an expression matches some type, without changing the resulting type of that expression."
+> ([TypeScript 4.9 Release Notes: The `satisfies` Operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator), TypeScript公式) ※2026-10-25 に原文を確認
 
-> "「この型を満たすか」をチェックする。`as`と違って嘘をつけない。"
-> ([TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants), セクション "satisfies の特性") ※2026-05-17に実際にfetch成功
+> "`satisfies`は値の型を変えずに「この型を満たすか」をチェックする。`as`と違って嘘をつけない。"
+> ([TypeScriptのsatisfiesでドメイン定数の二重管理を防ぐ](https://zenn.dev/saytooy_arch/articles/17-satisfies-domain-constants), セクション "asやキャストとの違い") ※2026-05-17に実際にfetch成功、2026-10-25 に原文を確認
 
 > "「TypeScriptで型が付いている = APIから来る値も必ず正しい」という意味ではありません"
 > ([TypeScriptのasを減らす：satisfiesとの使い分けを実例で整理する](https://zenn.dev/sponge841841/articles/2026-09-11-typescript-satisfies-vs-as), セクション "外部データの検証には satisfies だけでは足りない") ※2026-09-11に実際にfetch成功
@@ -385,7 +385,7 @@ const invalidCategory = "その他" satisfies IngredientCategory;
 
 **バージョン**: TypeScript 4.9+
 **確信度**: 高
-**最終更新**: 2026-09-12
+**最終更新**: 2026-10-25
 
 ---
 
@@ -395,8 +395,8 @@ const invalidCategory = "その他" satisfies IngredientCategory;
 - [TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e) (Zenn karumaru / 2026-05-09) ※2026-05-10に実際にfetch成功
 
 **出典引用**:
-> "型を狭めずに、制約だけ効かせる──これが`satisfies`の本質だ"
-> ([TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e), セクション "satisfies の本質")
+> "「型を狭めずに、制約だけ効かせる」── これが`satisfies`の本質だ。"
+> ([TypeScriptのsatisfiesを業務コード全部に効かせたら、型エラーが1/3になった話](https://zenn.dev/karumaru/articles/27816ff08dfd2e), 記事冒頭の引用ブロック) ※2026-10-25 に原文を確認
 
 業務コード全体に `satisfies` を適用した実例として、2つの新規パターンが紹介された:
 

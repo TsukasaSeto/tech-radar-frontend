@@ -225,7 +225,8 @@ Server Component から Client にデータを渡す目的で `<script type="app
 - `JSON.stringify({ name: '</script><script>alert(1)</script>' })` の出力には `</script>` がそのまま含まれる
 - ブラウザは `</script>` を見つけた時点で `<script>` を終了するため、後続のスクリプトが実行される
 - `<` `>` `&` を Unicode エスケープ（`\u003c` `\u003e` `\u0026`）すると JSON としては有効なまま、HTML としては安全になる
-- Next.js の `Script` コンポーネントは内部で対策済みだが、自前で書く場合は注意
+- Next.js の `<Script>`（`next/script`）はインラインの中身（children / `dangerouslySetInnerHTML`）をエスケープせず、JavaScript としてそのまま実行する。Next.js がエスケープするのは自分が出力するデータ（RSC Payload の `self.__next_f.push(...)`、App Router の `beforeInteractive` を包む `self.__next_s.push(...)`、Pages Router の `__NEXT_DATA__`）だけで、Pages Router の `beforeInteractive` のインライン中身は HTML の `<script>` にそのまま出力される
+- App Router の `beforeInteractive` を包む部分のエスケープも 16.2.5 / 15.5.16 の修正で入ったもので、13.0.0 以降の未修正版では信頼できない値で `<script>` を抜けられた（GHSA-gx5p-jg67-6x7h / CVE-2026-44580）。修正版でもエスケープされるのは包む部分だけで、中身のコードに文字列連結した値は守られない
 
 **コード例**:
 ```tsx
@@ -270,7 +271,27 @@ const state = JSON.parse(script?.textContent ?? '{}');
 
 **ライブラリでの対策**:
 - `serialize-javascript`: 上記エスケープに加え、Date / RegExp / 関数のシリアライズを安全に行う
-- Next.js `<Script>`: 自動エスケープ済み（明示的に指定不要）
+- Next.js `<Script>`: 中身はエスケープされない。信頼できない値をインラインスクリプトに入れるなら、文字列連結でコードに埋め込まず、`JSON.stringify` で JSON リテラルにしてから上の `escapeJsonForHtml` を通す。Client Component の props で渡せるならそちらを使う
+
+```tsx
+import Script from 'next/script';
+import { escapeJsonForHtml } from '@/lib/escape-json-for-html'; // 上の escapeJsonForHtml を切り出したもの
+
+// Bad: 値をコードに文字列連結する。name に `'; alert(1); //` が入ると任意コードになる
+// （Pages Router の beforeInteractive では `</script>` でもタグを抜けられる）
+export function UserInitBad({ name }: { name: string }) {
+  return <Script id="user-init">{`window.__USER_NAME__ = '${name}';`}</Script>;
+}
+
+// Good: JSON リテラルにしてから HTML 向けにエスケープする
+export function UserInit({ name }: { name: string }) {
+  return (
+    <Script id="user-init">
+      {`window.__USER_NAME__ = ${escapeJsonForHtml(JSON.stringify(name))};`}
+    </Script>
+  );
+}
+```
 
 **判断軸（そもそも埋め込みが必要か）**:
 - Next.js では Server Component から Client Component へは props 経由でデータが渡せる
@@ -281,8 +302,11 @@ const state = JSON.parse(script?.textContent ?? '{}');
 - [OWASP: XSS Prevention Cheat Sheet - HTML JavaScript Encoding](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html#output-encoding-rules-summary) (OWASP)
 - [serialize-javascript](https://github.com/yahoo/serialize-javascript) (Yahoo)
 - [JSON.stringify pitfalls](https://v8.dev/features/subsume-json) (V8)
+- [Next.js Docs: Scripts — Inline Scripts](https://nextjs.org/docs/app/guides/scripts#inline-scripts) (Next.js 公式、インラインの中身は JavaScript として書く。エスケープの記述はない) ※2026-10-25 確認
+- [vercel/next.js: packages/next/src/client/script.tsx](https://github.com/vercel/next.js/blob/canary/packages/next/src/client/script.tsx) / [pages/_document.tsx](https://github.com/vercel/next.js/blob/canary/packages/next/src/pages/_document.tsx) / [shared/lib/htmlescape.ts](https://github.com/vercel/next.js/blob/canary/packages/next/src/shared/lib/htmlescape.ts) (GitHub、中身は `innerHTML` / `textContent` でそのまま実行、`htmlEscapeJsonString` は Next.js 自身のデータにだけ使う) ※2026-10-25 確認
+- [GHSA-gx5p-jg67-6x7h: Cross-site scripting in beforeInteractive scripts with untrusted input](https://github.com/vercel/next.js/security/advisories/GHSA-gx5p-jg67-6x7h) (Next.js 公式アドバイザリ、CVE-2026-44580。影響 >=13.0.0 <15.5.16 / >=16.0.0 <16.2.5) ※2026-10-25 確認
 
-**バージョン**: 全モダンブラウザ
+**バージョン**: 全モダンブラウザ（`next/script` の挙動は Next.js 16.4.3 のソースで確認）
 **確信度**: 高
 **最終更新**: 2026-10-25
 

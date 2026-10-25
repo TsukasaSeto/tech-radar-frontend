@@ -321,12 +321,12 @@ Zenn記事が数学的根拠と実測データを提示: 1ファイルが barrel
 
 ### 6. Server Component 配下では Container/Presentational パターンで「データ取得」と「表示」を分離する
 
-React Server Components は React Testing Library / Storybook の対応が遅れているため、Server Component を直接ユニットテスト・ビジュアル確認するのが難しい。
+async な Server Component は Vitest / Jest でのユニットテストに対応しておらず（Next.js 公式は E2E テストを勧めている）、Storybook も `experimentalRSC`（実験的）で描画はできるが、DAL やファイルシステムなどサーバー資源に触れる部分はモックが必要になる。そのため Server Component を直接ユニットテスト・ビジュアル確認するのは手間がかかる。
 そこで **DAL 呼び出しなどサーバ処理を担う Container** と **props を受け取って表示するだけの Presentational** に明示的に分離し、Presentational 側をテスト・Storybook の対象にする。
 Container 配下は `_containers/<name>/` でコロケーションし、`index.tsx` から Container のみを再エクスポートして外部公開窓口とする（#5 の公開境界の 1 つ）。
 
 **根拠**:
-- RTL / Storybook が Server Component に未対応のため、純粋表示部だけを Client Component（または props 受け取りの関数コンポーネント）として切り出すとテスト・カタログ化が容易になる
+- async Server Component は Vitest / Jest で直接テストできず、Storybook の RSC 対応も実験的でデータアクセス層のモックが前提になる。純粋表示部だけを Client Component（または props 受け取りの関数コンポーネント）として切り出すと、モックなしでテスト・カタログ化できる
 - Container には DAL 呼び出し（§Data Access Layer）が集約され、Presentational は副作用フリーで「props → JSX」の純粋関数として扱える
 - ディレクトリ名 `_containers/` のアンダースコア prefix によりルーティング対象から除外され、`page.tsx` / `layout.tsx` と並べて配置しても URL を汚染しない
 - `index.tsx` 経由でのみ Container を公開し、lint（`eslint-plugin-import-access` や Biome の `noPrivateImports`）と組み合わせると、`presentational.tsx` への外部 import を機械的に禁止できる（`index.tsx` だけでは禁止できない）
@@ -387,6 +387,10 @@ export default async function Page({ params }: { params: Promise<{ postId: strin
 
 **出典**:
 - [Next.jsの考え方 / Container/Presentational パターン](https://zenn.dev/akfm/books/nextjs-basic-principle) (akfm_sato)
+- [Storybook Docs: Storybook for Next.js with Webpack — React Server Components (RSC)](https://storybook.js.org/docs/get-started/frameworks/nextjs#react-server-components-rsc) (Storybook 公式、10.6。`experimentalRSC` は実験的で、ストーリーを Suspense で包んでブラウザで描画する。サーバー資源に触れる場合はデータアクセス層のモックが必要。`@storybook/nextjs-vite` も同じ) ※2026-10-25 確認
+  > "Note that wrapping your server components in Suspense does not help if your server components access server-side resources like the file system or Node-specific libraries. To work around this, you'll need to mock out your data access layer"
+- [Next.js Docs: How to set up Vitest with Next.js](https://nextjs.org/docs/app/guides/testing/vitest) (Next.js 公式、async Server Component は Vitest が未対応で E2E テストを勧める。Jest のガイドも同じ) ※2026-10-25 確認
+  > "Since `async` Server Components are new to the React ecosystem, Vitest currently does not support them."
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 

@@ -181,15 +181,18 @@ Skill の設計原則（命名・粒度・description・改善サイクル）の
 | 15 | Design | エラーが Claude に届かずループ | 「何が・なぜ・次のステップ」を含む構造化エラーを返す |
 
 **コード例（環境変数の明示宣言・最小権限設定）**:
+
+`.claude/settings.json`:
 ```json
-// .claude/settings.json
 {
   "env": {
-    "API_BASE_URL": "${API_BASE_URL}",
+    "API_BASE_URL": "http://localhost:3000",
     "NODE_ENV": "development"
   }
 }
 ```
+
+`env` の値はシェルを通さず、書いたとおりの文字列で環境変数に入る。`"${API_BASE_URL}"` や `$HOME` は展開されず、しかも `env` の値はシェルで export した同名の変数を上書きするため、`"API_BASE_URL": "${API_BASE_URL}"` と書くと実際の値が `${API_BASE_URL}` という文字列に置き換わる。`env` にはチームで共通の固定値だけを書き、マシンごとに変わる値や秘密情報はシェルで export する（API の認証情報は `apiKeyHelper` を使う）。
 
 ```markdown
 <!-- .claude/skills/code-review/SKILL.md — Skill ごとのツール制御は SKILL.md の frontmatter に書く -->
@@ -210,7 +213,7 @@ disallowed-tools: Write Edit
 - [ ] 1文で目的が言える（「〜と〜」が必要なら分割）
 - [ ] 既存スキルとの責任重複がない
 - [ ] 各ステップの失敗時の動作が明記されている
-- [ ] 環境変数が `settings.json` の `env` に宣言されている
+- [ ] Skill が使う環境変数の置き場所が決まっている（チーム共通の固定値は `settings.json` の `env`、マシン依存の値や秘密情報はシェルの export。`env` では `${}` が展開されない）
 - [ ] パスが絶対パスまたは `$(git rev-parse --show-toplevel)` 相対
 - [ ] SKILL.md の `allowed-tools` が最小限で、使わせないツールは `disallowed-tools` に、必ず止める操作は `permissions.deny` / PreToolUse hook に置いている
 
@@ -232,6 +235,8 @@ disallowed-tools: Write Edit
 
 **出典**:
 - [Extend Claude with skills](https://code.claude.com/docs/en/skills) (Claude Code 公式 docs、`allowed-tools` は事前承認でツールを制限しない・`disallowed-tools` は実行中だけツールを外す) ※2026-10-25 確認
+- [Environment variables](https://code.claude.com/docs/en/env-vars) (Claude Code 公式 docs、"Set variables in settings files": `env` の値は書いたとおりにコピーされ、シェルで処理されないため `~` や `$HOME` は展開されない) ※2026-10-25 確認
+- [All settings](https://code.claude.com/docs/en/settings-reference) (Claude Code 公式 docs、`env` の値はシェルで export した同名の変数を上書きする) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
@@ -245,9 +250,9 @@ disallowed-tools: Write Edit
 コンテキスト内の情報確認に最適で、新規情報の取得・コマンド実行が必要な場合はサブエージェントを使い分ける。
 
 **根拠**:
-- プロンプトキャッシュにより最小コストでコンテキスト参照が可能
-- 応答が会話履歴に入らないため余分なコンテキスト消費を防ぐ
-- 公式ドキュメント: "it sees your full conversation but has no tools, while a subagent has full tools but starts with an empty context"
+- プロンプトキャッシュが温かいうちは、回答以外のコストがほとんどかからない
+- 質問と回答が会話履歴に入らないため余分なコンテキスト消費を防ぐ。Claude の応答中でも実行でき、メインのターンを中断しない
+- 公式ドキュメント: "`/btw` sees your full conversation but has no tools. A subagent has tools and starts from the prompt it receives, or, for a fork, from a copy of this conversation."
 
 **使い分け基準**:
 
@@ -256,8 +261,10 @@ disallowed-tools: Write Edit
 | 以前触れたファイル名・関数名の確認 | `/btw` |
 | 設計判断の再確認（なぜ〜にしたか） | `/btw` |
 | 新しいファイルを読む・コマンドを実行 | subagent |
+| `/btw` の回答を起点にツールを使って続ける | `/btw` の画面で `f`（質問と回答を引き継いだ fork サブエージェントを起動。ローカルセッションのみ） |
 | 会話を過去の状態に戻したい | `/rewind` |
-| 独立した調査を並列で行う | `/fork` / subagent |
+| 会話を引き継いだ別作業を並行させ、結果をこの会話に戻す | `/subtask`（fork サブエージェント） |
+| 会話をコピーした別セッションで並行作業する | `/fork`（v2.1.212 以降はバックグラウンドセッションとして `claude agents` に並び、コード変更前に専用の worktree を作る。agent view を無効にしている場合は fork サブエージェントを起動する） |
 
 **典型的な使い方**:
 ```
@@ -268,16 +275,21 @@ disallowed-tools: Write Edit
 
 **制約**:
 - Claude Code v2.1.72+（2026年3月リリース）が必要（`claude --version` で確認）
-- フォローアップ質問不可（1回限りの応答、会話履歴に残らない）
+- ターミナルのオーバーレイでは 1 回の質問に 1 回の応答で、続けるときは再度 `/btw` を送る。直近 20 件の `/btw` のやり取りは次の `/btw` に引き継がれる（`x` で消去、Claude Code を終了すると消える）。どのやり取りも会話履歴には入らない。VS Code 拡張（v2.1.227+）ではパネル内でそのままフォローアップできる
 - ツール不使用のためファイル読み込みや Web 検索は不可
 
 **出典引用**:
 > "it sees your full conversation but has no tools, while a subagent has full tools but starts with an empty context."
-> ([Claude Codeの /btw で開発を止めない：コンテキスト共有と /rewind・subagent との使い分け基準](https://zenn.dev/dearone/articles/672ef7b7e9f407), セクション "What is /btw?") ※2026-05-08に実際にfetch成功
+> ([Claude Codeの /btw で開発を止めない：コンテキスト共有と /rewind・subagent との使い分け基準](https://zenn.dev/dearone/articles/672ef7b7e9f407), セクション "What is /btw?") ※2026-05-08に実際にfetch成功（fork が加わる前の公式記述の引用。現行の記述は根拠を参照）
 
-**バージョン**: Claude Code v2.1.72+
-**確信度**: 中
-**最終更新**: 2026-05-08
+**出典**:
+- [Interactive mode](https://code.claude.com/docs/en/interactive-mode) (Claude Code 公式 docs、"Side questions with /btw": 直近 20 件のやり取りの引き継ぎ・`f` での fork・VS Code パネルでのフォローアップ・プロンプトキャッシュが温かいうちは低コスト) ※2026-10-25 確認
+- [Commands](https://code.claude.com/docs/en/commands) (Claude Code 公式 docs、`/fork` は会話を新しいバックグラウンドセッションにコピー・`/subtask` は fork サブエージェント) ※2026-10-25 確認
+- [Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (v2.1.212: `/fork` がバックグラウンドセッションへのコピーに変わり、従来のセッション内サブエージェントは `/subtask` に) ※2026-10-25 確認
+
+**バージョン**: Claude Code v2.1.72+（`/fork` の現行仕様は v2.1.212+）
+**確信度**: 高
+**最終更新**: 2026-10-25
 
 ---
 
@@ -643,7 +655,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - 「リポジトリを読めば分かること」（ディレクトリ構造・依存関係リスト・機能チェックリスト等）は書かない。実装が進むと必ず乖離し、古い記述がそのまま誤った指示として残り続けて害になる。ある実例では構造情報中心の309行のAGENTS.mdを、設計判断・禁止事項・現在のフェーズ・設定例外だけに絞った24〜65行まで削減した
 - MCP は **Opt-in モデル**で管理する：常時接続 MCP が増えるほど起動遅延・コンテキスト肥大・CI 不安定が生じる。個人（`~/.codex/config.toml`）→ リポジトリ（`.codex/config.toml` でツールレベル allowlist）→ CI（最小構成）の3層で制御し、タスク要件なしに MCP を自動呼び出ししない
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
-- **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
+- **AGENTS.md（Codex CLI）と CLAUDE.md（Claude Code）の読み込み規則は逆向きではなく、読む範囲と単位が違う**: どちらもルート側から作業ディレクトリまでのファイルを連結し、作業ディレクトリに近いファイルほど後ろに置かれて競合時に優先される。Codex CLI はプロジェクトルート（通常は Git ルート）から作業ディレクトリまでを 1 ディレクトリ 1 ファイル（`AGENTS.override.md` → `AGENTS.md` → `project_doc_fallback_filenames` の順で最初に見つかったもの）で連結し、作業ディレクトリより下は読まず、合計が `project_doc_max_bytes`（既定 32 KiB）に達すると以降を足さない。Claude Code はファイルシステムのルートまでのすべての祖先の `CLAUDE.md` と `CLAUDE.local.md` を起動時に連結し、作業ディレクトリより下の `CLAUDE.md` はそのディレクトリのファイルを読む・編集したときに読み込む。モノレポのルートで `ln -s AGENTS.md CLAUDE.md` すると、既定の Project instructions（`claude-md-or-agents-md`）では作業ディレクトリ以上に `CLAUDE.md` があることになり、Claude Code はサブディレクトリの `AGENTS.md` を読まなくなる（下の「`AGENTS.md` は `CLAUDE.md` が無いときだけ読まれる」を参照）。サブディレクトリの指示も効かせたいなら、各ディレクトリに同じ symlink を置くか、Project instructions を `claude-md-and-agents-md` にする。`claudeMdExcludes` は、モノレポで他チームの `CLAUDE.md` を読み込みたくない場合の除外設定として使う
 - **「どの CLI がどのファイル名を読むか」は推測せず、カナリア値で実測する**: 各候補ファイル名（`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` 等）に固有の合言葉だけを書いた指示を置き、各 CLI にゼロショットで質問して合言葉を復唱させれば、そのツールが実際にどのファイルを読んでいるかが確実に分かる。ツールが「ファイルを開いてはいるが指示に従っていない」ケース（本文中の Antigravity の例）もあるため、復唱の有無まで見ないと「読んでいる」と「従っている」を混同する。正本を1ファイルに絞った後、他ツールの設定ファイルには本文でなく参照 1 行だけを置く場合は、参照行はツールの自動ロード対象ではなく AI 自身が明示的に開かない限り届かない点に注意する
 - **`AGENTS.md` は `CLAUDE.md` が無いときだけ読まれる（Claude Code v2.1.277+）**: 作業ディレクトリ以上に `CLAUDE.md` / `.claude/CLAUDE.md` / `CLAUDE.local.md` のいずれかがあると `CLAUDE.md` 側が優先され、`AGENTS.md` の指示は効かない（`~/.claude/CLAUDE.md` と `.claude/rules/` はこの判定に含まれない）。個人用に `CLAUDE.local.md` を 1 枚置いただけでも `AGENTS.md` が読まれなくなる。読む側を切り替える `pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`（v2.1.285 より前の ID は `agents-md@builtin`）は `~/.claude/settings.json`・`--settings` ファイル・managed settings からのみ読まれ、プロジェクトの `.claude/settings.json` に書いても無視される（公式仕様。実測でも変化しなかった）。他ツール向けに `AGENTS.md` だけを運用していたチームが後から `CLAUDE.md` を 1 枚追加すると、エラーもなく `AGENTS.md` が無効になる。共存させるなら `CLAUDE.md` に `@AGENTS.md` を書いて明示的にインポートするか、`/config` の Project instructions で読む側を切り替える。サブエージェントで `CLAUDE.md` を読ませたくない場合は定義に `omitClaudeMd: true`（v2.1.271）を指定する
 
@@ -701,8 +713,8 @@ codex exec --skip-git-repo-check "hello"
 # → CANARY-1234 を復唱したツールだけがそのファイル名を実際に読んでいる
 ```
 
+`.claude/settings.local.json`（モノレポで他チームの `CLAUDE.md` や rules を読み込まない）:
 ```json
-// .claude/settings.json で意図しない CLAUDE.md 連結を除外する（解決規則の違いへの対策）
 {
   "claudeMdExcludes": [
     "**/monorepo/CLAUDE.md",
@@ -731,7 +743,7 @@ codex exec --skip-git-repo-check "hello"
 > ([AGENTS.md / CLAUDE.md / copilot-instructions.md の増殖を、宣言で終わらせる](https://qiita.com/takashi-matsuyama/items/52cca442efe77ec84f70), セクション "symlink の限界") ※2026-07-11に実際にfetch成功
 
 > "Agents automatically read the nearest file in the directory tree, so the closest one takes precedence."（AGENTS.md の解決規則） / "All discovered files are concatenated into context rather than overriding each other."（CLAUDE.md の解決規則）
-> ([AGENTS.md と CLAUDE.md は解決規則が逆 — symlink する前に確認すること](https://zenn.dev/tsutomusaito/articles/agents-md-claude-code-resolution), セクション "本題: 解決規則が逆向き") ※2026-08-22に実際にfetch成功
+> ([AGENTS.md と CLAUDE.md は解決規則が逆 — symlink する前に確認すること](https://zenn.dev/tsutomusaito/articles/agents-md-claude-code-resolution), セクション "本題: 解決規則が逆向き") ※2026-08-22に実際にfetch成功（Codex CLI の公式 docs では AGENTS.md もルートから連結され、近いファイルが後ろに来て優先される。記事の「逆向き」という対比は採らず、根拠には公式の記述を使った）
 
 > "ファイル名を `CLAUDE.md` や `GEMINI.md` に変えて同じことをすれば、どの名前を読むかが分かります。"
 > ([CLAUDE.md と AGENTS.md と GEMINI.md を全部書くのをやめた。どの AI CLI が何を読むか実測して正本 1 本に寄せる](https://qiita.com/ishizakahiroshi/items/ffecb88684c29803b3c6), セクション "どの CLI が何を読むのか") ※2026-08-29に実際にfetch成功
@@ -750,6 +762,10 @@ codex exec --skip-git-repo-check "hello"
 
 > 「`pluginConfigs["agents-md@builtin"].options.instructionFiles`をプロジェクトスコープの`.claude/settings.json`に書いても、観測は`CLAUDE_MD_MARKER`のまま変化しませんでした」
 > ([AGENTS.md移行チェックリスト:確認できた3項目、再現しなかった2項目、そして--setting-sourcesという伏兵](https://zenn.dev/clopy/articles/claude-code-agents-md-fallback-migration-checklist), セクション "3. プロジェクトスコープのsettings.jsonキーは無視される") ※2026-10-25 確認
+
+**出典**:
+- [Custom instructions with AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md) (OpenAI Codex 公式 docs、プロジェクトルートから作業ディレクトリまでを 1 ディレクトリ 1 ファイルで連結し、近いファイルが後ろに来て優先される・`project_doc_max_bytes` 既定 32 KiB) ※2026-10-25 確認
+- [How Claude remembers your project](https://code.claude.com/docs/en/memory) (Claude Code 公式 docs、"How CLAUDE.md files load": 祖先の `CLAUDE.md` をルート側から連結・サブディレクトリは遅延ロード、"When Claude Code reads AGENTS.md"・"Choose which instruction files load"・`cc-plugin-agents-md@builtin` の ID は v2.1.285 より前は `agents-md@builtin`) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン、`AGENTS.md` ネイティブフォールバックは 2.1.277 以降）、複数AIエージェント共存環境
 **確信度**: 中
@@ -1112,6 +1128,7 @@ exit 1
 **出典**:
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、入力は stdin の JSON・PostToolUse は「the tool already ran」で実行を止められない) ※2026-10-25 確認
 - [githooks — pre-push](https://git-scm.com/docs/githooks#_pre_push) (Git 公式 docs、pre-push はリモート名と URL を引数で受け取る・`--no-verify` で pre-commit を飛ばせる) ※2026-10-25 確認
+- [gitleaks `.pre-commit-hooks.yaml`](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (gitleaks 公式、pre-commit フックの `entry` は `gitleaks git --pre-commit --redact --staged --verbose`。`git` サブコマンドは v8.19.0 以降で、`gitleaks git [flags] [repo]` の形でリポジトリのパスを渡せる) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
@@ -1266,7 +1283,7 @@ exit 0
 - 繰り返す作業を Skill に変換することで、同じプロンプト指示を毎回書かずに済む
 - Skills（「何を考えるか」）と MCP（「何にアクセスするか」）を組み合わせることで複雑なタスクに対応できる
 - Hooks で品質ゲート（linting・テスト実行）を自動化することで、コンテキストを保ちながら品質を維持できる
-- 第三者 Skill には悪意あるコードが混入するリスクがある（2025年のClawHavoc事件では341個の不正Skillが発見された）
+- 第三者 Skill には悪意あるコードが混入するリスクがある。Koi Security が 2026-02-01 に報告した ClawHavoc では、OpenClaw のコミュニティ Skill マーケットプレイス ClawHub の全 2,857 件を監査して 341 件の悪意ある Skill が見つかり、うち 335 件が同一キャンペーン（「前提条件」の手順で macOS 向け情報窃取マルウェア Atomic Stealer を導入させる手口）だった。2026-02-16 の追記では、10,700 件超に増えたマーケットプレイスで 824 件に増えている。Claude Code の Skill の事例ではないが、第三者の Skill を導入するときに共通するリスクとして扱う
 - Skill そのものの設計（Skill を SSOT として育てる ASDD・「配管」だけを Skill にする判断・修正後の 3 ステップ確認・description の書き方と一覧の文字数予算）は Rule #5 に集約している。詳細は `practices/ai-agent/claude-code.md` #5 を参照
 - 2,000人規模の運用が示す通り、個人の発見を組織資産（Skill/Routine）に変換し続けることが自動化の深度を決める。ツールを配布するだけでは個人知見が組織に広まらない——使い込む時間の長さが深度を決めるため、フィードバックループを持つ研修・スキル化サイクルを組む。ROI 評価は「コスト削減」ではなく「開発速度・品質改善のボトルネック解消」で測る
 
@@ -1304,7 +1321,7 @@ claude mcp add --scope user my-personal-tool -- node ~/tools/my-tool.js
 claude mcp add github-mcp -- npx -y @some/github-mcp-server
 ```
 
-**`enableAllProjectMcpServers` と workspace trust**: `.claude/settings.json` に `enableAllProjectMcpServers: true` をコミットすると、workspace trust を承認したプロジェクトでは `.mcp.json` のサーバーが個別承認なしで有効になる。trust 未承認のフォルダではこの設定は無視される（新規 clone で `claude mcp get <name>` が `Pending approval` のままなのは仕様）。ただし信頼ダイアログを出さない `claude -p` と Agent SDK（`settingSources` にプロジェクト設定を含む場合）では、この設定の有無にかかわらず `.mcp.json` のサーバーが承認なしで接続される。CI のチェックアウトで `claude -p` を動かす場合は trust ゲートが働かない前提で扱い、未信頼のリポジトリや PR には隔離環境と `--setting-sources user` / `--bare` を使う（Rule #13）。一方で trust 承認後は、PR で `.mcp.json` に追加されたサーバーまで承認プロンプトなしで有効になるため、この設定をコミットするなら `.mcp.json` の差分を必ずレビュー対象にする（CODEOWNERS 等）。なお、起動中の Claude Code セッション内（Bash ツール経由を含む）から入れ子で `claude mcp add/list/get` を実行すると、継承された `CLAUDECODE=1` の影響で実際の設定に関係なく「未登録」と誤報告されるため、検証は通常のターミナルで行う
+**`enableAllProjectMcpServers` と workspace trust**: `.claude/settings.json` に `enableAllProjectMcpServers: true` をコミットすると、workspace trust を承認したプロジェクトでは `.mcp.json` のサーバーが個別承認なしで有効になる。trust 未承認のフォルダではこの設定は無視される（新規 clone で `claude mcp get <name>` が `Pending approval` のままなのは仕様）。ただし信頼ダイアログを出さない `claude -p` と Agent SDK（`settingSources` にプロジェクト設定を含む場合）では、この設定の有無にかかわらず `.mcp.json` のサーバーが承認なしで接続される。CI のチェックアウトで `claude -p` を動かす場合は trust ゲートが働かない前提で扱い、未信頼のリポジトリや PR には隔離環境と `--setting-sources user` / `--bare` を使う（Rule #13）。一方で trust 承認後は、PR で `.mcp.json` に追加されたサーバーまで承認プロンプトなしで有効になるため、この設定をコミットするなら `.mcp.json` の差分を必ずレビュー対象にする（CODEOWNERS 等）。なお、claude CLI 2.1.284 で検証した記事では、起動中の Claude Code セッション内（Bash ツール経由を含む）から入れ子で `claude mcp add/list/get` を実行すると、継承された `CLAUDECODE=1` の影響で実際の設定に関係なく「未登録」と誤報告されたと報告されている（著者は `env -i` で環境を空にして回避）。公式ドキュメントに記載はなく、2.1.310 / macOS で local・project スコープのサーバーを入れ子と `CLAUDECODE` 等を外した環境で比べた確認では同じ結果だった。入れ子の実行は `CLAUDE_CONFIG_DIR` などの環境変数も引き継ぐため、設定の検証は通常のターミナルで行う
 
 **MCP トランスポート選択**: クラウドサービス（Notion, Stripe, Sentry）→ HTTP が推奨。ローカルツール・CLI → Stdio。外部コンテンツを fetch する MCP サーバーはプロンプトインジェクションリスクがあるため、read-access と external-send を同時に有効化しない（詳細は `security/dependency-security.md` Rule #7 参照）
 
@@ -1369,8 +1386,9 @@ refactor: extract auth logic to separate module
 - [約2,000人が使うClaude Codeと向き合う。](https://developers.cyberagent.co.jp/blog/archives/64334/) (CyberAgent Engineering Blog、2,000人規模でのスキル・ルーティン化・ROI評価の組織的実践) ※2026-06-18 fetch
 - [Claude Code の MCP 連携 — 3 つの transport、scope の優先順位、企業向けコントロールまでの全体像](https://qiita.com/akihidem/items/405d5d07837c1e202af1) (Qiita akihidem、HTTP/Stdio/SSE の選択・5段階スコープ優先順位・managed-mcp.json によるエンタープライズ制御) ※2026-06-23 fetch
 - [claude mcp add の --scope local / project / user の違いと使い分け](https://qiita.com/aicoding-guide/items/e827d0151736664ef91b) (Qiita aicoding-guide、`--scope` 省略時は local になる点・`claude mcp reset-project-choices`) ※2026-09-24 fetch
-- [committedなenableAllProjectMcpServers: trueはworkspace trust未承認なら効かない](https://zenn.dev/clopy/articles/claude-mcp-server-scope-decision) (Zenn clopy、claude CLI 2.1.284 での trust 未承認時の挙動の再現。承認後にツール呼び出しが成功するかは未検証) ※2026-10-04 fetch
+- [committedなenableAllProjectMcpServers: trueはworkspace trust未承認なら効かない](https://zenn.dev/clopy/articles/claude-mcp-server-scope-decision) (Zenn clopy、claude CLI 2.1.284 での trust 未承認時の挙動の再現。承認後にツール呼び出しが成功するかは未検証。入れ子実行時の `CLAUDECODE=1` による誤報告は著者の観察) ※2026-10-04 fetch
 - [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、"What runs before you trust a folder": `claude -p` / SDK では `.mcp.json` のサーバーが承認なしで接続される) ※2026-10-25 確認
+- [ClawHavoc: 341 Malicious Clawed Skills Found by the Bot They Were Targeting](https://www.koi.ai/blog/clawhavoc-341-malicious-clawedbot-skills-found-by-the-bot-they-were-targeting) (Koi Security の一次報告、2026-02-01 公開・2026-02-16 追記。現在は URL が Palo Alto Networks のページへ転送されるため [Wayback Machine の保存版](http://web.archive.org/web/20260806092150/https://www.koi.ai/blog/clawhavoc-341-malicious-clawedbot-skills-found-by-the-bot-they-were-targeting) で確認) ※2026-10-25 確認
 
 **出典引用**:
 > 「どれだけ長く使い込むかが自動化の深さを決める」
@@ -1585,6 +1603,7 @@ sys.exit(0)  # 問題がなければ何も返さず終了を許す
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、入力は stdin の JSON・Stop の入力は `last_assistant_message` / `stop_hook_active`・継続は `decision: "block"`・PreCompact の入力は `transcript_path`・Stop と PreCompact は同期なら exit 2 で止められる・`continue: false` には `stopReason` を添える) ※2026-10-25 確認
 - [AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson) (Zenn numarn、`matcher: Bash` のみでは `Write` ツール経由の迂回を防げない実測。Rule #9 から集約) ※2026-08-05 fetch
 - [ESLint Command Line Interface — --fix](https://eslint.org/docs/latest/use/command-line-interface#--fix) (ESLint 公式 docs、`--fix` は対象ファイルの修正可能な問題を直す) ※2026-10-25 確認
+- [gitleaks `.pre-commit-hooks.yaml`](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (gitleaks 公式、pre-commit フックの `entry` は `gitleaks git --pre-commit --redact --staged --verbose` で、Layer 0 の例と同じフラグ構成。`git` サブコマンドは v8.19.0 以降) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
@@ -1809,15 +1828,16 @@ approval_workflow {
 ### 14. 大規模タスクのコンテキスト消費は70%/85%を閾値として管理し、設計決定・進捗・文脈を`.claude/`ファイルで永続化する
 
 Claude Code のコンテキストウィンドウを「記憶」として使うと、大規模リファクタリングや長期タスクでは
-70% 超え以降に「コンテキストロット」（設計決定の忘却・矛盾の増加）が起き、85% 超えでコンパクションループや損失が発生する。
+使用率が上がるにつれて「コンテキストロット」（設計決定の忘却・矛盾の増加）が起き、自動圧縮で情報が失われる。
+12 万行の Spring Boot モノリスを 200K ウィンドウでリファクタリングした記事の経験則では、70% が手を打つライン、85% 超えは手遅れとされる。
 コンテキストウィンドウは「作業スペース」として扱い、永続化が必要な情報は必ず `.claude/` 配下のファイルに外部化する。
 
 **根拠**:
-- ファイル1件の読み込み ≈ 3,000 トークン。100ファイルのモノリスは200Kウィンドウを超過する
-- 70%: 応答速度の低下・確認頻度の増加など最初の症状が出る → この段階で外部化を実施する
-- 85%: 自動コンパクションループ・データ損失が起き始める → この段階では手遅れ
+- 同記事の概算では、ファイル1件を丸ごと読むと約 3,000 トークンで、100 ファイルを全部読ませると約 30 万トークンになり 200K ウィンドウを超える
+- 70% / 85% は同記事の経験則で、測定データは示されていない。70% 前後で矛盾する提案や重複提案などの症状が出始めたら外部化と `/compact` を行い、85% 超えは手遅れとみなす
+- 自動圧縮が走るタイミングは公式にはモデルと設定で決まり、固定の % ではない（既定ではモデルのコンテキスト上限付近で圧縮し、1M ウィンドウのモデルは約 967K トークン。`/autocompact` や `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` で早められる）。公式の可視化・制御は Rule #50 を参照
 - セッション間の引き継ぎを外部ファイルに書くと、複数セッション・並列ワークツリーが同じ決定を参照できる
-- Plan Mode（設計フェーズのみで使用）を先行させるとトークン消費を40〜60%削減できる
+- Plan Mode（設計フェーズのみで使用）を先行させると、実装中のツール呼び出しが発生しない分トークン消費を抑えられる（同記事は 40〜60% 削減とするが、測定条件は示されていない）
 - CLAUDE.md でステートファイル保存先パスを **明示的に指定する**。「シリアライズしてください」という抽象的な指示だけだと、ネストしたプロジェクト構造でサブディレクトリに保存され、ルートの状態ファイルが古いままになる事故が起きる
 
 **コード例**:
@@ -1889,10 +1909,12 @@ Claude Code のコンテキストウィンドウを「記憶」として使う�
 
 **出典**（追加）:
 - [Claude Codeが「あなたが言っていない指示」を、あなたのタスクとして実行しかけた——長いセッションの文脈の圧縮のあとに起きる捏造](https://qiita.com/yurukusa/items/6f0b8c1d6c41f196cf2a) (Qiita yurukusa、圧縮境界・ツール失敗直後に集中する事実捏造の報告と検証手順) ※2026-07-06 fetch
+- [Claude Codeのコンテキスト枯渇に立ち向かう──大規模リファクタリングのセッション設計](https://zenn.dev/miyan/articles/claude-code-context-exhaustion-strategy) (Zenn miyan、70% / 85% の経験則・Plan Mode の 40〜60% 削減・1 ファイル約 3,000 トークンの概算。いずれも測定条件の記載なし) ※2026-10-25 確認
+- [Model configuration — Default auto-compact thresholds](https://code.claude.com/docs/en/model-config#default-auto-compact-thresholds) (Claude Code 公式 docs、自動圧縮のタイミングはモデルと設定で決まる・1M ウィンドウのモデルは約 967K トークンで圧縮) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン）
-**確信度**: 中
-**最終更新**: 2026-07-06
+**確信度**: 低（70% / 85% と削減率は 1 記事の経験則）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -2221,12 +2243,15 @@ Sentry MCP または Sentry CLI でエラーの詳細（スタックトレース
 
 **コード例**:
 ```bash
-# Sentry MCP を Claude Code に追加（ワンコマンド）
-npx add-mcp https://mcp.sentry.dev/mcp
+# Sentry MCP を Claude Code に追加（Sentry 公式の手順。初回接続時に OAuth で Sentry アカウントに接続する）
+claude mcp add --transport http sentry https://mcp.sentry.dev/mcp
+# 特定の組織・プロジェクトに絞る場合は https://mcp.sentry.dev/mcp/{organizationSlug}/{projectSlug} を指定する
 
 # または Sentry CLI を直接インストール
 curl https://cli.sentry.dev/install -fsS | bash
 ```
+
+複数のコーディングエージェントにまとめて登録する `npx add-mcp https://mcp.sentry.dev/mcp` という方法もあるが、`add-mcp` は Sentry や Anthropic のツールではないサードパーティの npm パッケージ（neon-solutions/add-mcp）なので、使う場合は中身と書き込み先の設定ファイルを確認してから実行する。
 
 **典型的なワークフロー**:
 1. Sentry MCP 経由でエラー詳細（スタックトレース・ユーザー操作パンくず）を取得
@@ -2245,9 +2270,11 @@ Sentry が社内実装している `repro` スキルの設計原則: issue URL �
 **出典**:
 - [Sentry Blog: Agents Need Production Context](https://blog.sentry.io/agents-need-production-context/) (Sentry公式ブログ) ※2026-05-27に実際にfetch成功
 - [Works on my machine: how we use AI to reproduce reported bugs](https://blog.sentry.io/ai-bug-reproduction/) (Sentry公式ブログ、バグ再現スキルの設計) ※2026-06-08に実際にfetch成功
+- [Sentry MCP Server](https://mcp.sentry.dev/) (Sentry 公式、docs.sentry.io/ai/mcp/ の転送先。Claude Code は `claude mcp add --transport http sentry https://mcp.sentry.dev/mcp/{organizationSlug}/{projectSlug}`・ベース URL は `https://mcp.sentry.dev/mcp`・接続は OAuth) ※2026-10-25 確認
+- [add-mcp（npm）](https://www.npmjs.com/package/add-mcp) (neon-solutions/add-mcp のサードパーティ製 CLI。Sentry の MCP ページには記載なし) ※2026-10-25 確認
 
 **確信度**: 高
-**最終更新**: 2026-06-09
+**最終更新**: 2026-10-25
 
 ---
 
@@ -2679,7 +2706,7 @@ UI の再設計・認証フローの変更は本タスクに含まない
 
 ### 22. ネスト型サブエージェントは `.claude/agents/` フロントマターで定義し、階層ごとに Haiku / Sonnet / Opus を使い分ける
 
-Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入れ子にできる。各階層は独立したコンテキストを持つため、深い階層ほどトークン消費が増大する。「葉は Haiku（探索・読み取り）、中間推論は Sonnet、最終合成のみ Opus」という深さ別モデル設計で、品質を保ちながらコストを抑える。
+Claude Code v2.1.219 以降、サブエージェントは既定でメイン会話の下に 3 階層まで入れ子にでき、`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` で階層数を変えられる（v2.1.172〜v2.1.216 は 5 階層で固定、v2.1.217〜v2.1.218 は既定 1）。各階層は独立したコンテキストを持つため、深い階層ほどトークン消費が増大する。「葉は Haiku（探索・読み取り）、中間推論は Sonnet、最終合成のみ Opus」という深さ別モデル設計で、品質を保ちながらコストを抑える。
 
 **根拠**:
 - `.claude/agents/` 配下の YAML フロントマターで `model:` フィールドを指定すると、サブエージェントごとにモデルを切り替えられる（Claude Code 公式機能）
@@ -2688,7 +2715,7 @@ Claude Code v2.1.172 以降、サブエージェントは最大5階層まで入�
 - **v2.1.251 以降、`CLAUDE_CODE_SUBAGENT_MODEL` は frontmatter で `model:` を明示指定したサブエージェントを上書きしない**（frontmatter 側が優先される、安全側のデフォルト挙動）。公式ドキュメントでは `CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`（v2.1.257+）を併せて設定すると、サブエージェント・チームメイト・workflow agent すべてが `CLAUDE_CODE_SUBAGENT_MODEL` のモデルで動くとされる（出典記事の検証では結果が不定だった）。深さ別モデル設計を環境変数の一括切り替えに頼る場合、個別に `model:` を pin したサブエージェントだけは環境変数の対象外になる点を前提に設計する
 - 188セッション・14,000ターンの実測調査では、体感的な「フリーズ」の大半（60秒以上の無応答376件中375件）はAPI待ちやネットワーク遅延ではなく、複雑な依頼を受けたメインセッションが thinking + 出力を数千〜数万トークン一気に生成していることが原因だった。探索タスクをメインセッションに残さず軽量サブエージェントに委譲すれば、この「長考生成による無応答」自体を減らせる
 - 委譲基準を「読み取り専用操作が8回連続したら委譲する」のように定量化して CLAUDE.md に明記し、hooks でコンプライアンス（委譲し忘れ）を検知すると、委譲基準の形骸化を防げる
-- v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**。深さ設計を変えずに従来動作へ戻したい場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。最大階層数（5階層、上記参照）とデフォルトで実際に生成される深さは別の設定値である点に注意し、コスト試算をする際はどちらの数値を参照しているか明確にする。別著者（haruhiro1020, 2026-08-24 Zenn）が公式 changelog（code.claude.com/docs/en/changelog, v2.1.212/217/219）を出典として同じ変更を確認し、実機検証で「メインは深さの数に入らず、最初のサブエージェントが depth 1」という数え方も確定させた
+- v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**。ネストを無効にする（v2.1.217〜v2.1.218 の既定と同じにする）場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。この変数（v2.1.217+）は正の整数だけを受け付け、上限を変えることはできても外すことはできない。現行版に「最大 5 階層」という別の上限は無く、5 階層固定だったのは v2.1.172〜v2.1.216 の挙動である。上限に達したサブエージェントからは `Agent` ツールが外される（fork はツール一覧に残るが呼ぶとエラーになる）。別著者（haruhiro1020, 2026-08-24 Zenn）が公式 changelog（code.claude.com/docs/en/changelog, v2.1.212/217/219）を出典として同じ変更を確認し、実機検証で「メインは深さの数に入らず、最初のサブエージェントが depth 1」という数え方も確定させた（公式の「メイン会話の下に 3 階層」と一致する）
 - **深さ3を使わない設計判断もある**: デフォルトが3になっても、全サブエージェントを depth 1 に固定し `Agent` ツールを一切付与しない運用例がある。階層を深める前のチェック項目として「(1) 子はなぜ親のコンテキストを汚さないために存在するのか (2) 戻り値は親が検証可能か (3) tools 権限は本当に最小か (4) 再構成後、人間承認はどこに残るか」を確認する。根拠は「権限では縛りきれないものがある」（例: `Bash` を渡した時点で `Write` を渡さないことによる保証は消えている）という定義レベル/プロンプトレベル/実行時レベルの三層区別で、深さを増やすと人間承認ゲートを失うリスクが主な障壁になる
 - フロントマターで公式に必須なのは `name` と `description` の2フィールドのみで、`tools` / `model` は省略可能（省略時は継承）。新規に `.claude/agents/` ディレクトリを作った直後（そのスコープで初めてサブエージェントを作った直後）や `--disable-slash-commands` 付き起動（ディレクトリ監視自体を行わない）では、定義ファイルを認識させるのにセッション再起動が必要になる
 - **`tools:` フロントマターでの `Bash(git diff:*)` のようなパターン絞り込みは、実際には Bash ツール全体を渡してしまう**: `tools: ["Read", "Bash(git diff:*)"]` を与えたサブエージェントに `node --version` を実行させたところ普通に成功した（本来 `git diff` 系のみを許可したつもりだった）。`tools: ["Read"]` のみのサブエージェントでは同じ指示が失敗したことから、`disallowedTools` がパターン一致に関わらずツール単位で丸ごと除去するのと非対称に、`tools` の許可リスト側ではサブコマンドパターンが実効的なフィルタとして機能しない。コマンド単位で絞り込みたい場合は `tools` 定義に期待せず、`PreToolUse` hook で実際にコマンド文字列を検証する
@@ -2710,7 +2737,7 @@ model: haiku
 # デフォルトモデルの一括設定(深い階層の探索エージェントを Haiku に固定)
 export CLAUDE_CODE_SUBAGENT_MODEL=haiku
 
-# v2.1.219 で拡張されたデフォルトのネスト深さ(1→3)を元に戻す(未公式検証)
+# サブエージェントのネストを無効にする(v2.1.219 以降の既定は 3)
 export CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1
 ```
 
@@ -2813,14 +2840,15 @@ tools: Read, Grep, Edit, Write, Bash
 - [Claude Codeサブエージェントの暴走と再帰ループ防止パターン](https://qiita.com/yurukusa/items/f75c17c3b37759c0009b) (Qiita) ※2026-06-27 fetch
 - [Claude Code (Opus 4.8) が数分固まる問題、188セッション実測したら原因はAPIでもネットワークでもなかった](https://zenn.dev/yuki_fujisawa/articles/a155d388e61acc) (Zenn、188セッション・14,000ターンの実測調査) ※2026-07-05 fetch
 - [サブエージェントを自作したら、description書き忘れはエラーゼロで黙って無視されていた](https://zenn.dev/numarn/articles/claude-code-subagent-definition-handson) (Zenn numarn、description 欠落時のサイレント除外という新しい失敗モード) ※2026-07-06 fetch
-- [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。単著者・未公式検証) ※2026-07-24 fetch
+- [Claude Code v2.1.219: Opus 5追加とサブエージェント3階層化を解説](https://qiita.com/picnic/items/fd81f1614b95cafdc830) (Qiita、デフォルトネスト深さの変更と revert 用環境変数。2026-10-25 に公式 docs で確認済み) ※2026-07-24 fetch
 - [Claude Codeのサブエージェント定義ファイルの作り方——.claude/agents/最小構成リファレンス](https://zenn.dev/tottoko_hamu/articles/2026-08-03-120745) (Zenn、必須フロントマターフィールドの最小構成と、ディレクトリ新規作成直後/`--disable-slash-commands`起動時の再起動要否) ※2026-08-08 fetch
 - [サブエージェント階層設計の作法：深さ3が既定になっても、私の構成は1段のままだった](https://zenn.dev/haruhiro1020/articles/063a9add9d0d38) (Zenn haruhiro1020、公式 changelog を出典に深さ1→3変更を裏取り、深さの数え方の実機検証、深さ3を使わない設計判断の具体例) ※2026-08-24 fetch
 - [CLAUDE_CODE_SUBAGENT_MODELだけではpin済みsubagentのモデルを変えられない](https://zenn.dev/clopy/articles/claude-subagent-model-force-precedence-gap) (Zenn clopy、frontmatter `model:` と環境変数の優先順位を実機検証、`_FORCE` フラグは検証結果不定) ※2026-09-11 fetch
 - [サブエージェントの tools で Bash を絞ったつもりになっていないか](https://qiita.com/yurukusa/items/9466eaccf8e4c26cd137) (Qiita ゆるくさ、`tools: ["Read", "Bash(git diff:*)"]` のパターン絞り込みが Bash 全体を許可してしまう実測比較と `PreToolUse` hook による代替策) ※2026-09-18に実際にfetch成功
-- [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、fork は親の会話を引き継ぐ・`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`) ※2026-10-25 確認
+- [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、fork は親の会話を引き継ぐ・`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`・"Let subagents spawn their own subagents": 既定でメイン会話の下 3 階層、v2.1.172〜v2.1.216 は 5 階層固定、v2.1.217〜v2.1.218 は既定 1) ※2026-10-25 確認
+- [Environment variables](https://code.claude.com/docs/en/env-vars) (Claude Code 公式 docs、`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` は既定 3・正の整数のみで上限は外せない・v2.1.217+) ※2026-10-25 確認
 
-**バージョン**: Claude Code v2.1.172+（最大5階層）、v2.1.219+（デフォルト深さ1→3、公式 changelog で裏取り済み）、v2.1.251+（frontmatter 優先の上書き仕様）
+**バージョン**: Claude Code v2.1.172〜v2.1.216（5 階層固定）、v2.1.217+（`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`）、v2.1.219+（デフォルト深さ1→3）、v2.1.251+（frontmatter 優先の上書き仕様）
 **確信度**: 高
 **最終更新**: 2026-10-25
 
@@ -2997,10 +3025,39 @@ async function runWithApprovalGate(
 
 **コード例（prepare / approve / commit の3段階分割とハッシュ検証）**:
 ```typescript
+import { createHash, randomUUID } from "node:crypto";
+import { z } from "zod";
+
+const PrepareInput = z.object({
+  title: z.string().min(1).max(200),
+  body: z.string().min(1).max(10_000),
+});
+type FeedbackPayload = z.infer<typeof PrepareInput>;
+
+type FeedbackDraft = FeedbackPayload & {
+  id: string;
+  actorId: string;
+  payloadHash: string;
+  expiresAt: Date;
+};
+
+interface DraftRepository {
+  insertDraft(draft: FeedbackDraft): Promise<void>;
+}
+
+// キーの順序に左右されないよう、ハッシュ対象の並びを固定する
+function hashPayload(payload: FeedbackPayload): string {
+  return createHash("sha256")
+    .update(JSON.stringify([payload.title, payload.body]))
+    .digest("hex");
+}
+
 export class FeedbackService {
+  constructor(private readonly repo: DraftRepository) {}
+
   async prepare(actorId: string, rawInput: unknown) {
-    const input = PrepareInput.parse(rawInput);
-    const draft = {
+    const payload: FeedbackPayload = PrepareInput.parse(rawInput);
+    const draft: FeedbackDraft = {
       id: randomUUID(),
       actorId,
       ...payload,
@@ -3012,45 +3069,83 @@ export class FeedbackService {
   }
   // commit時にpayloadHashを再検証し、prepare時点からの改ざん・すり替えを検出する
 }
+```
 
+```typescript
 // 承認・却下の判定APIは人間専用（AIエージェント自身が叩けるスコープに置かない）
-const approval = await requestApproval({
-  action: "delete_user",
-  summary: "Delete user usr_123 (LTV $0, inactive for 90 days)",
-});
-const status = await waitForApproval({ id: approval.id });
-if (status !== "approved") throw new Error(`not approved: ${status}`); // 未承認はデフォルト拒否
+// ./approval-client は、人間の承認画面を持つ承認サービスのクライアント（各プロジェクトで用意する）
+import { requestApproval, waitForApproval } from "./approval-client";
+
+export async function deleteInactiveUser(userId: string) {
+  const approval = await requestApproval({
+    action: "delete_user",
+    summary: `Delete user ${userId} (LTV $0, inactive for 90 days)`,
+  });
+  const status = await waitForApproval({ id: approval.id });
+  if (status !== "approved") throw new Error(`not approved: ${status}`); // 未承認はデフォルト拒否
+  // ここで初めて削除を実行する
+}
 ```
 
 **CI/CD 実装パターン（GitHub Actions × Claude 半自動 PR レビュー）**:
+どちらのワークフローも、対象リポジトリとは別の非公開リポジトリ（review-repo）に置き、下書きは review-repo の Issue に保存する。review-repo の Issue 操作は `GITHUB_TOKEN`、対象リポジトリへのアクセスは対象リポジトリだけに絞った fine-grained PAT で行い、下書き生成側には読み取り権限のトークンだけを渡す。
+
 ```yaml
 # Step 1: 下書き生成（対象リポジトリへの書き込みなし）
-# auto-review.yml — 30分ごとに未レビュー PR を取得し private Issue に下書きを保存
+# review-repo/.github/workflows/auto-review.yml — 30分ごとに対象リポジトリの未レビュー PR を取得し、review-repo の Issue に下書きを保存
 name: 自動レビュー(下書き生成)
 on:
   schedule:
     - cron: '*/30 * * * *'
+permissions:
+  contents: read
+  issues: write # review-repo に下書き Issue を作る
 jobs:
   review:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm install -g @anthropic-ai/claude-code
       - run: bash scripts/auto-review.sh
+        env:
+          ISSUE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO_READ_TOKEN: ${{ secrets.TARGET_REPO_READ_TOKEN }} # 対象リポジトリの Contents / Pull requests を Read のみ
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 ```yaml
 # Step 2: レビュアーがラベルを付けると自動公開（approve / request-changes / comment）
-# publish-review.yml — ラベルトリガーで PR にインラインコメントとして反映
+# review-repo/.github/workflows/publish-review.yml — 下書き Issue へのラベル付けをトリガーに、対象 PR にインラインコメントとして反映
+name: レビュー公開(ラベルでPRへ反映)
 on:
   issues:
     types: [labeled]
+permissions:
+  contents: read
+  issues: write # 公開後に下書き Issue へ結果を書いて閉じる
 jobs:
   publish:
     if: |
       github.event.label.name == 'approve' ||
       github.event.label.name == 'request-changes' ||
       github.event.label.name == 'comment'
+    runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - run: bash scripts/publish-review.sh
+        env:
+          ISSUE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO_TOKEN: ${{ secrets.TARGET_REPO_TOKEN }} # 対象リポジトリの Pull requests を Read and write
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          ISSUE_BODY: ${{ github.event.issue.body }} # run に直接埋め込まず env で渡す（インジェクション対策）
 ```
 
 **操作分類の基準**:
@@ -3065,7 +3160,7 @@ jobs:
 
 「ファイルを編集できる AI」「外部に働きかける権限・鍵（GitHub トークン等）」「信頼しきれない入力」の3つが同一ジョブに揃うと、意図しない入力（Issue 本文・外部 Webhook 等）を経由してエージェントを動かされ、その編集力と権限を悪用されるリスクが生まれる。対策は権限をジョブ単位で分離すること: ビルド検証は AI の編集ステップと別ジョブにする、認証情報は使用するステップだけに絞りチェックアウト時に `persist-credentials: false` を設定する、配布・公開は同じジョブから直接起動せず `workflow_run` で疎結合にする（ただしその起動用の鍵は別途必要になる点に注意）。
 
-この3要素の組み合わせは OWASP の LLM アプリケーションリスク一覧における **Excessive Agency（過剰なエージェンシー、LLM06:2025）** とほぼ同じ構造であり、業界標準のリスク分類としても裏付けられる。Claude Code 固有の緩和策としては、`--allowedTools` をワイルドカードではなく `Read(./state.json)` のような単一ファイル・`WebFetch(domain:example.com)` のような単一ドメインまで絞り込み、さらに `--json-schema` で出力を構造化することで、エージェントが持つ権限の面積そのものを縮小できる（実際の git 操作は AI の外側にある決定的な shell ステップに分離し、AI の出力はその入力としてのみ使う）。
+この3要素の組み合わせは OWASP の LLM アプリケーションリスク一覧における **Excessive Agency（過剰なエージェンシー、LLM06:2025）** とほぼ同じ構造であり、業界標準のリスク分類としても裏付けられる。Claude Code 固有の緩和策としては、`--tools` で使える組み込みツールを必要なものだけに限定し、`--disallowedTools`（`"mcp__*"` などツール名だけのルールはツールそのものを外す）で不要なツールを外し、`--permission-mode dontAsk` で事前承認していない呼び出しを確認なしに拒否させる。そのうえで `--allowedTools` に書く事前承認をワイルドカードではなく `Read(./state.json)` のような単一ファイル・`WebFetch(domain:example.com)` のような単一ドメインまで絞り込み、`--json-schema` で出力を構造化することで、エージェントが持つ権限の面積そのものを縮小できる（実際の git 操作は AI の外側にある決定的な shell ステップに分離し、AI の出力はその入力としてのみ使う）。`--allowedTools` は列挙したツールを確認なしで実行させる事前承認で、列挙していないツールを使えなくする設定ではない。`--allowedTools` だけを絞っても他のツールは残り、確認が必要な呼び出しは権限モードの判断に回る（`bypassPermissions` ならすべて承認される）。
 
 **アンチパターン**:
 - プロンプトに「外部送信の前に必ず確認する」と書く → プロンプト変更で迂回される
@@ -3112,10 +3207,12 @@ jobs:
 - [承認ゲートの本丸は、承認UIではなかった](https://zenn.dev/argosvix/articles/2ae0de2a96e0c6) (Zenn argosvix、TTL fail-closed・人間専用の判定API・トークン非通知・監査ログによる「拒否パス」設計) ※2026-07-30 fetch
 - [「人間が承認しました」と記録して、承認していたのは提案者本人だった](https://zenn.dev/maronsan/articles/llm-safe-sql-approval-hole) (Zenn、書き込み権限と承認権限の未分離による自己承認・監査ログ偽装の実例) ※2026-08-15に実際にfetch成功
 - [AIに全部任せて、4箇所だけ止める](https://zenn.dev/zenn_content/articles/claude-code-intention-guardrail) (Zenn、L1テキスト指示/L2 `permissions.deny`/L3 PreToolUse hook の3層と「決裁パケット」形式による承認可視化) ※2026-08-23 fetch
+- [CLI reference](https://code.claude.com/docs/en/cli-reference) (Claude Code 公式 docs、`--allowedTools` は確認なしで実行するツール・使えるツールの制限は `--tools`・`--disallowedTools` のツール名だけのルールはツールを外す) ※2026-10-25 確認
+- [Configure permissions — Agent SDK](https://code.claude.com/docs/en/agent-sdk/permissions) (Claude Code 公式 docs、`allowed_tools` に無いツールも使え、確認が必要な呼び出しは権限モードへ回る・`allowed_tools` は `bypassPermissions` を制限しない・`dontAsk` との併用) ※2026-10-25 確認
 
 **バージョン**: Claude Code・GitHub Actions（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-08-23
+**最終更新**: 2026-10-25
 
 ---
 
@@ -3672,8 +3769,8 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - 5つ目の抜け道として **空白1つの追加だけで完全一致 deny ルールが外れる** ことが実測で確認されている。`"deny": ["Bash(touch /tmp/denyprobe/repo/marker.txt)"]` に対し、コマンド中の空白を1つ増やしただけの `touch  /tmp/denyprobe/repo/marker.txt`（スペース2個）が 9/9 回すり抜けた。同条件で前置マッチ形式 `"deny": ["Bash(touch:*)"]` に書き換えると、空白追加・引用符付きパス・相対パス化など 21 パターンの変形すべてをブロックできた。すり抜けた実行は `permission_denials` に0件のまま記録されず、終了コードも0でエラー表示も無いため、ログ監視だけでは検知できない
 - `.env` の読み取り防止では `Read(**/.env)` の deny 単体だと Read ツールと単純な `cat`/`head` は止まるが、Node.js / Python スクリプトや複合ワンライナー経由の読み取りは止まらない（Bash を全許可していた実測で完走）。`sandbox.filesystem.denyRead` を併用すると読み取りは止まるが、アプリ自体も `.env` を開けず起動しなくなるため、`.env.example`（変数名のみ）を併置し、deny glob `Read(**/.env.*)` が `.env.example` も巻き込む点に注意する（15 試行・各条件 1 回の検証で再現性は限定的。別記事の Windows 検証でもスクリプト経由の読み取りは止まらず、公式ドキュメントどおりの仕様とされる）。deny は「うっかり防止の網」と位置づけ、本物の秘密情報は作業ディレクトリに置かない
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
-- `sandbox.filesystem.denyRead` の glob（例: `**/.env`）は、展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になる（Claude Code v2.1.283 時点で未修正との報告）。対策は (1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）
-- 作業フォルダの外を守る `deny` を `Edit(../shared/**)` のように `../` で書くと、公式のパス記法（`//path` / `~/path` / `/path` / `path`）に該当せず、警告も出ないまま書き込みが止まらない場合がある（Windows / Claude Code 2.1.296 の実測）。ファイルシステムのルートからの絶対パスを `//` で書く（Windows は `//c/work/...`、macOS / Linux は `//Users/...` や `//home/...`）。書いた規則が効くかはダミーファイルへの書き込みで試し、AI の返答ではなくファイルのハッシュが変わったかで判定する。なお `deny` は組み込みツール向けのため、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない（OS 権限やサンドボックスと併用する）
+- Linux の sandbox では、`sandbox.filesystem.denyRead` の glob（例: `**/.env`）の展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になっていた（Claude Code v2.1.283 での報告）。sandbox の実装である sandbox-runtime は v0.0.77（2026-09-18、PR #503）で glob の探索を作り直し、読めないディレクトリがあってもほかの部分の展開を続け、一覧できなかったディレクトリは丸ごと deny する（fail-closed）形になった。報告記事は Claude Code v2.1.284 でこの修正が取り込まれたとしている。それより古い版を使う環境では、(1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）で回避する。修正後も、広すぎる glob は無関係なディレクトリまで隠すため、探索範囲を絞る (1) は続ける価値がある
+- 作業フォルダの外を守る `deny` を `Edit(../shared/**)` のように `../` で書くと、公式のパス記法（`//path` / `~/path` / `/path` / `path`）に該当せず、警告も出ないまま書き込みが止まらない場合がある（Windows / Claude Code 2.1.296 の実測）。公式も「ルールはアンカー配下のファイルにしか一致しない」とし、`Read(.env)` は親ディレクトリの `.env` を止めないと明記しているため、作業ディレクトリ基準の相対パスで外側を指すことはできない。ファイルシステムのルートからの絶対パスを `//` で書く（Windows は `//c/work/...`、macOS / Linux は `//Users/...` や `//home/...`）。書いた規則が効くかはダミーファイルへの書き込みで試し、AI の返答ではなくファイルのハッシュが変わったかで判定する。なお `deny` は組み込みツール向けのため、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない（OS 権限やサンドボックスと併用する）
 
 **コード例**:
 ```json
@@ -3739,11 +3836,12 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - [書いた deny ルールが、一度も参照されていなかった](https://zenn.dev/quintetkit/articles/permission-rule-allows-more) (Zenn quintetkit、`Write()` / `NotebookEdit()` / `Glob()` へのパスパターン deny が評価されないことの再検証) ※2026-09-12 fetch
 - [Claude Code の deny に `../` を書いたら、隣のフォルダへの書き込みが止まらなかった（2.1.296で実測）](https://zenn.dev/emilk1225/articles/73356c9b0e156d) (Zenn emilk1225、`../` 記法の deny が効かず `//` 絶対パスなら止まった実測。Windows / 非対話モードのみの検証) ※2026-10-11 fetch
 - [禁止コマンドを一字一句で書いたら、空白を1つ増やすだけで9回とも素通りした](https://zenn.dev/numarn/articles/deny-rule-exact-string-bypass-handson) (Zenn、完全一致 deny ルールの空白バイパスをハンズオン実測、前置マッチ形式なら21パターン全ブロックを確認) ※2026-09-23 fetch
-- [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、glob 展開中の EACCES による fail-open と 3 つの回避策) ※2026-09-28 fetch
+- [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、Linux / v2.1.283 での glob 展開中の EACCES による fail-open と 3 つの回避策。sandbox-runtime 0.0.77 を取り込んだ v2.1.284 で修正されたとの記載あり) ※2026-09-28 fetch
 - [Claude Code に .env を読ませない設定を入れても、読めてしまう場面があった（Codex と比較）](https://zenn.dev/bpr_prot/articles/c3c58f88e594ef) (Zenn、`permissions.deny` 単体ではスクリプト経由の `.env` 読み取りを止められず sandbox 併用が必要、Claude Code 2.1.295 で検証) ※2026-10-13 fetch
 - [Claude Codeに.envを読ませない — settings.jsonのdenyルールを試して分かった「効く範囲・効かない範囲」](https://zenn.dev/chukidx_dev/articles/claude-code-deny-env-windows) (Zenn、deny が間接読み取り経路を止めない実機検証) ※2026-10-14 fetch
-- [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、`permissions` のキー・Read / Edit deny の適用範囲・"What a Bash rule doesn't match") ※2026-10-25 確認
+- [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、`permissions` のキー・Read / Edit deny の適用範囲・"What a Bash rule doesn't match"・"How deep a pattern matches": ルールはアンカー配下のファイルにしか一致しない) ※2026-10-25 確認
 - [Configure the sandboxed Bash tool](https://code.claude.com/docs/en/sandboxing) (Claude Code 公式 docs、`denyRead` は Read ツールを止めない・permission rules と sandbox 設定の合算) ※2026-10-25 確認
+- [linux: collapse read-deny globs to directories, and mount denies where paths resolve（anthropics/sandbox-runtime PR #503）](https://github.com/anthropics/sandbox-runtime/pull/503) (sandbox-runtime 公式リポジトリ、2026-09-17 マージ・v0.0.77 で公開。読めないサブツリーは探索から外れるだけになり、一覧できないディレクトリは丸ごと deny する) ※2026-10-25 確認
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
@@ -4077,11 +4175,12 @@ server.tool(
 
 ### 45. Codex CLI の `--ignore-user-config` / `--ignore-rules` はユーザースキル（`$HOME/.agents/skills` 等）を隔離しない
 
-Codex CLI（他 CLI エージェント全般の類推参考として Claude Code のスキル分離設計にも当てはまる）は `--ignore-user-config` と `--ignore-rules` を渡しても、ユーザーレベルのスキル定義（ホームディレクトリ配下のスキルファイル）の発見・実行までは抑止しない。`HOME` を空のディスポーザブルディレクトリに差し替えても `CODEX_HOME` が既存のまま残っていると、フラグが「ユーザー設定を無視した」ように見えても実際にはスキルが読み込まれる。CI やマルチテナント環境で「ユーザー設定を無視するフラグを渡したのでスキルからも隔離できた」と誤判定しないこと。
+Codex CLI（他 CLI エージェント全般の類推参考として Claude Code のスキル分離設計にも当てはまる）は `--ignore-user-config` と `--ignore-rules` を渡しても、ユーザーレベルのスキル定義（`$HOME/.agents/skills` 配下のスキルファイル）の発見・実行までは抑止しない。codex-cli 0.147.0 の再現実験では、認証用の `CODEX_HOME` は既存のまま、スキル探索用の `HOME` だけを使い捨てディレクトリに差し替えて `.agents/skills` にスキルを 1 つ置いたところ、両フラグを付けてもそのスキルが発見・実行された。CI やマルチテナント環境で「ユーザー設定を無視するフラグを渡したのでスキルからも隔離できた」と誤判定しないこと。
 
 **根拠**:
-- `HOME` を空にしても `CODEX_HOME` を既存のまま渡す構成では、2つの ignore flag を付けてもユーザースキルが発見・実行された（再現実験で確認）
-- 「ユーザー設定の無視」と「ユーザースキルの隔離」は Codex CLI の設計上別のスコープであり、フラグ名から前者が後者も含むと類推するのは誤り
+- 使い捨ての `HOME` の `.agents/skills` にスキルを置いた条件だけ、2つの ignore flag を付けてもスキルが発見・実行された（スキルを置かない対照条件と比較した再現実験。1 条件 1 回の実行）
+- 「ユーザー設定の無視」と「ユーザースキルの隔離」は Codex CLI の設計上別のスコープであり、フラグ名から前者が後者も含むと類推するのは誤り。公式ソースのフラグ定義では、`--ignore-user-config` は「`$CODEX_HOME/config.toml` を読まない（認証は引き続き `CODEX_HOME` を使う）」、`--ignore-rules` は「ユーザーとプロジェクトの execpolicy の `.rules` ファイルを読まない」だけで、スキルには触れていない
+- ユーザースキルの置き場所は、公式 docs の `$HOME/.agents/skills` に加えて、ソース上は後方互換のために旧来の `$CODEX_HOME/skills` も読まれる（0.147.0 時点）。そのため `HOME` を差し替えても、`CODEX_HOME` を既存のまま渡すとそこにあるスキルは読み込まれる。個別のスキルは `~/.codex/config.toml` の `[[skills.config]]` で `enabled = false` にできるが、ユーザースキルをまとめて無効にするフラグは公式 docs に無い
 
 **コード例**:
 ```bash
@@ -4096,20 +4195,25 @@ codex -a never exec \
   -C <EMPTY_WORKSPACE> \
   -c sandbox_workspace_write.network_access=false \
   '<COMMON_PROMPT>'
-# → --ignore-user-config / --ignore-rules を付けても $HOME/.agents/skills 相当のユーザースキルが発見・実行された
+# → --ignore-user-config / --ignore-rules を付けても、<DISPOSABLE_HOME>/.agents/skills に置いたユーザースキルが発見・実行された
 ```
 
 **アンチパターン**:
 - CI やサンドボックス環境で `--ignore-user-config` / `--ignore-rules` だけを根拠に「ユーザースキルからも隔離できた」と判定する
-- `HOME` だけを差し替え、`CODEX_HOME`（またはツール固有の設定ディレクトリ変数）を差し替え忘れる
+- `HOME` だけを差し替え、`CODEX_HOME`（またはツール固有の設定ディレクトリ変数）の配下にもスキルが残っていることを見落とす
 
 **出典引用**:
 > "記録した条件では2つのignore flagがtreatmentのユーザースキルの発見と明示的な実行を抑止しなかった"
 > ([Codexのignore flagsだけではユーザースキルを隔離できない](https://zenn.dev/clopy/articles/codex-ignore-flags-user-skill-boundary), セクション "treatmentだけがスキル本文のマーカーを返した") ※2026-08-23に実際にfetch成功
 
+**出典**:
+- [openai/codex `codex-rs/exec/src/cli.rs`（rust-v0.147.0）](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/exec/src/cli.rs) (Codex 公式リポジトリ、`--ignore-user-config` と `--ignore-rules` のフラグ定義と説明) ※2026-10-25 確認
+- [openai/codex `codex-rs/ext/skills/src/host_roots.rs`（rust-v0.147.0）](https://github.com/openai/codex/blob/rust-v0.147.0/codex-rs/ext/skills/src/host_roots.rs) (Codex 公式リポジトリ、ユーザースキルとして `$HOME/.agents/skills` と旧来の `$CODEX_HOME/skills` を読む) ※2026-10-25 確認
+- [Build skills](https://learn.chatgpt.com/docs/build-skills) (OpenAI Codex 公式 docs、スキルの読み込み場所・`[[skills.config]]` での個別無効化) ※2026-10-25 確認
+
 **バージョン**: Codex CLI 0.147.0（2026-08-15時点で記録された挙動）
-**確信度**: 中（公式CLIフラグの実測検証記事、単独ソースのパターン1c採用）
-**最終更新**: 2026-08-23
+**確信度**: 高（フラグの範囲とスキルの読み込み場所を公式ソース・docs で確認）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -4210,12 +4314,13 @@ claude --settings '<inline-json>' auto-mode config
 
 ### 48. `CLAUDE_CODE_TOOL_MEMORY_LIMIT` は macOS では効かない — メモリ上限は OS レベルの仕組みで別途担保する
 
-`CLAUDE_CODE_TOOL_MEMORY_LIMIT` 環境変数で Bash ツールのメモリ使用量を制限できるとドキュメント上は読めるが、macOS では実際には制限がかからない。加えて `--debug` を付けても cgroup 関連の失敗ログが一切出力されないため、「設定したのに制限されていない」ことに気づく手段がない。macOS で Claude Code を無人実行する場合、この変数を防御線として当てにせず `ulimit` でのラップやコンテナ化された実行環境で代替する。
+`CLAUDE_CODE_TOOL_MEMORY_LIMIT` 環境変数は Bash / PowerShell / Monitor ツールのコマンドが使うメモリを memory cgroup で制限する仕組みで、公式ドキュメントは Linux と WSL 向けと明記している。macOS では設定しても制限がかからず、`--debug` を付けても cgroup 関連のログが出ないため、「設定したのに制限されていない」ことに気づきにくい。macOS で Claude Code を無人実行する場合、この変数を防御線として当てにせず、Linux のコンテナや VM の中で実行してそこでメモリ上限をかける。
 
 **根拠**:
-- 上限を 256M に設定した状態で Bash ツールから 320MiB のメモリ確保を試みたところ、上限を超えたまま確保が完走し、Bash ツール結果に成功マーカーがそのまま出力された（Claude Code v2.1.247 で再現）
-- `--debug` の出力には "cgroup" の記載が一件も無く、cgroup セットアップの成否を診断する手段が用意されていない
-- macOS は Linux の cgroup を持たないため、Linux 向けに実装されたメモリ制限機構がそのまま機能しない構造的な問題であり、将来のマイナーアップデートで暗黙に直る保証もない
+- 公式の env-vars / Tools reference は、この変数を「On Linux and WSL」の機能とし、Linux で cgroup を用意できなかった場合は上限なしで実行して `claude --debug` のログに理由を出すとしている。macOS は対象外
+- 上限を 256M に設定した状態で Bash ツールから 320MiB のメモリ確保を試みたところ、上限を超えたまま確保が完走し、Bash ツール結果に成功マーカーがそのまま出力された（macOS / Claude Code v2.1.247 での検証記事）
+- 同記事では macOS の `--debug` の出力に "cgroup" の記載が一件も無かった
+- macOS の `ulimit` も代わりにならない。macOS 27.0.1 で確認したところ、`ulimit -v`（仮想メモリ）・`-m`（常駐メモリ）・`-d`（データセグメント）はいずれも設定自体が `Invalid argument` で失敗し、続けて 400MiB の確保がそのまま成功した
 
 **コード例**:
 ```bash
@@ -4223,7 +4328,10 @@ claude --settings '<inline-json>' auto-mode config
 CLAUDE_CODE_TOOL_MEMORY_LIMIT=256M claude --debug -p "big-allocation-task"
 # → 320MiB 確保が上限を超えたまま成功、--debug にも cgroup 関連ログなし
 
-# Good: macOS では ulimit や外側のコンテナで制限を担保する
+# 効かない想定: macOS の ulimit でメモリ上限をかける
+ulimit -v 262144   # → setrlimit が Invalid argument で失敗し、上限はかからない
+
+# Good: macOS では Linux コンテナの中で実行し、コンテナのメモリ上限で担保する
 docker run --rm -m 256m my-claude-code-sandbox claude -p "big-allocation-task"
 ```
 
@@ -4231,19 +4339,23 @@ docker run --rm -m 256m my-claude-code-sandbox claude -p "big-allocation-task"
 > "上限を超える確保はそのまま完走し、Bash ツール結果に確保成功マーカーがそのまま出力されました。"
 > ([CLAUDE_CODE_TOOL_MEMORY_LIMIT はmacOSでは効かず、--debugも無言だった](https://zenn.dev/clopy/articles/claude-tool-memory-limit-macos-gate), セクション "観測結果: silent-gap") ※2026-08-31に実際にfetch成功
 
-**バージョン**: Claude Code v2.1.247（2026-08-31時点で記録された挙動、macOS 限定）
-**確信度**: 中（公式環境変数の実測検証記事、単独ソースのパターン1c採用）
-**最終更新**: 2026-08-31
+**出典**:
+- [Environment variables](https://code.claude.com/docs/en/env-vars) (Claude Code 公式 docs、`CLAUDE_CODE_TOOL_MEMORY_LIMIT` は Linux と WSL 向け・v2.1.233+) ※2026-10-25 確認
+- [Tools reference — Memory limit on Linux and WSL](https://code.claude.com/docs/en/tools-reference) (Claude Code 公式 docs、memory cgroup で制限し、用意できなければ上限なしで実行して `--debug` に理由を出す) ※2026-10-25 確認
+
+**バージョン**: Claude Code v2.1.233+（変数の追加、Linux / WSL のみ）、v2.1.247（macOS で効かないことの検証記事）
+**確信度**: 高（Linux / WSL 限定であることを公式 docs で確認）
+**最終更新**: 2026-10-25
 
 ---
 
-### 49. Claude Code の Bash ツールは長いヒアドキュメントを黙って切り捨てる — 固定の安全長を当てにせず PreToolUse hook で防御する
+### 49. Windows（Git Bash）の Claude Code の Bash ツールは長いヒアドキュメントを黙って切り捨てる — 固定の安全長を当てにせず PreToolUse hook で防御する
 
-Claude Code の Bash ツールに `<<'EOF'` 形式のヒアドキュメントを渡すと、一定の文字数を超えた内容が途中で黙って切り捨てられ、`unexpected EOF` 等のシェルエラーとして現れることがある。しかも実効上限は固定値ではなく、セッションが進むほど縮小する挙動が観測されているため、「前回この文字数までは動いた」という経験則を安全マージンとして使えない。長い内容を Bash 経由で渡す代わりに、PreToolUse hook で文字数を検査してブロックし、Write ツール等の別経路に倒す。
+Windows で Git Bash を使う Claude Code の Bash ツールに `<<'EOF'` 形式のヒアドキュメントを渡すと、一定の文字数を超えた内容が途中で黙って切り捨てられ、`unexpected EOF` 等のシェルエラーとして現れることがある。原因はヒアドキュメントそのものではなく、Bash ツールがコマンドを `bash -c` の 1 行に包んで渡す際に Windows のコマンドライン長の上限（約 8,175 文字）で切れることで、包む側の前置き（約 337 文字）やシングルクォートのエスケープ（1 文字が約 5 文字に増える）も上限を消費するため、本文の文字数だけでは安全な長さが決まらない（anthropics/claude-code の Issue #85111 / #93618 / #99410 で報告、2026-10-25 時点でいずれも open）。「前回この文字数までは動いた」という経験則を安全マージンとして使わず、PreToolUse hook で文字数を検査してブロックし、Write ツール等の別経路に倒す。下記の実測と Issue はいずれも Windows + Git Bash の環境のもの。
 
 **根拠**:
-- 実測で約7,489文字からヒアドキュメントの切り捨てによる失敗が確認され、7,200文字を閾値としたガードを導入したところ33件の失敗を検知し、誤検知（false positive）は2件にとどまった
-- 実効上限がセッション進行とともに縮む観測結果があり、「固定の安全な文字数」という前提そのものが成立しない
+- Windows 11 + Git Bash の 1 台で、セッションログ中の 1,624 件のヒアドキュメント呼び出しを調べた記事では、`unexpected EOF` で失敗した最短が 7,489 文字、成功した最長が 7,502 文字で、文字数だけでは境界が決まらなかった。7,200 文字を閾値としたガードは 33 件の失敗をすべて検知し、誤検知（ガードがなくても成功した呼び出し）は 2 件だった
+- 「セッションが進むほど実効上限が縮む」は、包む側に入るシェルのスナップショットが PATH やシェル状態とともに大きくなるという Issue #85111 の仮説で、同記事のデータはこれと矛盾しないとされるが、セッション単位では測定されていない。固定の安全な文字数を前提にしないこと
 
 **コード例**:
 ```json
@@ -4277,9 +4389,15 @@ EOF
 > "実効上限は固定ではなく、セッションが進むほど縮む"
 > ([Claude Code の Bash は長いヒアドキュメントを黙って切る — 閾値は固定ではなかった](https://zenn.dev/genkunjc/articles/claude-code-heredoc-truncation), セクション "先に結論") ※2026-09-07に実際にfetch成功
 
-**バージョン**: Claude Code（2026-09-07時点で観測された挙動、バージョン非明記）
-**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
-**最終更新**: 2026-09-07
+**出典**:
+- [Claude Code の Bash は長いヒアドキュメントを黙って切る — 閾値は固定ではなかった](https://zenn.dev/genkunjc/articles/claude-code-heredoc-truncation) (Zenn genkunjc、Windows 11 / Git Bash / デスクトップアプリ 1 台でのログ集計。Claude Code のバージョンは非明記) ※2026-10-25 確認
+- [Bash tool silently truncates commands over ~8 KB and reports it as a quoting error（anthropics/claude-code #85111）](https://github.com/anthropics/claude-code/issues/85111) (Windows / Git Bash、v2.1.226 での報告。open) ※2026-10-25 確認
+- [Windows/Git Bash: Bash tool command line truncated at ~8175 chars（anthropics/claude-code #93618）](https://github.com/anthropics/claude-code/issues/93618) (Windows 11 / Git Bash、v2.1.263 での再現と `bash -c` の包み方の計測。open) ※2026-10-25 確認
+- [Windows: Bash tool silently truncates commands over ~8K chars（anthropics/claude-code #99410）](https://github.com/anthropics/claude-code/issues/99410) (シングルクォート 1 文字が約 5 文字に増える点の報告。open) ※2026-10-25 確認
+
+**バージョン**: Claude Code（Windows + Git Bash。Issue では v2.1.226・v2.1.263 で報告、2026-10-25 時点で未修正）
+**確信度**: 中（1 台の実測記事と、同じ現象を報告する複数の Issue）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -4346,12 +4464,13 @@ model_auto_compact_token_limit = 500000
 
 ### 51. PreToolUse / PostToolUse / SessionStart フックでアカウントのメールアドレスがツール入出力へ混入するのを機械的に遮断する
 
-Claude Code は `~/.claude.json` の `oauthAccount.emailAddress` をセッションのコンテキストに注入するため、モデルはユーザーのメールアドレスを知った状態で動作する。コンテキストに存在する値はモデルが自由に出力しうるため、git commit の identity への混入や、ツール呼び出しの入出力を経由した意図しない漏出が起こりうる。注入そのものは止められないが、PreToolUse（ツール入力の遮断）・PostToolUse（ツール出力の redact）・SessionStart（自動読み込みファイルの走査）の3フックを組み合わせることで、ツール経由の漏出だけは機械的に防げる。
+claude.ai アカウントでログインした Claude Code は、`~/.claude.json` の `oauthAccount.emailAddress` を `# userEmail` としてセッションのコンテキストに注入するため、モデルはユーザーのメールアドレスを知った状態で動作する。v2.1.234 からは「本人の識別にだけ使い、頼まれない限り無関係なサービスに送らない」という指示が添えられたが、指示は振る舞いの抑制にすぎない。コンテキストに存在する値はモデルが自由に出力しうるため、git commit の identity への混入や、ツール呼び出しの入出力を経由した意図しない漏出が起こりうる。注入を止める設定は公式に用意されていないが、PreToolUse（ツール入力の遮断）・PostToolUse（ツール出力の redact）・SessionStart（自動読み込みファイルの走査）の3フックを組み合わせることで、ツール経由の漏出だけは機械的に防げる。
 
 **根拠**:
-- コンテキストにある値はモデルが自由に出力しうるため、フィルタなしでは git commit や外部リクエストへの混入を防げない（GitHub Issue #81138 に実報告あり）
+- コンテキストにある値はモデルが自由に出力しうるため、フィルタなしでは git commit や外部リクエストへの混入を防げない（GitHub Issue #81138 に、git の identity を上書きされた・リクエストヘッダーに入れられたといった報告がある）
 - URLエンコード・HTMLエンティティ・`[at]`表記など、モデルが自然に生成しうるエンコーディングのバリエーションもあわせて検査する必要がある
-- 注入そのものを止める方法はないため、ドメインからの推論などモデルの「知識」に起因するリスクは残る点に留意する
+- 公式の settings・環境変数に注入を止めるものは無い（`IS_DEMO` はヘッダーと `/status` の表示を隠すだけ）。Issue #81138 は 2026-10-25 時点で open で、コメントでは v2.1.289 でも注入が続いていること、`oauthAccount` を持たない API キー・Bedrock・Vertex の認証では注入されないことが報告されている（バイナリを読んだ利用者の観察で、公式の記載ではない）
+- 注入自体は残るため、ドメインからの推論などモデルの「知識」に起因するリスクは残る点に留意する
 
 **コード例**:
 ```json
@@ -4390,9 +4509,14 @@ def variants(email: str) -> list[str]:
 > "コンテキストにあるものはモデルが書き出せます。コミット identity への混入や自発的な出力は GitHub Issue #81138 に実報告があり"
 > ([Claude Code はあなたのメールアドレスを毎回モデルに渡している — 出口をフックで機械的に塞いだ話](https://zenn.dev/minedia/articles/07dab654a07022), セクション "背景") ※2026-09-24に実際にfetch成功
 
-**バージョン**: Claude Code（2026-09-24時点で観測された挙動、バージョン非明記）
-**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
-**最終更新**: 2026-09-24
+**出典**:
+- [Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (v2.1.234: "Claude is now told to use your account email only to identify you, and not to send it to unrelated services unless you ask") ※2026-10-25 確認
+- [Account email (PII) is injected into the model's system prompt without consent（anthropics/claude-code #81138）](https://github.com/anthropics/claude-code/issues/81138) (2026-07-25 起票、2026-10-25 時点で open。v2.1.220〜v2.1.289 での注入と漏出の報告) ※2026-10-25 確認
+- [Environment variables](https://code.claude.com/docs/en/env-vars) (Claude Code 公式 docs、`IS_DEMO` はヘッダーと `/status` のメールアドレス表示を隠す。注入を止める変数の記載は無い) ※2026-10-25 確認
+
+**バージョン**: Claude Code（Issue #81138 で v2.1.220 の注入を確認、v2.1.234+ は使用制限の指示つき、v2.1.289 でも継続と報告）
+**確信度**: 中（注入は公式 CHANGELOG で確認。フックによる遮断は単独の検証記事）
+**最終更新**: 2026-10-25
 
 ---
 

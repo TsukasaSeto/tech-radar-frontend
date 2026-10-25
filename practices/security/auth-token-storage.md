@@ -81,10 +81,18 @@ callbacks: {
 ```ts
 // app/api/data/route.ts — BFF からのみトークンを使用（サーバー側限定）
 import 'server-only';
+import type { NextRequest } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
-export async function GET(req: Request) {
-  const token = await getToken({ req }); // サーバー側のみアクセス可能
+export async function GET(req: NextRequest) {
+  const token = await getToken({
+    req,
+    // v5 の getToken は secret を環境変数から補わない（未指定だと MissingSecret）
+    secret: process.env.AUTH_SECRET,
+    // Auth.js の useSecureCookies（既定は URL が https か）と一致させる（本番 HTTPS・開発 http の前提）。
+    // 一致しないと `__Secure-` 接頭辞の有無が違う Cookie 名を探して null になる
+    secureCookie: process.env.NODE_ENV === 'production',
+  });
   const accessToken = typeof token?.accessToken === 'string' ? token.accessToken : null;
   if (!accessToken) {
     // 未認証は上流に送らずに 401 を返す（`Bearer undefined` を送らない）
@@ -105,6 +113,12 @@ export async function GET(req: Request) {
   return Response.json(await res.json());
 }
 ```
+
+`getToken` の成立条件（例は Auth.js v5 = `next-auth@5` beta 基準。v4 でも同じ書き方で動く）:
+- v5 の `getToken` は `secureCookie` の既定が `false` で、Cookie 名は `authjs.session-token`（`secureCookie: true` なら `__Secure-authjs.session-token`）。HTTPS で発行された Cookie を読むには `secureCookie: true` が要る
+- 復号の `salt` は既定で Cookie 名になり、Auth.js がセッション JWT を暗号化するときの salt（セッション Cookie 名）と一致する。`cookies.sessionToken.name` を変えている場合は `cookieName` も同じ値を渡す
+- v4（npm の `latest` は 4.24 系）は `req.cookies` から読むため、引数を `Request` で受けると Cookie を読めない。`NextRequest` を受ける。`secret` は未指定なら `NEXTAUTH_SECRET` → `AUTH_SECRET`、`secureCookie` は未指定なら `NEXTAUTH_URL` が https か（未設定なら Vercel 上か）で決まり、Cookie 名は `next-auth.session-token`
+- v5 の公式は、セッションの取得には `getToken` ではなく `auth()` を推奨している。`auth()` が返すのは `session()` コールバックの結果なので、上の構成で JWT にだけ置いたアクセストークンをサーバー側で読む用途に `getToken` を使う
 
 ブラウザ↔BFF 間は Cookie、BFF↔外部 API 間は Bearer Token の2層設計にする。
 XSS をゼロにできない以上、「漏れたら終わり」のトークンを可読領域に置くこと自体が設計上の妥協である。
@@ -129,10 +143,12 @@ XSS をゼロにできない以上、「漏れたら終わり」のトークン�
 - [OWASP: HTML5 Security Cheat Sheet - Local Storage](https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html#local-storage) (OWASP)
 - [Auth0: Token Storage](https://auth0.com/docs/secure/security-guidance/data-security/token-storage) (Auth0)
 - [Next.js Docs: cookies()](https://nextjs.org/docs/app/api-reference/functions/cookies) (Next.js 公式)
+- [Auth.js: @auth/core/jwt — getToken](https://authjs.dev/reference/core/jwt) / [Migrating to v5 — Authenticating server-side](https://authjs.dev/getting-started/migrating-to-v5#authenticating-server-side) (Auth.js 公式) ※2026-10-25 確認
+- [nextauthjs/next-auth: packages/core/src/jwt.ts](https://github.com/nextauthjs/next-auth/blob/main/packages/core/src/jwt.ts)（v5 の getToken。`secureCookie ?? false`・`salt = cookieName`・secret 必須）/ [v4: packages/next-auth/src/jwt/index.ts](https://github.com/nextauthjs/next-auth/blob/v4/packages/next-auth/src/jwt/index.ts)（v4 の既定値） (GitHub) ※2026-10-25 確認
 - [RFC 9700 — Best Current Practice for OAuth 2.0 Security](https://datatracker.ietf.org/doc/html/rfc9700) (IETF、§2.2.2 public client のリフレッシュトークンは sender-constraint か rotation が必須) ※2026-10-25 確認
 - [セッションとJWTとCookieの歴史と変遷から紐解く、認証トークン管理設計](https://zenn.dev/khale/articles/web-session-jwt-cookie-history) (Zenn) ※2026-05-27に実際にfetch成功
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（BFF 例の `getToken` は next-auth 5.0.0-beta.32 / 4.24.15 のソースで確認）
 **確信度**: 高
 **最終更新**: 2026-10-25
 

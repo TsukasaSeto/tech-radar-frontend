@@ -67,10 +67,12 @@ import { generateText } from 'ai';
 import { anthropic } from '@ai-sdk/anthropic';
 
 const { text } = await generateText({
-  model: anthropic('claude-opus-4-8'),
-  reasoning: 'high', // プロバイダー固有設定に自動マッピング
+  model: anthropic('claude-opus-5-5'),
+  reasoning: 'high', // Anthropic では adaptive thinking + effort: 'high' にマッピングされる
   prompt: 'このアーキテクチャの設計上の問題点を分析して',
 });
+// claude-opus-5-5 は thinking が常に有効で、返されない思考も maxOutputTokens に数えられる。
+// maxOutputTokens を指定するときは、回答だけでなく思考の分も見込んで余裕を持たせる
 ```
 
 ```ts
@@ -82,7 +84,7 @@ import { createVercelNetworkSandboxSession } from '@ai-sdk/sandbox-vercel';
 
 export const agent = new HarnessAgent({
   harness: claudeCode, // Codex 等は対応するアダプターに差し替える
-  model: 'claude-sonnet-4-6', // モデル ID の形式はハーネスごとに異なる
+  model: 'claude-sonnet-5-5', // モデル ID の形式はハーネスごとに異なる（Claude Code ハーネスは Claude のモデル ID。省略時はハーネスの既定モデル）
   instructions: 'Prefer small changes and explain tradeoffs.',
 });
 
@@ -130,7 +132,9 @@ npx @ai-sdk/codemod v7
 **出典**:
 - [WorkflowAgent](https://ai-sdk.dev/docs/agents/workflow-agent) (AI SDK 公式 docs、`@ai-sdk/workflow`・`'use workflow'`・`writable: getWritable()`・`start()` による起動) ※2026-10-25 確認
 - [HarnessAgent](https://ai-sdk.dev/docs/ai-sdk-harnesses/harness-agent) / [AI SDK Harnesses Overview](https://ai-sdk.dev/docs/ai-sdk-harnesses/overview) (AI SDK 公式 docs、`@ai-sdk/harness/agent`・session と sandbox・harness パッケージは experimental) ※2026-10-25 確認
-- [Reasoning](https://ai-sdk.dev/docs/ai-sdk-core/reasoning) (AI SDK 公式 docs、`reasoning: 'medium'` のような文字列で指定・`providerOptions` が優先) ※2026-10-25 確認
+- [Reasoning](https://ai-sdk.dev/docs/ai-sdk-core/reasoning) (AI SDK 公式 docs、`reasoning: 'medium'` のような文字列で指定・`providerOptions` が優先・`anthropic('claude-opus-5-5')` + `reasoning: 'high'` が adaptive thinking + `effort: 'high'` の置き換え) ※2026-10-25 確認
+- [Anthropic Provider](https://ai-sdk.dev/providers/ai-sdk-providers/anthropic) (AI SDK 公式 docs、`claude-opus-5-5` / `claude-sonnet-5-5` は常に adaptive thinking で無効化できない・思考も `maxOutputTokens` に数えられる) ※2026-10-25 確認
+- [Models overview](https://platform.claude.com/docs/en/about-claude/models/overview) (Anthropic 公式 docs、現行は `claude-opus-5-5` / `claude-sonnet-5-5` などで、Opus 4.8・Sonnet 4.6 はレガシー（利用可）) ※2026-10-25 確認
 
 **バージョン**: AI SDK 7+（`ai` / `@ai-sdk/workflow` + `workflow@5`。`HarnessAgent` は experimental の `@ai-sdk/harness`）
 **確信度**: 高（Vercel 公式ブログ + AI SDK 公式ドキュメント。ただし `HarnessAgent` は experimental で API が変わりうる）

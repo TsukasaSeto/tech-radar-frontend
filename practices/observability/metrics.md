@@ -122,7 +122,7 @@ export async function register() {
     const { ATTR_SERVICE_NAME } = await import('@opentelemetry/semantic-conventions');
 
     const sdk = new NodeSDK({
-      // SDK 2.x では Resource クラスが export されない。1.x 系（sdk-node 0.200 未満）は new Resource({...})
+      // SDK 2.x 以降では Resource クラスが export されない。1.x 系（sdk-node 0.200 未満）は new Resource({...})
       resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: 'tech-radar-frontend',
         'service.version': process.env.APP_VERSION ?? 'unknown',
@@ -130,15 +130,18 @@ export async function register() {
       }),
 
       // メトリクスエクスポーター（OTLP形式）
-      metricReader: new PeriodicExportingMetricReader({
-        exporter: new OTLPMetricExporter({
-          url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
-          headers: {
-            'DD-API-KEY': process.env.DATADOG_API_KEY ?? '',  // Datadog の場合
-          },
+      // 配列の metricReaders を使う（単数形の metricReader は 0.204 で非推奨になり、0.300（SDK 3.x）で削除された）
+      metricReaders: [
+        new PeriodicExportingMetricReader({
+          exporter: new OTLPMetricExporter({
+            url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT,
+            headers: {
+              'DD-API-KEY': process.env.DATADOG_API_KEY ?? '',  // Datadog の場合
+            },
+          }),
+          exportIntervalMillis: 60_000,  // 60秒ごとにエクスポート
         }),
-        exportIntervalMillis: 60_000,  // 60秒ごとにエクスポート
-      }),
+      ],
     });
 
     sdk.start();
@@ -170,9 +173,11 @@ function reportMetric(name: string, value: number, tags: Record<string, string>)
 - [OpenTelemetry: Exporters](https://opentelemetry.io/docs/languages/js/exporters/) (OpenTelemetry公式)
 - [OpenTelemetry: Resources（JS）](https://opentelemetry.io/docs/languages/js/resources/) (OpenTelemetry公式、`resourceFromAttributes()`) ※2026-10-25 確認
 - [Upgrade to OpenTelemetry JS SDK 2.x](https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/upgrade-to-2.x.md) (OpenTelemetry公式、`new Resource()` → `resourceFromAttributes()`、安定版 2.0.0+ / 実験版 0.200.0+) ※2026-10-25 確認
+- [Upgrade to OpenTelemetry JS SDK 3.x](https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/3.x/migration-guide.md) (OpenTelemetry公式、`NodeSDKConfiguration.metricReader` の削除と `metricReaders` への置き換え) ※2026-10-25 確認
+- [opentelemetry-js experimental CHANGELOG 0.204.0](https://github.com/open-telemetry/opentelemetry-js/blob/main/experimental/CHANGELOG.md#02040) (OpenTelemetry公式、`metricReaders` の追加と `metricReader` の非推奨化) ※2026-10-25 確認
 - [Datadog: OpenTelemetry](https://docs.datadoghq.com/opentelemetry/) (Datadog公式)
 
-**バージョン**: @opentelemetry/sdk-node 0.200+ / @opentelemetry/resources 2.0+（SDK 2.x 系）
+**バージョン**: @opentelemetry/sdk-node 0.204+（`metricReaders`。2026-10-25 時点の最新は 0.300.0 / SDK 3.x）/ @opentelemetry/resources 2.0+（`resourceFromAttributes()`。3.0 でも同じ）
 **確信度**: 中
 **最終更新**: 2026-10-25
 
@@ -436,6 +441,7 @@ async function processOrder(order: Order) {
 - [Introducing Application Metrics](https://blog.sentry.io/introducing-application-metrics/) (Sentry Engineering / 2026-05) ※2026-05-06に実際にfetch成功
 - [Sentry Docs: Metrics](https://docs.sentry.io/product/metrics/) (Sentry公式)
 - [Sentry Docs: Metrics（Next.js）](https://docs.sentry.io/platforms/javascript/guides/nextjs/metrics/) (Sentry公式、`count` / `gauge` / `distribution` と `attributes`、SDK 10.25.0+) ※2026-10-25 確認（routine-followup マージ時の追加）
+- [Sentry Docs: BFCache Metrics](https://docs.sentry.io/platforms/javascript/configuration/integrations/bfcache/) (Sentry公式、`bfcacheMetricsIntegration` は v11.0.0 から、3 つのメトリクス名と種類、`maxReasons`) ※2026-10-25 確認
 - [Should you use a log or a metric?](https://blog.sentry.io/when-you-need-a-metric/) (Sentry Blog、ログとメトリクスの使い分けと同名イベントでの相関) ※2026-10-22 fetch
   > "Make it a metric when there's a number you'll track over time, even when nothing is wrong."
   > (セクション "When to use which")
@@ -479,10 +485,12 @@ export async function GET() {
 > ([Custom metrics are now supported in Vercel Observability](https://vercel.com/changelog/custom-metrics-are-now-supported-in-vercel-observability), 本文冒頭) ※2026-08-21に実際にfetch成功
 
 **出典**:
-- [Custom metrics are now supported in Vercel Observability](https://vercel.com/changelog/custom-metrics-are-now-supported-in-vercel-observability) (Vercel公式changelog) ※2026-08-21 fetch
+- [Custom metrics are now supported in Vercel Observability](https://vercel.com/changelog/custom-metrics-are-now-supported-in-vercel-observability) (Vercel公式changelog、Pro / Enterprise の Observability Plus、observability イベントとして課金) ※2026-10-25 確認
+- [Vercel Docs: Emit Custom Metrics from Vercel Functions](https://vercel.com/docs/observability/custom-metrics) (Vercel公式、`metric(name, value, attributes?)` の引数、名前と属性の制約、1 回の呼び出しの上限、自動で付く属性、`vercel metrics`) ※2026-10-25 確認
+- [@vercel/functions CHANGELOG](https://github.com/vercel/vercel/blob/main/packages/functions/CHANGELOG.md) (vercel/vercel、3.9.0 で `metric()` を追加) ※2026-10-25 確認
 
-**バージョン**: @vercel/functions（2026年8月時点、Observability Plus プラン）
-**確信度**: 高（Vercel公式changelog）
+**バージョン**: @vercel/functions 3.9.0+（`metric()`）、Pro / Enterprise の Observability Plus
+**確信度**: 高（Vercel公式changelog・公式ドキュメント）
 **最終更新**: 2026-10-25
 
 ---

@@ -137,11 +137,11 @@ pnpm turbo run build --summarize
 
 ### 2. Next.js の `.next/cache` を `actions/cache` で永続化する
 
-Next.js は `.next/cache` 配下に webpack / SWC / Babel / TypeScript / Image Optimization のキャッシュを保存する。
+Next.js はビルド間で共有するキャッシュを `.next/cache` に保存する。Next.js 16 の既定の Turbopack では、16.3 以降 `next build` の作業結果が `.next/cache/turbopack` に入る（`next build --webpack` でビルドする場合は webpack 側のキャッシュが使われ、このディレクトリは使われない）。
 これを CI run 間で永続化することで、増分ビルドが効く。
 
 **根拠**:
-- Next.js のフルビルドは 1-3 分、増分ビルドは 10-30 秒程度
+- Next.js 公式ブログの計測では、Turbopack の `next build` のコンパイル時間がキャッシュありで 1.4〜5.5 倍速くなった（nextjs.org で 21 秒 → 9.2 秒）。CI では `.next/cache` を run 間で復元したときだけ効く
 - `.next/cache` には大量の中間ファイルが入る（30-300MB 程度）
 - Turborepo を使っていても、Next.js 内部のキャッシュは別管理。両方併用が最も速い
 - 画像最適化のキャッシュ（`.next/cache/images`）は `next start` の実行中にリクエストに応じて作られ、`next build` では作られない。CI のキャッシュ対象にしても効果はない
@@ -207,28 +207,34 @@ apps/
 - Next.js のメジャー更新 → 自動で破棄
 - 環境変数変更 → `inputs` に環境変数を含めれば検知
 
-**Turbopack のビルド用ファイルシステム永続キャッシュ（Next.js 16.3+）**:
-Webpack ビルドの `.next/cache` 永続化（このルール本文）と同じ発想を、Turbopack ビルドにも `experimental.turbopackFileSystemCacheForBuild` で適用できる。CI では生成された `.next` ディレクトリを次回実行へコピーすることでビルド時間を短縮する。
+**Turbopack のビルド用ファイルシステムキャッシュ（Next.js 16.3+）**:
+16.3 以降、Turbopack は `next build` の作業結果を `.next/cache/turbopack` に保存し、次のビルドの開始時に読み込む（`experimental.turbopackFileSystemCacheForBuild`、既定で有効）。キャッシュは `.next/cache` の中にあるので、上の `actions/cache` の設定でそのまま効き、`next.config.ts` に追加の設定は要らない。`.next/cache` を run 間で保存しない CI では、読まれないキャッシュを書かないように無効にする。
 
 ```ts
 // next.config.ts
-const nextConfig = {
+// .next/cache を run 間で復元しない CI のときだけ無効にする（既定は true）
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
   experimental: {
-    turbopackFileSystemCacheForBuild: true,
+    turbopackFileSystemCacheForBuild: false,
   },
 };
+
+export default nextConfig;
 ```
 
-> "Persistent cache for builds can be enabled with the `turbopackFileSystemCacheForBuild` config flag... CI setups can take advantage of this by copying the generated `.next` directory from one run to the next."
-> ([Turbopack: What's New in Next.js 16.3](https://nextjs.org/blog/next-16-3-turbopack), セクション "Persistent caching") ※2026-06-30に実際にfetch成功
+> "The cache lives in `.next/cache`, so CI builds only get faster if that directory is restored between runs."
+> ([Turbopack: What's New in Next.js 16.3](https://nextjs.org/blog/next-16-3-turbopack), セクション "File System cache for builds") ※2026-10-25 確認
 
 **出典**:
-- [Next.js Docs: CI build caching](https://nextjs.org/docs/app/building-your-application/deploying/ci-build-caching) (Next.js 公式)
+- [Next.js Docs: CI Build Caching](https://nextjs.org/docs/app/guides/ci-build-caching) (Next.js 公式、`.next/cache` を CI で保存する設定例) ※2026-10-25 確認
+- [Next.js Docs: turbopackFileSystemCache](https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopackFileSystemCache) (Next.js 公式、`turbopackFileSystemCacheForBuild` は v16.3.0 から既定で有効、保存先は `.next/cache/turbopack`、`.next/cache` を保存しない環境では `false`) ※2026-10-25 確認
 - [GitHub: actions/cache](https://github.com/actions/cache)
 - [Next.js Docs: Image Component](https://nextjs.org/docs/app/api-reference/components/image) (Next.js 公式、最適化済み画像は初回のリクエスト時に作られ `<distDir>/cache/images` に保存される) ※2026-10-25 確認
-- [Turbopack: What's New in Next.js 16.3](https://nextjs.org/blog/next-16-3-turbopack) (Next.js 公式ブログ、`turbopackFileSystemCacheForBuild` による永続ビルドキャッシュ) ※2026-06-30に実際にfetch成功
+- [Turbopack: What's New in Next.js 16.3](https://nextjs.org/blog/next-16-3-turbopack) (Next.js 公式ブログ、`next build` のファイルシステムキャッシュを既定で有効化、キャッシュの有無でのコンパイル時間の計測) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+（Turbopack 永続キャッシュは Next.js 16.3+）/ actions/cache v6
+**バージョン**: Next.js 13+（Turbopack のビルドキャッシュは Next.js 16.3+ で既定有効）/ actions/cache v6
 **確信度**: 高
 **最終更新**: 2026-10-25
 

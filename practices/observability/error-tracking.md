@@ -733,22 +733,30 @@ Sentry MCP（Claude Code・Cursor 等の MCP 対応ツール用）または Sent
 - Sentry の分散トレーシングを使えばマイクロサービスをまたいだ根本原因を追跡できる
 - Draft PR ＋ 人間レビューで誤ったマジックフィックスの本番流出を防ぐ
 
-**コード例（Sentry CLI で 1 件のイシューをエージェントに説明させる）**:
+**コード例（Sentry CLI でイシューの文脈と原因分析をエージェントに渡す）**:
 ```bash
-# Sentry CLI 認証
+# Sentry CLI（getsentry の `sentry` コマンド）のインストール手順は https://cli.sentry.dev/ を参照
 sentry auth login
 
-# イシューのフル文脈を取得してエージェントに渡す
+# イシューの詳細（スタックトレース・最新イベント・トレース）を JSON で取得してエージェントに渡す
+sentry issue view CHECKOUT-P1 --json
+
+# Seer AI による根本原因の分析（新しいイシューは数分かかる）
 sentry issue explain CHECKOUT-P1
 
 # 自動化スクリプト（CI/CD から呼び出す場合）
-sentry issue list --status unresolved --limit 5 | \
-  xargs -I{} sentry issue explain {}
+# issue list は表形式で出力し、--status はないので、--query で絞って JSON から short ID だけを取り出す
+sentry issue list --query "is:unresolved" --limit 5 --json --fields shortId \
+  | jq -r '.data[].shortId' \
+  | xargs -r sentry issue explain  # -r: 該当なしのときは実行しない（GNU xargs）
 ```
 
 **MCP 設定例（Claude Code / Cursor 向け）**:
 ```bash
-# Sentry MCP をワンライナーで追加
+# Claude Code（Sentry 公式の手順。/mcp/<org>/<project> で対象を絞れる）
+claude mcp add --transport http sentry https://mcp.sentry.dev/mcp
+
+# 複数のエージェントにまとめて追加する場合（サードパーティの add-mcp を使う。Sentry ブログで紹介されている）
 npx add-mcp https://mcp.sentry.dev/mcp
 ```
 
@@ -756,8 +764,15 @@ npx add-mcp https://mcp.sentry.dev/mcp
 > "Your agents need someone/something telling them what's breaking in the wild and giving them the context they need to understand why."
 > ([Your agent can't fix what it can't see](https://blog.sentry.io/agents-need-production-context/), セクション "What agents actually need") ※2026-05-26に実際にfetch成功
 
+**出典**:
+- [Your agent can't fix what it can't see](https://blog.sentry.io/agents-need-production-context/) (Sentry公式ブログ、`sentry issue view` / `explain` / `plan` と `npx add-mcp` の例) ※2026-10-25 確認
+- [Sentry CLI: issue](https://cli.sentry.dev/commands/issue/) (Sentry CLI 公式、`issue list` のフラグ（`--status` はなく `--query` で絞る）、`issue explain` は Seer AI での分析で複数の ID を受け取る、全コマンド共通の `--json` / `--fields`) ※2026-10-25 確認
+- [getsentry/toolkit: packages/cli](https://github.com/getsentry/toolkit/tree/main/packages/cli) (Sentry CLI のソース。`issue list --json` は `{ data: [...], hasMore, ... }` の形で出力する) ※2026-10-25 確認
+- [Sentry MCP](https://mcp.sentry.dev/) (Sentry公式、`claude mcp add --transport http sentry https://mcp.sentry.dev/mcp/...`) ※2026-10-25 確認
+- [add-mcp](https://github.com/neon-solutions/add-mcp) (サードパーティの MCP 設定ツール、`npx add-mcp <url>`) ※2026-10-25 確認
+
 **バージョン**: Sentry SDK 全バージョン（MCP: 2026 年対応 SDK）
-**確信度**: 中（Sentry 公式ブログ 1 記事）
+**確信度**: 中（方針は Sentry 公式ブログ 1 記事。CLI と MCP のコマンドは公式ドキュメントで確認）
 **最終更新**: 2026-10-25
 
 ---

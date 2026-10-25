@@ -325,9 +325,16 @@ const getCachedProductList = unstable_cache(
 
 1. **キャッシュタグは意図を表す粒度で命名する**: `articles` のような汎用的な単語タグは避け、`articles:latest`・`articles:by-author:{id}` のように用途が分かる名前にする。汎用タグへの `revalidateTag` 1回でキャッシュの 80% が失われた事例あり。
 
-2. **`cacheKey()` でユーザーセグメント単位のキャッシュキーに集約する**: ログイン済み/未ログイン・地域バリアントなどを `cacheKey()` で論理セグメントに畳み込むと、ユーザーごとの個別キャッシュを作らずに済み、Edge Function 呼び出し回数を最大 96% 削減できる。
+2. **キャッシュキーはユーザー単位ではなく論理セグメント単位に集約する**: ログイン済み/未ログイン・地域バリアントなどを論理セグメント（例: `"member:jp"`）に畳み込み、その値を `"use cache"` 関数の引数として渡すと、ユーザーごとの個別キャッシュを作らずに済む。記事の事例では Edge Function の呼び出しが 96% 減った。記事のコード例は `import { cacheKey } from "next/cache"` と書いているが、`next/cache` に `cacheKey` という export はない（v16.0.0 / v16.4.3 のソースで確認）。キャッシュキーは引数とクロージャで捕捉した値から自動で作られるので、正規化したセグメントを引数にすればよい。公式も、ユーザー ID ではなく言語やカテゴリのように値の種類が少ない次元でキャッシュするよう勧めている。
 
-3. **`use cache` 境界の内部で `cookies()` を呼ばない**: キャッシュコンポーネント内から `cookies()` を直接呼び出すと Next.js がビルドエラーを発生させる。Cookie の値は外部コンポーネントで取得し、props として渡す（渡すのはセッションを検証したうえでの userId などの識別子にする。#8）。
+3. **`use cache` 境界の内部で `cookies()` を呼ばない**: キャッシュ関数の中（呼び出し先のヘルパーを含む）で `cookies()` を読むと `next-request-in-use-cache` エラーになる。動的にレンダリングされるルートでは `next build` を通り、`next start` で実行したときに失敗することがあるので、記事のチームは lint で検出している。Cookie の値は外部コンポーネントで取得し、props として渡す（渡すのはセッションを検証したうえでの userId などの識別子にする。#8）。
+
+**出典（追加）**:
+- [Next.js Docs: use cache — Cache keys / Request-time APIs](https://nextjs.org/docs/app/api-reference/directives/use-cache#cache-keys) (Next.js 公式、キャッシュキーの構成要素と、キャッシュ関数内で `cookies()` を読んだときのエラー) ※2026-10-25 確認
+  > "Cached functions and components cannot access runtime APIs like `cookies()`, `headers()`, or `searchParams`, and the restriction follows the call stack"
+- [Next.js Docs: use cache: remote — Cache key considerations](https://nextjs.org/docs/app/api-reference/directives/use-cache-remote#cache-key-considerations) (Next.js 公式、値の種類が少ない次元でキャッシュする) ※2026-10-25 確認
+  > "find the dimension with fewer unique values (category vs. price, language vs. user ID), cache on that dimension, and filter or select the rest in memory."
+- [vercel/next.js `packages/next/cache.js`（v16.4.3）](https://github.com/vercel/next.js/blob/v16.4.3/packages/next/cache.js) (Next.js 公式リポジトリ、`next/cache` の export 一覧に `cacheKey` はない) ※2026-10-25 確認
 
 **確信度**: 既存（中）→ 高（4.2M MAU 本番事例で実証済み）
 
@@ -498,12 +505,12 @@ revalidateTag("posts"); // 将来削除予定
 - 動的値を引数として渡せばその値がキャッシュキーになるため、ユーザー横断で共有可能なものは横断で再利用され、ユーザーごとに分かれるものはユーザーごとに分かれる
 - キャッシュ関数の引数と `cacheTag` の値はハッシュ化されず、平文でキャッシュキー・タグとして保存される（リモートキャッシュにもそのまま送られる）。公式は、キーとタグには userId のような安定した識別子を使い、トークン・パスワード・生のメールアドレスなどの秘密や個人情報を入れないよう求めている
 - キャッシュ関数を export すると、別の userId を渡して他人のデータを取得できてしまう。公式の例も、キャッシュ関数は export せず、セッションを検証する入口の関数から呼んでいる
-- 保存先は 4 種類とそのレイテンシ目安（ストレージ選択の基準）:
-  - `"use cache"`（インメモリ・デフォルト）: ヒット時 **1〜2 ms**。単一インスタンスのみ。再起動で消失
-  - `"use cache: remote"`（Redis 等）: ヒット時 **15〜40 ms**（ネットワーク分）。**複数インスタンス間で共有、再起動でも保持**。レートリミット API やマルチサーバー構成で必須
-  - `"use cache: <name>"`（cacheHandler で定義）: カスタムバックエンド
-  - `"use cache: private"`（クライアント）: ユーザー固有 △。最終手段
-- フルルート ISR は「HTML ごとキャッシュ」するため最大 **20〜35 倍**の応答速度改善になる（レンダリング自体がボトルネックの重いページで特に有効）
+- 保存先は 4 種類（ストレージ選択の基準）。レイテンシは Medium 記事の著者が `docker compose up` で起動するローカルのデモ（SQLite + 500 ms の遅延を入れたバックエンド）で測った、ヒット時のデータ取得時間:
+  - `"use cache"`（既定のハンドラーはインメモリ LRU）: Next.js のプロセスごとに分かれ、複数のサーバーやコンテナの間では共有されず、再起動で消える。サーバーレスではリクエスト間でほとんど再利用されない。記事のデモでは約 1〜2 ms
+  - `"use cache: remote"`: `cacheHandlers.remote` に設定したハンドラー（Redis 等。ホスティング事業者が用意する場合もある）に保存し、全インスタンスで共有する。ハンドラーを設定しないと、こちらもインメモリ LRU になる。Redis のような外部ストアなら再起動では消えないが、キャッシュキーにビルド ID（または `deploymentId`）が入るのでデプロイをまたいでは使えない。記事のデモでは約 15〜40 ms（Redis への往復 1 回分）。公式は、レート制限のある API、遅いバックエンドの保護、高コストな処理などで、コストとレイテンシに見合う場合に使うとしている
+  - `"use cache: <name>"`: `cacheHandlers` に追加した名前付きハンドラーを使う
+  - `"use cache: private"`: サーバーには保存せず、ブラウザのメモリにだけ置く（`cacheHandlers` ではカスタマイズできない）。最終手段
+- フルルート ISR（HTML ごとキャッシュ）は、記事のデモでは、データをキャッシュしたまま重い詳細ページを再レンダリングすると約 1.5〜2 秒かかり、キャッシュ済みの HTML を返すとその 20〜35 倍速かった。レンダリングとシリアライズがボトルネックの重いページの場合の値
 - `"use cache: private"` を選ぶ前に、引数渡しパターンが本当に成立しないかを必ず検討する。多くのケースは引数渡しで足りる
 - `"use cache: private"` の結果は `cacheLife` の stale 時間（5 分以上など）の間ブラウザのメモリに残りうる（Partial Prefetching 有効時）。共有端末でログアウト後に前ユーザーの値が見えないよう、ログアウト後は `window.location.href` でフルリロードする
 
@@ -591,7 +598,11 @@ async function MyDashboard() {
 
 **出典**:
 - [Next.jsの考え方 / 3.5 ユーザー固有データの扱いと保存先の使い分け](https://zenn.dev/akfm/books/nextjs-basic-principle)
-- [The Caching Playbook: SSR, use cache, Redis and ISR in Next.js 16](https://medium.com/@rezamoosavi.kntu/the-caching-playbook-ssr-use-cache-redis-and-isr-in-next-js-16-30ea8d540d13) (Medium、`use cache: remote` vs インメモリのレイテンシ比較・ISR の効果測定) ※2026-06-05fetch
+- [The Caching Playbook: SSR, use cache, Redis and ISR in Next.js 16](https://medium.com/@rezamoosavi.kntu/the-caching-playbook-ssr-use-cache-redis-and-isr-in-next-js-16-30ea8d540d13) (Medium、`use cache: remote` vs インメモリのレイテンシ比較・ISR の効果測定。数値は著者のローカルのデモでの実測) ※2026-06-05fetch、2026-10-25 に本文の数値と測定条件を再確認
+- [Next.js Docs: use cache: remote](https://nextjs.org/docs/app/api-reference/directives/use-cache-remote) (Next.js 公式、インメモリの限界、全インスタンスでの共有、使うべき場面、デプロイをまたいで保持されない点) ※2026-10-25 確認
+  > "The `'use cache: remote'` directive lets you declaratively specify that a cached output should be stored in a remote cache instead of in-memory, providing durable caching shared across all server instances."
+- [Next.js Docs: cacheHandlers](https://nextjs.org/docs/app/api-reference/config/next-config-js/cacheHandlers) (Next.js 公式、既定のインメモリキャッシュはプロセスごと、未設定時は `remote` もインメモリ LRU、名前付きハンドラー、`use cache: private` はハンドラーを使わない) ※2026-10-25 確認
+  > "The default in-memory cache is isolated to each Next.js process. If you're running multiple servers or containers, each instance will have its own cache that isn't shared with others and is lost on restart."
 - [`use cache: private` のキャッシュはブラウザに残ることもある](https://zenn.dev/chot/articles/362b7a2420ef1a) (Zenn、stale 時間中のブラウザ保持とログアウト時のフルリロード) ※2026-10-02に実際にfetch成功
   > "The client router can keep the rendered output in browser memory for the stale time configured with cacheLife."
 - [Next.js Docs: How to implement authentication with Cache Components](https://nextjs.org/docs/app/guides/authentication-with-cache-components) (Next.js 公式、Suspense の内側でセッションを読み、userId だけを export しないキャッシュ関数に渡す。キーとタグは平文で保存される) ※2026-10-25 確認
@@ -601,7 +612,7 @@ async function MyDashboard() {
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（Cache Components 前提）
-**確信度**: 高（中核の主張は公式ドキュメントで確認。保存先ごとのレイテンシの数値は単一記事の値）
+**確信度**: 高（中核の主張と保存先ごとの性質は公式ドキュメントで確認。レイテンシの数値は単一記事のローカル実測）
 **最終更新**: 2026-10-25
 
 ---

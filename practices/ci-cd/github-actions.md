@@ -175,7 +175,7 @@ jobs:
 
 **根拠**:
 - `pnpm install --frozen-lockfile` も 30-60 秒かかる。キャッシュで 5 秒に短縮
-- Next.js は `.next/cache` に webpack / babel / SWC のキャッシュを保存。これがあると build 時間が半分以下
+- Next.js は `.next/cache` にビルドキャッシュを保存する（16.3 以降の既定の Turbopack ビルドは `.next/cache/turbopack`）。公式ブログの計測ではキャッシュありでコンパイルが 1.4〜5.5 倍速くなった（中身と効果は `practices/ci-cd/build-cache.md` #2）
 - `actions/setup-node` の `cache:`（pnpm 11 で `pnpm/setup` を使う場合はその `cache: true`）は依存パッケージのみ。Next.js キャッシュは別途設定
 - Turborepo / Nx を使う場合は Turbo / Nx のリモートキャッシュも併用（[build-cache.md](./build-cache.md) 参照）
 
@@ -221,7 +221,8 @@ Next.js キャッシュの `path` / `key` / `restore-keys` は `practices/ci-cd/
 
 **出典**:
 - [GitHub: Caching dependencies](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows) (GitHub Docs)
-- [Next.js Docs: CI build caching](https://nextjs.org/docs/app/building-your-application/deploying/ci-build-caching) (Next.js 公式)
+- [Next.js Docs: CI Build Caching](https://nextjs.org/docs/app/guides/ci-build-caching) (Next.js 公式) ※2026-10-25 確認
+- [Next.js Docs: turbopackFileSystemCache](https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopackFileSystemCache) (Next.js 公式、`next build` のキャッシュは v16.3.0 から既定で `.next/cache/turbopack` に保存) ※2026-10-25 確認
 
 **バージョン**: actions/cache v6 / actions/setup-node v7
 **確信度**: 高
@@ -541,19 +542,22 @@ jobs:
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
             この依存更新 PR の差分を読み、破壊的変更の有無と確認すべき点を gh pr comment で報告してください。
-          # v1 に allowed_tools 入力はない。ツールの制限は claude_args の --allowedTools で渡す
-          # WebFetch は許可しない（リリースノート等に仕込まれたプロンプトインジェクションの経路になる）
+          # v1 に allowed_tools 入力はない（渡してもランナーが Unexpected input(s) の警告を出すだけで無視される）。ツールは claude_args で指定する
+          # --allowedTools は確認なしで使えるツールの追加で、許可リストではない。WebFetch は指定しなくても一部のドキュメント用ドメインを
+          # 確認なしで取得できるため、--disallowedTools で外す（リリースノート等に仕込まれたプロンプトインジェクションの経路になる）
           claude_args: |
             --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
+            --disallowedTools "WebFetch,WebSearch"
 ```
 
 キーポイント:
 - `permissions: {}` をワークフロー冒頭に置き、すべての権限をデフォルト拒否にする
 - `github.event.pull_request.user.login == 'dependabot[bot]'` で Dependabot 以外が作成した PR を排除し、`allowed_bots` で Dependabot だけを許可する
-- `--allowedTools` の `:` 区切りサブコマンド制限で、任意 `bash` 実行を防ぐ（`Bash` だけ許可すると全シェルコマンドが実行可能になる）
-- `pull_request_target` のジョブは secrets を持つ。PR 本文や依存の changelog は外部から書き込めるため、外部へ通信するツール（`WebFetch` 等）を渡さず、出力先も PR コメントに限る
+- `--allowedTools` は承認なしで実行してよい呼び出しの事前承認で、`Bash(gh pr comment:*)` のようにサブコマンド単位で書く（`Bash` だけを書くと全シェルコマンドが承認なしで実行される）。任意の `bash` 実行が止まるのは、事前承認に一致しない呼び出しを次の項目のとおり非対話の実行が拒否するため
+- `prompt` を渡す自動実行（agent モード）では、action はツールを追加しない。Claude Code の既定（`default` モード）のまま動くため、承認が要る呼び出しは `--allowedTools` に一致しない限り拒否される。一方、承認が要らない呼び出し（作業ディレクトリ内の Read / Grep / Glob、`ls`・`cat`・読み取り系の `git` などの組み込みの読み取り専用コマンド、組み込みのドキュメント用ドメインへの WebFetch）は `--allowedTools` に書かなくても実行される。使わせたくないツールは `--disallowedTools` にツール名で書いて外す
+- `pull_request_target` のジョブは secrets を持つ。PR 本文や依存の changelog は外部から書き込めるため、外部へ通信するツール（`WebFetch` 等）は `--disallowedTools` で外し、出力先も PR コメントに限る
 - PR 側のコードを checkout して Claude を動かす構成にはしない。非対話の Claude Code（`claude -p`。claude-code-action も内部で非対話実行する）は、リポジトリの `.claude/settings.json` の hooks や `.mcp.json` のサーバーを信頼確認なしで実行するため、PR に仕込まれたそれらが secrets を持つジョブでの任意コード実行の経路になる（`practices/ai-agent/claude-code.md` #11・#13）
-- **`schedule` トリガーで毎朝 Claude Code を自律実行させる場合も同じ最小権限原則が要る**: `prompt` に「PRにコメントして」と書くだけでは投稿権限は付与されない。`--allowedTools` で `Bash(gh pr comment:*)` 等を明示しないと、実行はされてもコメント投稿だけ失敗する。また `ANTHROPIC_API_KEY` を secrets に残したまま OAuth（サブスクリプション）トークンに切り替えると、意図せず両方の課金経路が併存するため、切り替え時は旧 secrets を削除する
+- **`schedule` トリガーで毎朝 Claude Code を自律実行させる場合も同じ最小権限原則が要る**: `prompt` に「PRにコメントして」と書くだけでは投稿権限は付与されない。`--allowedTools` で `Bash(gh pr comment:*)` 等を明示しないと、実行はされてもコメント投稿だけ失敗する。また `anthropic_api_key`（またはジョブの `env.ANTHROPIC_API_KEY`）を残したまま `claude_code_oauth_token`（サブスクリプション）を足すと、API キーが優先される（非対話の実行では API キーがあれば必ず使う）ため、従量課金のまま動き続ける。切り替え時は API キーの指定と旧 secrets を削除する
 
 **出典（cron/自律実行での追加知見）**:
 - [GitHub ActionsにClaude Codeを組み込んで、PRに自動コードレビューを付ける](https://zenn.dev/virtualcraft/articles/claude-code-github-actions-review) (Zenn jmurayama、`prompt` だけでは投稿権限が付かず `--allowedTools` の明示が必須) ※2026-07-08に実際にfetch成功
@@ -565,7 +569,7 @@ jobs:
 - [ ] Renovate/Dependabot の PR ワークフローは `pull_request` トリガーか
 - [ ] `GITHUB_TOKEN` のデフォルト権限をリポジトリ設定で `read-only` に制限しているか
 - [ ] ワークフローのトップレベルに `permissions: {}` を置き、ジョブ単位で必要な権限のみ付与しているか
-- [ ] AI エージェント（Claude Code Action 等）に `--allowedTools` でツールを制限しているか
+- [ ] AI エージェント（Claude Code Action 等）に `--allowedTools` で必要なツールだけを承認し、外部へ通信するツールを `--disallowedTools` で外しているか
 - [ ] サードパーティ Action は `uses: some-org/some-action@v1` のようなタグではなくコミット SHA にピン留めしているか（タグは改ざん可能）
 - [ ] 長期間有効な PAT を secrets に保存していない場合、GitHub Apps または OIDC に置き換えているか
 
@@ -586,6 +590,10 @@ jobs:
 - [GitHub ActionsにClaude Codeを組み込んで、PRに自動コードレビューを付ける](https://zenn.dev/virtualcraft/articles/claude-code-github-actions-review) (Zenn jmurayama) ※2026-07-08に実際にfetch成功
 - [APIキーなしでClaude CodeをGitHub Actionsで動かして、毎朝勝手に働かせてみた](https://qiita.com/ktdatascience/items/40d86c446779975615c1) (Qiita ktdatascience) ※2026-07-08に実際にfetch成功
 - [anthropics/claude-code-action action.yml（v1）](https://github.com/anthropics/claude-code-action/blob/v1/action.yml) (Anthropic 公式、`prompt` / `claude_args` / `allowed_bots` の入力。`allowed_tools` は存在しない) ※2026-10-25 確認
+- [claude-code-action Migration Guide（v1）](https://github.com/anthropics/claude-code-action/blob/v1/docs/migration-guide.md) と [agent モードの実装](https://github.com/anthropics/claude-code-action/blob/v1/src/modes/agent/index.ts) (Anthropic 公式、`allowed_tools` は `claude_args: --allowedTools` に置き換え。agent モードは `claude_args` の内容だけを渡し、ツールを追加しない) ※2026-10-25 確認
+- [actions/runner: ActionRunner.cs](https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionRunner.cs) (GitHub 公式、action に定義されていない入力は `Unexpected input(s)` の警告を出すだけでジョブは止めない) ※2026-10-25 確認
+- [Agent SDK: Configure permissions](https://code.claude.com/docs/en/agent-sdk/permissions) と [Claude Code: Configure permissions](https://code.claude.com/docs/en/permissions) (Anthropic 公式、`allowedTools` は事前承認で、載っていないツールも使える。承認が要らない呼び出しは載せなくても実行され、ツールを外すには `disallowedTools`。読み取り専用コマンドと WebFetch の事前承認ドメイン) ※2026-10-25 確認
+- [Claude Code: Authentication](https://code.claude.com/docs/en/authentication) (Anthropic 公式、`ANTHROPIC_API_KEY` は `CLAUDE_CODE_OAUTH_TOKEN` より優先され、非対話では必ず使われる) ※2026-10-25 確認
 - [actions/download-artifact action.yml（v8）](https://github.com/actions/download-artifact/blob/v8/action.yml) (GitHub 公式、別 run・別リポジトリから取得するときは `github-token` が必須) ※2026-10-25 確認
 - [actions/checkout README（v7）](https://github.com/actions/checkout/blob/v7/README.md) (GitHub 公式、`pull_request_target` / `workflow_run` でのフォーク PR checkout を既定で拒否) ※2026-10-25 確認
 
@@ -608,7 +616,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - AWS IAM ロールの信頼ポリシーで GitHub リポジトリ・ブランチを絞れるため、最小権限原則と相性がよい
 - 同じ「鍵素材を外に出さない」原則は **GitHub App 秘密鍵**にも適用できる: 秘密鍵を Cloud KMS に保存し、署名処理のみ KMS API 経由で行う（鍵素材は KMS から外に出ない）
 - 同じ OIDC 短命トークンの原則は **GCP でも同様**: Workload Identity Federation（WIF）で GCP サービスアカウント JSON キーを廃止し、GitHub OIDC トークンと WIF プールを紐付けて一時トークンを発行する。属性条件（`attribute_condition`）でリポジトリ・ブランチ・タグを絞り込むことで AWS の `sub` 条件絞り込みと同等の最小権限を実現できる
-- 同じ原則は **Docker Hub でも同様**: OIDC federation を使うと長期有効な Docker アクセストークンをリポジトリ・環境シークレット・Actions キャッシュのどこにも保持せず、短命トークンで `docker/login-action` を認証できる
+- 同じ原則は **Docker Hub でも同様**: OIDC federation を使うと長期有効な Docker アクセストークンをリポジトリ・環境シークレット・Actions キャッシュのどこにも保持せず、短命トークンで `docker/login-action` を認証できる。使えるのは Docker Team / Business / Docker Hardened Images の契約がある組織と、Docker-Sponsored Open Source に参加している組織。Docker Home で組織の OIDC connection を作り、ruleset で `sub` クレームを照合してリポジトリ・ブランチを絞る（1 connection に ruleset は最大 5 個）。workflow 側は `docker/login-action` v4.5.0 以降で、`permissions.id-token: write`、`username` に組織名、`password` は省略し、環境変数 `DOCKERHUB_OIDC_CONNECTIONID` に connection ID を渡す
 - 同じ原則は **Vercel Container Registry（VCR）でも同様**: `vercel/vcr-action/login@v1` が workflow の OIDC トークンを短命の Vercel アクセストークンに交換して `vcr.vercel.com` へログインし、ジョブ終了時にトークンを自動失効させる。`permissions.id-token: write` とチーム ID の変数化のみで導入でき、Vercel 側に長期クレデンシャルを保持しない
 - OIDC プロバイダー自体の作成も Terraform でコード化しておくと、複数リポジトリ・複数ロールへの展開時に手作業でのポリシー設定ミスを防げる
 - **最も多い失敗は信頼ポリシーの `sub` 条件を絞り込まないこと**: 組織内の任意のワークフロー（フォークされた marketplace action を含む）が role を assume できてしまう。`sub` は `repo:<ORG>/<REPO>:ref:refs/heads/main` のように **リポジトリ＋ブランチ／environment 単位で厳密に**指定し、別ワークフローに権限を広げたい場合は既存ロールを緩めず**別の狭いロールを追加**する
@@ -796,11 +804,14 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action) (Vercel Changelog公式、`vercel/vcr-action/login@v1`によるVCR版OIDCログイン) ※2026-09-26に実際にfetch成功
 - [Vercel wants static credentials gone. Its own GitHub Actions deploy still needs one.](https://dev.to/leobaniak/vercel-wants-static-credentials-gone-its-own-github-actions-deploy-still-needs-one-1gj6) (dev.to leobaniak、OIDC 未対応デプロイ先での暫定緩和策: 保護 environment・期限設定・fork 隔離) ※2026-10-24 fetch
 - [Configuring OpenID Connect in Amazon Web Services](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws) (GitHub Docs、信頼ポリシーの `aud` / `sub` 条件と immutable subject の形式・適用条件) ※2026-10-25 確認
+- [Docker OIDC connections for GitHub Actions available for Docker Orgs](https://www.docker.com/blog/docker-oidc-connections-for-github-actions-available-for-docker-orgs/) (Docker 公式ブログ 2026-07-31、対象プランと組織、Docker Home での connection 作成、ruleset、workflow 例) ※2026-10-25 確認
+- [Docker Docs: OIDC connections](https://docs.docker.com/enterprise/security/oidc-connections/) (Docker 公式、プランごとの connection 数の上限、1 connection あたり ruleset 5 個、トークンは workflow ごとの短命トークン) ※2026-10-25 確認
+- [docker/login-action README](https://github.com/docker/login-action#docker-hub) (Docker 公式、Docker Hub OIDC は v4.5.0 で追加。`id-token: write`、`username` に組織名、`password` は省略、`DOCKERHUB_OIDC_CONNECTIONID`) ※2026-10-25 確認
 
 > "It exchanges the workflow's OIDC token for a short-lived Vercel access token, then uses that token to log in to vcr.vercel.com."
 > ([Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action), セクション本文) ※2026-09-26に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+（例は v6）, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+（例は v6）, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation（docker/login-action v4.5.0+）, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
 **確信度**: 高
 **最終更新**: 2026-10-25
 
@@ -819,7 +830,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - `gh auth setup-git` は git の credential helper として `gh` を登録するだけで、トークン自体はファイルに書かない。git が認証を求めた時点で、そのステップの環境変数 `GH_TOKEN` からトークンを読む。そのため `GH_TOKEN` は setup のステップだけでなく、`git push` するステップにも渡す
 - `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる。`zizmor` は `persist-credentials` 漏れだけでなく、`${{ github.event.pull_request.title }}` のような信頼できない式を `run:` に直接展開してしまうテンプレートインジェクション、過剰な `permissions`、SHA 未固定のアクション参照もあわせて検出する
 - `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に remote URL をトークンを含まない形に戻し、push のステップに限って credential helper（`gh auth setup-git` + `GH_TOKEN`）で認証する。`https://x-access-token:<token>@...` を `git remote set-url` で URL に埋め込むと、トークンが `.git/config` に残り、このルールの趣旨（永続化しない）に反する
-- `claude-code-action` の認証は `anthropic_api_key`（従量課金）以外に、`claude setup-token` で発行した `CLAUDE_CODE_OAUTH_TOKEN` を使う方法もある。Claude の Pro/Max サブスクリプション認証で動作し、実行ログの `total_cost_usd` が `0` になることで API キー課金が発生していないことを確認できる
+- `claude-code-action` の認証は `anthropic_api_key`（従量課金）以外に、`claude setup-token` で発行した OAuth トークンを `claude_code_oauth_token` に渡す方法もある。Claude の Pro / Max / Team / Enterprise のサブスクリプションで認証される。`anthropic_api_key` も渡すと API キーが優先されるため、OAuth トークンだけを渡す。実行ログの `total_cost_usd` は SDK が同梱の価格表から計算するクライアント側の推定値で、請求データではない（公式）。サブスクリプション経由で `0` になったという報告はあるが、API キー課金が発生していない証明にはならないので、課金の有無は Claude Console の Usage ページで確かめる
 
 **コード例**:
 ```yaml
@@ -896,6 +907,8 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 **出典（追加）**:
 - [GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6) (Qiita、`zizmor` の具体的な導入手順とテンプレートインジェクション修正例) ※2026-07-25に実際にfetch成功
 - [GitHub ActionsのPR自動レビューを公式claude-code-actionで組む(APIキー課金なし)](https://qiita.com/itaraiguma/items/3a723688a2fe571c33ec) (Qiita itaraiguma、`claude setup-token` による `CLAUDE_CODE_OAUTH_TOKEN` 発行とサブスク課金の実行ログ検証) ※2026-08-01に実際にfetch成功
+- [Agent SDK: Track cost and usage](https://code.claude.com/docs/en/agent-sdk/cost-tracking) (Anthropic 公式、`total_cost_usd` はクライアント側の推定値で請求データではない。正確な請求は Usage and Cost API か Console の Usage ページ) ※2026-10-25 確認
+- [Claude Code: Authentication](https://code.claude.com/docs/en/authentication) (Anthropic 公式、`claude setup-token` のトークンは Pro / Max / Team / Enterprise のサブスクリプションで認証。`ANTHROPIC_API_KEY` が `CLAUDE_CODE_OAUTH_TOKEN` より優先) ※2026-10-25 確認
 
 **バージョン**: actions/checkout v4+（`$RUNNER_TEMP` への保存は v6+。例は v7）/ anthropics/claude-code-action v1 / zizmor
 **確信度**: 高
@@ -914,7 +927,8 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - バージョンコメントがないと fork リポジトリの不審なコミットと区別できない
 - SmartRound の供給チェーン監査基盤でも「アクションのコミット SHA 参照」を必須チェック項目として実装している
 - `pinact v4` 以降の `--verify-comment` オプションで CI 上の SHA とバージョンコメントの整合性を自動検証できる
-- SHA ピン留めで守れるのは「参照先コミットの差し替え」だけ。Action が実行時にダウンロードするバイナリ、可変タグで参照するコンテナイメージ、composite action 内部のタグ参照は対象外のため、バイナリはチェックサム検証・イメージは `@sha256:` ダイジェスト指定とし、組織設定の「Enforce SHA Pinning」ポリシーで composite 内の `uses:` までタグ参照を拒否する
+- SHA ピン留めで守れるのは「参照先コミットの差し替え」だけ。Action が実行時にダウンロードするバイナリ、可変タグで参照するコンテナイメージ、composite action 内部のタグ参照は対象外のため、バイナリはチェックサム検証・イメージは `@sha256:` ダイジェスト指定にする。composite 内部のタグ参照は、Enterprise / 組織 / リポジトリの Actions 設定「Require actions to be pinned to a full-length commit SHA」（changelog での名称は Enforce SHA pinning）で止める。公式 docs には composite 内部への適用の記述がないが、独立した 2 つの検証記事では、呼び出した action が内部で使う `uses:` も検査され、タグ参照が残っていると実行時の `Set up job` で失敗する
+- この設定は GitHub 製・自組織の action にも適用される一方、reusable workflow はタグ参照のまま許可される（公式）。reusable workflow の呼び出しは設定に頼らず SHA で書く。Rule #16 の lockfile にロック済みの依存は、workflow ファイルを書き換えなくてもこの要件を満たす
 - 本リポジトリの practices にあるコード例は、可読性のため `@v7` のようなタグ表記にしている。実運用では本ルールに従い SHA + バージョンコメントに置き換える（Rule #16 の lockfile に onboard 済みの workflow は、タグ表記のままでも実行時はロック済みのコミットが使われる）
 
 **コード例**:
@@ -959,6 +973,9 @@ rules:
 **出典**:
 - [GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f) (Zenn nishino_hiroki、SHA Pinning の守備範囲外: 実行時取得バイナリ・可変タグのコンテナ・composite 内参照) ※2026-10-10に実際にfetch成功
 - [pinact: Configuration File](https://github.com/suzuki-shunsuke/pinact/blob/main/docs/config.md) (pinact 公式、自動検出される設定ファイル名・`version: 3`・`min_age` / `rules`) ※2026-10-25 確認
+- [Managing GitHub Actions settings for a repository](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository) (GitHub Docs、「Require actions to be pinned to a full-length commit SHA」は GitHub 製・自組織の action にも適用、reusable workflow はタグ参照可、lockfile のロック済み依存は要件を満たす。組織設定のページも同じ記述) ※2026-10-25 確認
+- [GitHub Actions policy now supports blocking and SHA pinning actions](https://github.blog/changelog/2025-08-15-github-actions-policy-now-supports-blocking-and-sha-pinning-actions/) (GitHub Changelog 公式、Enforce SHA pinning。未ピン留めの action を使う workflow は失敗する) ※2026-10-25 確認
+- [GitHub Actions の Enforce SHA Pinning の検証](https://zenn.dev/shunsuke_suzuki/articles/github-actions-enforce-sha-pinning) (Zenn shunsuke_suzuki、pinact 作者の検証。action が内部で使う action も検査され、実行時の `Set up job` で失敗する) ※2026-10-25 確認
 
 > "問題は、Action が動き始めてから外から何か実行ファイルを取得するような場合です。"
 > ([GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f), セクション "SHA Pinning で守れないもの") ※2026-10-10に実際にfetch成功
@@ -1199,6 +1216,7 @@ gh api "repos/{owner}/{repo}/actions/runs?created=2026-08-01..2026-08-10&per_pag
 - 自動チェックは a11y 課題の5〜6割程度しか検出できないため、「マージをブロックする最低ライン」として位置づけ、手動テスト・スクリーンリーダー確認を代替しない
 - axe のタグはバージョンごとに分かれており、`wcag22aa` が付くのは WCAG 2.2 で追加されたルール（target-size 等）だけである。WCAG 2.2 AA 全体を検査するには `wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa` をまとめて指定する
 - `@axe-core/cli` の `--exit` は違反が 1 件でもあれば非ゼロで終了する。影響度（impact）で絞ってブロックしたい場合は、結果 JSON を `--save` で保存して impact を判定するステップを別に設ける
+- `@axe-core/cli` は selenium-webdriver で headless Chrome を動かし、既定では依存の `chromedriver` パッケージのドライバを使う（4.14.0 では 152 系）。ランナーの Chrome とメジャーバージョンが違うと `SessionNotCreatedError`（`This version of ChromeDriver only supports Chrome version ...`）で止まる。2026-10 時点の GitHub ホストランナー（ubuntu-24.04）は Chrome と ChromeDriver がどちらも 155 系で、ChromeDriver は環境変数 `CHROMEWEBDRIVER` のディレクトリにあるため、`--chromedriver-path "$CHROMEWEBDRIVER/chromedriver"` で揃える。ChromeDriver が入っていない環境では、README が案内する `npx browser-driver-manager install chrome` で版の揃った Chrome for Testing と ChromeDriver を入れる（CLI は `~/.browser-driver-manager/.env` を読んで両方を使う）
 
 **コード例**:
 ```yaml
@@ -1222,7 +1240,8 @@ jobs:
       - name: Run axe-core CLI against build output
         # Bad: --tags wcag22aa だけだと WCAG 2.2 で追加されたルールしか検査しない
         # Good: 2.0 / 2.1 / 2.2 の A・AA タグをまとめて指定する
-        run: npx @axe-core/cli http://localhost:4173 --tags wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa --exit
+        # ChromeDriver はランナーの Chrome に合わせて入っているもの（$CHROMEWEBDRIVER）を使う。省略すると依存の chromedriver が使われ、版違いで失敗しうる
+        run: npx @axe-core/cli http://localhost:4173 --tags wcag2a,wcag2aa,wcag21a,wcag21aa,wcag22aa --exit --chromedriver-path "$CHROMEWEBDRIVER/chromedriver"
 ```
 
 **出典引用**:
@@ -1231,8 +1250,10 @@ jobs:
 
 **出典**:
 - [A zero-config accessibility gate for GitHub Actions (axe-core, WCAG 2.2, one step)](https://dev.to/syntropydigital/a-zero-config-accessibility-gate-for-github-actions-axe-core-wcag-22-one-step-29jf) (dev.to、設定パターンのみ参考。紹介されている個別 Action は単独ソースの検証不能なサードパーティ製のため未採用) ※2026-09-19 fetch
+- [@axe-core/cli README](https://github.com/dequelabs/axe-core-npm/blob/develop/packages/cli/README.md) と [webdriver.ts](https://github.com/dequelabs/axe-core-npm/blob/develop/packages/cli/src/lib/webdriver.ts) (Deque 公式、`--chromedriver-path`、`browser-driver-manager` での Chrome と ChromeDriver の導入、既定は依存の `chromedriver` パッケージを使う) ※2026-10-25 確認
+- [actions/runner-images: Ubuntu 24.04](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md) (GitHub 公式、Google Chrome と ChromeDriver の版、`CHROMEWEBDRIVER` 環境変数) ※2026-10-25 確認
 
-**バージョン**: axe-core（WCAG 2.2 AA ルールセット）
+**バージョン**: axe-core（WCAG 2.2 AA ルールセット）/ @axe-core/cli 4.14（依存の chromedriver は 152 系）
 **確信度**: 中（axe-core 自体は業界標準だが、記事の具体的な実装は単独ソース）
 **最終更新**: 2026-10-25
 
@@ -1328,15 +1349,16 @@ runs:
 
 ### 16. GitHub Actions の依存は workflow dependency lockfile（`actions.lock`）で固定し、CI で鮮度を検証する（public preview）
 
-タグやブランチは後から動かせるため、同じ `uses:` 参照でも次回実行時に別コードを指しうる。GitHub が 2026-10-14 に public preview で公開した workflow dependency lockfile は、レビュー済みのコミットを `.github/workflows/actions.lock` に記録し、workflow ファイル側は通常の参照のまま実行時は記録済みコミットを使わせる。Rule #9 の SHA ピン留めを `uses:` ごとに手で書き換える代わりに、推移的依存（アクション内部の `uses:`）や reusable workflow まで一括で固定できる。
+タグやブランチは後から動かせるため、同じ `uses:` 参照でも次回実行時に別コードを指しうる。GitHub が 2026-10-14 に public preview で公開した workflow dependency lockfile は、レビュー済みのコミットを `.github/workflows/actions.lock` に記録し、workflow ファイル側は通常の参照のまま実行時は記録済みコミットを使わせる。Rule #9 の SHA ピン留めを `uses:` ごとに手で書き換える代わりに、推移的依存（アクション内部の `uses:`）と呼び出す reusable workflow まで一括で固定できる（reusable workflow の中の依存は、その workflow を定義しているリポジトリの lockfile が固定する）。
 
 **根拠**:
 - 公式 changelog: ロックは「依存が安全か」を判定しない。`Locking does not determine whether the dependency itself is safe, so review dependencies before locking them.` — ロック前のレビューが前提
-- 第三者検証記事（dev.to）は、lockfile で固定した workflow ではインライン SHA ピン留めが不要になるとしている。ただし未 onboard の workflow は従来どおり完全長 SHA が必要で、workflow 単位で段階的に移行する（公式 changelog にこの位置づけの記載はない）
-- onboard 済み workflow は全依存に lockfile エントリが必要になり、未ロックのアクションを追加すると検証が失敗する（第三者検証で `--verify` が exit 1）
+- 公式 docs は、lockfile を導入したリポジトリでは workflow ファイル内の SHA ピン留めは不要になるとしている。ただし lockfile にない依存（未 onboard の workflow を含む）は従来どおり完全長 SHA が必要で、workflow 単位で段階的に移行する
+- onboard 済み workflow は全依存に lockfile エントリが必要になる（公式）。依存を追加・削除したら `gh actions-lock` を再実行し、PR では `gh actions-lock --verify` で lockfile が古くないかを検証する。古いとエラーで終了するため、必須チェックにできる（公式）
 - Dependabot version updates は onboard 済み workflow の lockfile エントリを同じ PR で再生成する。ロック更新が人手の作業にならない
 - lockfile は「差分を読む人がいて初めてセキュリティ統制になる」。レビュー時は変更された `commit`、`owner_id` / `repo_id` の変化、新規の推移的 `uses:`、`workflows` セクションから消えた workflow を確認する
-- 制約（preview 時点、第三者検証記事による）: GHES 非対応、コンテナイメージのタグは未ロック、第三者検証 v0.2.0 では job レベルの reusable workflow 呼び出しが記録されなかったため、その呼び出しは SHA ピン留めを併用する
+- reusable workflow の呼び出しは lockfile に記録されるが、reusable workflow の中の依存は呼び出し側の lockfile の対象外で、定義しているリポジトリの lockfile が担う（公式）。共有 workflow を置くリポジトリから先に onboard する。なお第三者検証記事は、拡張 v0.2.0 で job レベルの reusable workflow 呼び出しが記録されなかったと報告しているため、生成された lockfile に呼び出しが入っているかを確認する
+- 制約（preview 時点）: 対象は GitHub Enterprise Cloud（データレジデンシー含む）/ Team / Free で、GHES は含まれない（公式 changelog）。コンテナイメージのタグがロックされない点は第三者検証記事による
 
 **コード例**:
 ```bash
@@ -1344,7 +1366,7 @@ runs:
 gh extension install github/gh-actions-lock
 # 生成物: .github/workflows/actions.lock（手編集しない）
 
-# CI では lockfile が最新かを変更なしで検証する（未ロックの依存があると exit 1。第三者検証記事の手順で、公式 changelog には記載なし）
+# PR の CI では lockfile が最新かを変更なしで検証する（古いとエラーで終了するので、必須チェックにできる）
 gh actions-lock --verify
 ```
 
@@ -1375,7 +1397,10 @@ dependencies:
 **出典**:
 - [GitHub Actions: Workflow lockfiles in public preview](https://github.blog/changelog/2026-10-14-github-actions-workflow-lockfiles-in-public-preview/) (GitHub Changelog 公式、機能概要・有効化手順・対象プラン) ※2026-10-24に実際にfetch成功
 - [What Are GitHub Actions Lockfiles, and Do They Replace SHA Pinning?](https://dev.to/alisa_hester_1/what-are-github-actions-lockfiles-and-do-they-replace-sha-pinning-3kg0) (dev.to、`--verify` 検証・レビュー観点・reusable workflow の制約を第三者検証) ※2026-10-24に実際にfetch成功
+- [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies) (GitHub Docs、onboard 済み workflow では Dependabot の version update が同じ PR で lockfile エントリを再生成する。workflow の onboard は Dependabot が代行しない。reusable workflow の依存は定義側のリポジトリの lockfile が担い、共有 workflow のリポジトリから先に onboard する) ※2026-10-25 確認
+- [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles) (GitHub Docs、onboard 済み workflow は全依存が lockfile に必要。推移的依存と reusable workflow を固定し、reusable workflow の中の依存は定義側の lockfile。lockfile を導入したリポジトリでは workflow ファイル内の SHA ピン留めは不要) ※2026-10-25 確認
+- [Enforcing lockfiles for action dependencies](https://docs.github.com/en/actions/how-tos/administer/enforce-workflow-lockfiles) (GitHub Docs、PR で `gh actions-lock --verify` を実行し、lockfile が古いとエラーで終了するので必須チェックにできる) ※2026-10-25 確認
 
 **バージョン**: GitHub Actions workflow dependency lockfiles（public preview、2026-10-14〜）/ `gh-actions-lock` 拡張（pre-1.0）
-**確信度**: 中（機能の存在とロック前レビューの前提は GitHub 公式 changelog。`--verify` や制約の詳細は第三者検証記事のみ。preview 機能のため仕様変更の可能性あり）
-**最終更新**: 2026-10-24
+**確信度**: 高（機能、ロック前レビューの前提、SHA ピン留めとの関係、`--verify`、reusable workflow の扱い、Dependabot による再生成は GitHub 公式。コンテナイメージのタグと拡張 v0.2.0 の挙動は第三者検証記事のみ。preview 機能のため仕様変更の可能性あり）
+**最終更新**: 2026-10-25

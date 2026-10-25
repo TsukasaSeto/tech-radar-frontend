@@ -373,7 +373,8 @@ instancer.instantiateVariableFont(font, {"wght": WGHT}, inplace=True, updateFont
 - `subsets` は「どの文字集合を `<link rel="preload">` で先読みするか」を制御するオプションであり、「フォントが対応する文字」を制限するものではない。日本語グリフは CSS `unicode-range` により 124 以上のファイルへ自動分割され、実際に使われた文字だけがオンデマンドで読み込まれる
 - CJK フォントが `subsets` の選択肢から除外されているのは Next.js PR #44594 に由来する。全 unicode-range 分をプリロードするのは非効率なため意図的に外されている
 - `subsets` を省略したまま `preload`（デフォルト `true`）を使うと `Preload is enabled but no subsets were specified for font Noto Sans JP` でビルドが失敗する
-- ただし `subsets: ["latin"]` のままウェイトを 2 つ以上指定すると、2 つ目以降のウェイトの日本語分割ファイルが `latin` として大量に preload される事例がある。`next/font` がサブセット判定を CSS コメント（`/* latin */` 等）に依存するためで、121 本が preload され LCP 9.6 秒だったものが `preload: false` で 1.7 秒になった。複数ウェイトを使うなら `preload: false` にする。`preload: false` は「読まない」ではなく「全ファイルを先読みしない」指定で、ブラウザが `unicode-range` で必要な分だけ取得する
+- ただし、ウェイトごとに別ファイルになる静的フォント（Zen Kaku Gothic New、M PLUS 1p、BIZ UDPGothic など）で `subsets: ["latin"]` のままウェイトを 2 つ以上指定すると、2 つ目以降のウェイトの日本語分割ファイルが `latin` として大量に preload される。`next/font` は Google Fonts の CSS を上から読み、直前のコメント（`/* latin */` 等）でサブセットを判定するが、日本語の分割ブロックにはコメントがなく、1 つ目のウェイトの末尾にある `/* latin */` を引き継ぐため。Noto Sans JP など可変フォントは全ウェイトが同じファイルを共有するので起きない。この判定ロジックは Next.js 16.4.3（2026-10 時点の latest）と canary でも変わっておらず、修正された版はない
+- 1 人の著者の報告（Next.js 16.3.0、Zen Kaku Gothic New の 400 / 700、Lighthouse 13.4.1 のモバイル simulate）では、フォントの preload が 121 本になり、LCP 9.6 秒が `preload: false` で 1.7 秒になった。デスクトップでは 1.7 秒 → 0.5 秒。静的フォントで複数ウェイトを使うなら `preload: false` にする。`preload: false` は「読まない」ではなく「全ファイルを先読みしない」指定で、ブラウザが `unicode-range` で必要な分だけ取得する
 
 **コード例**:
 ```tsx
@@ -388,9 +389,15 @@ const notoSansJP = Noto_Sans_JP({ weight: '400', subsets: ['latin'] });
 // Good: プリロード自体が不要な場合は preload: false でも可
 const notoSansJP2 = Noto_Sans_JP({ weight: '400', preload: false });
 
-// Good: 複数ウェイトを使うなら preload: false（2 つ目以降のウェイトの日本語ファイルが latin 扱いで大量 preload されるのを防ぐ）
-const notoSansJP3 = Noto_Sans_JP({ weight: ['400', '700'], subsets: ['latin'], preload: false });
+// Good: 静的フォントで複数ウェイトを使うなら preload: false（2 つ目以降のウェイトの日本語ファイルが latin 扱いで大量 preload されるのを防ぐ）
+import { Zen_Kaku_Gothic_New } from 'next/font/google';
+const zenKakuGothicNew = Zen_Kaku_Gothic_New({ weight: ['400', '700'], subsets: ['latin'], preload: false });
 ```
+
+**出典**:
+- [vercel/next.js PR #44594: Update subset validation in @next/font/google and fix CJK bug](https://github.com/vercel/next.js/pull/44594) (Next.js 公式リポジトリ、CJK を preload 候補から外し `preload: false` を案内) ※2026-10-25 確認
+- [vercel/next.js: packages/font/src/google/find-font-files-in-css.ts](https://github.com/vercel/next.js/blob/canary/packages/font/src/google/find-font-files-in-css.ts) (Next.js 公式リポジトリ、直前のコメントでサブセットを判定する実装。Turbopack 側の `crates/next-core/src/next_font/google/mod.rs` も同じ。16.4.3 の配布物に同梱の実装を Google Fonts の現行 CSS に適用し、Zen Kaku Gothic New・M PLUS 1p・BIZ UDPGothic の 400 / 700 で 120 本以上、Noto Sans JP・Noto Serif JP は 1 本だけ preload 対象になることを確認) ※2026-10-25 確認
+- [vercel/next.js: validate-google-font-function-call.ts](https://github.com/vercel/next.js/blob/canary/packages/font/src/google/validate-google-font-function-call.ts) (Next.js 公式リポジトリ、`subsets` 省略時のエラー) ※2026-10-25 確認
 
 **出典引用**:
 > "It doesn't make sense to preload all of them"
@@ -400,8 +407,8 @@ const notoSansJP3 = Noto_Sans_JP({ weight: ['400', '700'], subsets: ['latin'], p
 > ([next/fontで日本語フォントを使ったら、preloadが121本出てLCPが9.6秒になった](https://zenn.dev/matsutake_prgrm/articles/nextjs-font-japanese-preload-explosion), セクション "preload されたのは、2つ目のウェイトの日本語だけだった") ※2026-10-19に実際にfetch成功
 
 **バージョン**: Next.js 13+ (`next/font`)
-**確信度**: 中（非公式記事単独だが公式APIの型・エラーメッセージの直接検証）
-**最終更新**: 2026-10-19
+**確信度**: 高（公式 PR とソースで確認。LCP の数値は 1 人の著者の実測）
+**最終更新**: 2026-10-25
 
 ---
 
