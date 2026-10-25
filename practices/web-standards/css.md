@@ -672,7 +672,8 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 **根拠**:
 - Floating UI / Popper.js のような外部ライブラリが不要になり、バンドルサイズと実行時オーバーヘッドが削減できる
 - `position-try-fallbacks` によりビューポート端でのはみ出しを CSS だけで自動回避できる
-- Chrome 125+、Firefox 133+、Safari 18.2+ でサポート済み（W3C Candidate Recommendation）
+- Chrome / Edge 125+、Firefox 147+、Safari 26+ で利用できる（W3C Candidate Recommendation。caniuse では Safari 27 以外は部分対応の扱い）
+- 2026-09 に Baseline 入りし、主要ブラウザの現行リリースが対応。`position-area` と論理値（`block-end span-inline-end`）を使えば RTL 対応も追加 CSS なしで得られる（古い環境ではフォールバック配置に劣化する）
 
 **コード例**:
 ```css
@@ -715,9 +716,13 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 > "CSS Anchor PositioningとはJavaScriptを使わず、CSSのみでツールチップやドロップダウンメニューなどの配置を実現する機能"
 > ([CSS Anchor Positioningでカスタムツールチップを実装する](https://zenn.dev/mk668a/articles/980bc733fd9e0d), Zenn) ※2026-06-04に実際にfetch成功
 
-**バージョン**: Chrome 125+, Firefox 133+, Safari 18.2+（W3C CSS Anchor Positioning Module Level 1 CR）
-**確信度**: 高（W3C Candidate Recommendation + 主要ブラウザ対応済み）
-**最終更新**: 2026-06-04
+**出典**:
+- [Dropdowns That Position Themselves: CSS Anchor Positioning Is Baseline Now](https://dev.to/rashadmehtab/dropdowns-that-position-themselves-css-anchor-positioning-is-baseline-now-450d) (dev.to、Baseline 到達と `position-area` の論理値記法) ※2026-10-05 fetch
+  > "CSS anchor positioning reached Baseline in September 2026... the current release of every major browser supports it, while older installs do not." (セクション "Browser Support")
+
+**バージョン**: Chrome / Edge 125+, Firefox 147+, Safari 26+（W3C CSS Anchor Positioning Module Level 1 CR）
+**確信度**: 高（W3C Candidate Recommendation + 主要ブラウザの現行版が対応）
+**最終更新**: 2026-10-05
 
 ---
 
