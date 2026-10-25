@@ -1176,6 +1176,8 @@ claude mcp add --scope user my-personal-tool -- node ~/tools/my-tool.js
 claude mcp add github-mcp -- npx -y @some/github-mcp-server
 ```
 
+**`enableAllProjectMcpServers` と workspace trust**: `.claude/settings.json` に `enableAllProjectMcpServers: true` をコミットすると、workspace trust を承認したプロジェクトでは `.mcp.json` のサーバーが個別承認なしで有効になる。trust 未承認の新規 clone や CI のチェックアウトでは無視されるため trust ゲートのバイパスにはならない（新規 clone で `claude mcp get <name>` が `Pending approval` のままなのは仕様）。一方で trust 承認後は、PR で `.mcp.json` に追加されたサーバーまで承認プロンプトなしで有効になるため、この設定をコミットするなら `.mcp.json` の差分を必ずレビュー対象にする（CODEOWNERS 等）。なお、起動中の Claude Code セッション内（Bash ツール経由を含む）から入れ子で `claude mcp add/list/get` を実行すると、継承された `CLAUDECODE=1` の影響で実際の設定に関係なく「未登録」と誤報告されるため、検証は通常のターミナルで行う
+
 **MCP トランスポート選択**: クラウドサービス（Notion, Stripe, Sentry）→ HTTP が推奨。ローカルツール・CLI → Stdio。外部コンテンツを fetch する MCP サーバーはプロンプトインジェクションリスクがあるため、read-access と external-send を同時に有効化しない（詳細は `security/dependency-security.md` Rule #7 参照）
 
 **コード例（独自 Skill の定義例）**:
@@ -1239,6 +1241,7 @@ refactor: extract auth logic to separate module
 - [約2,000人が使うClaude Codeと向き合う。](https://developers.cyberagent.co.jp/blog/archives/64334/) (CyberAgent Engineering Blog、2,000人規模でのスキル・ルーティン化・ROI評価の組織的実践) ※2026-06-18 fetch
 - [Claude Code の MCP 連携 — 3 つの transport、scope の優先順位、企業向けコントロールまでの全体像](https://qiita.com/akihidem/items/405d5d07837c1e202af1) (Qiita akihidem、HTTP/Stdio/SSE の選択・5段階スコープ優先順位・managed-mcp.json によるエンタープライズ制御) ※2026-06-23 fetch
 - [claude mcp add の --scope local / project / user の違いと使い分け](https://qiita.com/aicoding-guide/items/e827d0151736664ef91b) (Qiita aicoding-guide、`--scope` 省略時は local になる点・`claude mcp reset-project-choices`) ※2026-09-24 fetch
+- [committedなenableAllProjectMcpServers: trueはworkspace trust未承認なら効かない](https://zenn.dev/clopy/articles/claude-mcp-server-scope-decision) (Zenn clopy、claude CLI 2.1.284 での trust 未承認時の挙動の再現。承認後にツール呼び出しが成功するかは未検証) ※2026-10-04 fetch
 
 **コンテキスト2%ルール（Skill description の総量管理）**:
 200K トークンのコンテキストウィンドウのうち Skill description 全体の総文字数を **約 16,000 文字（2%）** 以内に収める。超過すると実作業のためのトークンが不足する。定期的に下記スクリプトで計測する:
@@ -1270,7 +1273,7 @@ echo "合計: $TOTAL 文字 / 上限目安: 16000 文字"
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-09-24
+**最終更新**: 2026-10-04
 
 ---
 
