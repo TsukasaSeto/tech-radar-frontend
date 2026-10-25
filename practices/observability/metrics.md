@@ -361,9 +361,12 @@ monitors:
 
 `Sentry.metrics` API（Counter / Distribution / Gauge）を使い、エラー発生前の
 ビジネス・UXシグナルを計測する。「決済失敗数が急増しているがまだエラーは出ていない」
-といった状況を事前に検知できる。
+といった状況を事前に検知できる。ログとメトリクスの使い分けは「デバッグ用はログ、時系列で追う数値はメトリクス」とし、
+同じイベント名・属性キーで両方を出して、メトリクスのスパイクから該当ログへ辿れるようにする。
 
 **根拠**:
+- ログは「その時何が起きたか」の再構築用、メトリクスは「事前に決めた問いを時系列で追う」用で、エラーが出ていない平常時でも追いたい数値はメトリクスにする。数えるためだけに全件ログ出力するとコストが無駄になる
+- ログとメトリクスに同じイベント名・属性キーを使うと、メトリクスの異常から該当ログへ直接ドリルダウンできる（`Sentry.metrics.count(name, 1, { attributes })` 形式、SDK 10.25+）
 - Sentry のエラートラッキングは「すでに壊れたもの」を捕えるが、問題の予兆（決済拒否・API 遅延・キュー滞積）は数値シグナルで現れる
 - 同一ツール（Sentry）でエラーとメトリクスを一元管理でき、メトリクス異常とエラースパイクを同一ダッシュボードで相関分析できる
 - Counter・Distribution・Gauge の3種類で主要なメトリクスパターンを網羅できる
@@ -377,8 +380,8 @@ import * as Sentry from '@sentry/nextjs';
 // Counter: イベントの発生回数を増加のみで追跡
 // 用途: 決済失敗数、ログイン失敗数、API エラー数
 function handlePaymentDeclined(reason: string, userId: string) {
-  Sentry.metrics.increment('payment.declined', 1, {
-    tags: { reason, userId },
+  Sentry.metrics.count('payment.declined', 1, {
+    attributes: { reason, userId },
   });
 }
 
@@ -391,7 +394,7 @@ async function fetchWithMetrics(url: string) {
 
   Sentry.metrics.distribution('api.response_time', latencyMs, {
     unit: 'millisecond',
-    tags: { endpoint: new URL(url).pathname },
+    attributes: { endpoint: new URL(url).pathname },
   });
 
   return res;
@@ -401,23 +404,23 @@ async function fetchWithMetrics(url: string) {
 // 用途: キュー滞積数、アクティブセッション数、在庫数
 function reportQueueDepth(queue: string, depth: number) {
   Sentry.metrics.gauge('queue.depth', depth, {
-    tags: { queue },
+    attributes: { queue },
   });
 }
 
 // 使用例: 注文処理フロー全体を監視
 async function processOrder(order: Order) {
-  Sentry.metrics.increment('order.processing.started', 1, {
-    tags: { paymentMethod: order.paymentMethod },
+  Sentry.metrics.count('order.processing.started', 1, {
+    attributes: { paymentMethod: order.paymentMethod },
   });
 
   try {
     const result = await submitOrder(order);
-    Sentry.metrics.increment('order.processing.completed', 1);
+    Sentry.metrics.count('order.processing.completed', 1);
     return result;
   } catch (error) {
-    Sentry.metrics.increment('order.processing.failed', 1, {
-      tags: {
+    Sentry.metrics.count('order.processing.failed', 1, {
+      attributes: {
         reason: error instanceof Error ? error.message : 'unknown',
       },
     });
@@ -429,14 +432,18 @@ async function processOrder(order: Order) {
 **出典**:
 - [Introducing Application Metrics](https://blog.sentry.io/introducing-application-metrics/) (Sentry Engineering / 2026-05) ※2026-05-06に実際にfetch成功
 - [Sentry Docs: Metrics](https://docs.sentry.io/product/metrics/) (Sentry公式)
+- [Sentry Docs: Metrics（Next.js）](https://docs.sentry.io/platforms/javascript/guides/nextjs/metrics/) (Sentry公式、`count` / `gauge` / `distribution` と `attributes`、SDK 10.25.0+) ※2026-10-25 確認（routine-followup マージ時の追加）
+- [Should you use a log or a metric?](https://blog.sentry.io/when-you-need-a-metric/) (Sentry Blog、ログとメトリクスの使い分けと同名イベントでの相関) ※2026-10-22 fetch
+  > "Make it a metric when there's a number you'll track over time, even when nothing is wrong."
+  > (セクション "When to use which")
 
 **出典引用**:
 > "The integration emits application metrics, so rather than hand you a pre-packaged dashboard that answers some questions and needs constant tweaking, you get to build your own."
 > ([Measuring the back/forward cache with Application Metrics](https://blog.sentry.io/bfcache-metrics/), Sentry Engineering, セクション "How it works") ※2026-09-24に実際にfetch成功
 
-**バージョン**: @sentry/nextjs 8+ / @sentry/browser 11+（`bfcacheMetricsIntegration`）
+**バージョン**: @sentry/nextjs 10.25+（`Sentry.metrics.count` / `gauge` / `distribution` と `attributes`）/ @sentry/browser 11+（`bfcacheMetricsIntegration`）
 **確信度**: 高
-**最終更新**: 2026-09-24
+**最終更新**: 2026-10-22
 
 ---
 
