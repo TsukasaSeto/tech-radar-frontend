@@ -190,6 +190,7 @@ const user = result.output;
 - 生成ファイルへの手動変更は次の型生成で上書きされ、意図せず削除される
 - CI でスキーマと生成ファイルの差分をチェックすることでドリフトを自動検出できる
 - コミットに生成ファイルを含めることで PR レビューでの変化が見える
+- 型生成パイプラインを持たない/持てないエンドポイントでは、`curl` + `jq` による軽量なレスポンス形状アサーション（HTTPステータス + フィールド型のみ）を CI の最前段に置くと、生成系に依存せず低コストで契約崩れを検知できる。GitHub Step Summary に checked endpoint / status / fixture を明記すると原因調査が速くなる
 
 **コード例**:
 ```yaml
@@ -252,10 +253,12 @@ jobs:
 
 **出典**:
 - [openapi-typescript: CLI Integration](https://openapi-ts.dev/cli) (openapi-ts.dev)
+- [API Contract Drift: A Fast GitHub Actions Check](https://dev.to/pong1965/api-contract-drift-a-fast-github-actions-check-1glo) (dev.to、curl + jq による軽量レスポンス形状アサーションを CI 最前段に置く手法) ※2026-09-19 fetch
+  > "A signup test may report an invalid email, while the actual regression is that the API stopped returning `verification_id`."
 
 **バージョン**: openapi-typescript 7+, @graphql-codegen/cli 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-09-19
 
 ---
 
