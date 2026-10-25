@@ -588,7 +588,7 @@ iptables ホワイトリストによるネットワーク分離とパッケー�
 - symlink による正本化は構造は解決するが「宣言」と「検証」までは解かない。`copilot-instructions.md` も同一パターンで正本化対象に含めた上で、CI で `readlink` 差分（symlink が正しい正本を指しているか）と公開範囲の整合をチェックする層を追加すると、drift をサイレントに放置しない
 - **AGENTS.md と CLAUDE.md は解決規則そのものが逆向き**: AGENTS.md はディレクトリツリー中「最も近いファイルが優先される」上書き方式、Claude Code は発見した全ての `CLAUDE.md` を連結してコンテキストに含める累積方式。そのためモノレポのルートで `ln -s AGENTS.md CLAUDE.md` するだけでは、ネストしたディレクトリのルールが Claude Code 側から見えなくなる場合がある。`claudeMdExcludes` で明示的に除外設定し、意図しない連結を防ぐ
 - **「どの CLI がどのファイル名を読むか」は推測せず、カナリア値で実測する**: 各候補ファイル名（`CLAUDE.md` / `AGENTS.md` / `GEMINI.md` 等）に固有の合言葉だけを書いた指示を置き、各 CLI にゼロショットで質問して合言葉を復唱させれば、そのツールが実際にどのファイルを読んでいるかが確実に分かる。ツールが「ファイルを開いてはいるが指示に従っていない」ケース（本文中の Antigravity の例）もあるため、復唱の有無まで見ないと「読んでいる」と「従っている」を混同する。正本を1ファイルに絞った後、他ツールの設定ファイルには本文でなく参照 1 行だけを置く場合は、参照行はツールの自動ロード対象ではなく AI 自身が明示的に開かない限り届かない点に注意する
-- **`AGENTS.md` は `CLAUDE.md` が無いときだけ読まれる（Claude Code v2.1.277+）**: 作業ディレクトリ以上に `CLAUDE.md` / `.claude/CLAUDE.md` / `CLAUDE.local.md` のいずれかがあると `CLAUDE.md` 側が優先され、`AGENTS.md` の指示は効かない（`~/.claude/CLAUDE.md` と `.claude/rules/` はこの判定に含まれない）。個人用に `CLAUDE.local.md` を 1 枚置いただけでも `AGENTS.md` が読まれなくなる。他ツール向けに `AGENTS.md` だけを運用していたチームが後から `CLAUDE.md` を 1 枚追加すると、エラーもなく `AGENTS.md` が無効になる。共存させるなら `CLAUDE.md` に `@AGENTS.md` を書いて明示的にインポートするか、`/config` の Project instructions で読む側を切り替える。サブエージェントで `CLAUDE.md` を読ませたくない場合は定義に `omitClaudeMd: true`（v2.1.271）を指定する
+- **`AGENTS.md` は `CLAUDE.md` が無いときだけ読まれる（Claude Code v2.1.277+）**: 作業ディレクトリ以上に `CLAUDE.md` / `.claude/CLAUDE.md` / `CLAUDE.local.md` のいずれかがあると `CLAUDE.md` 側が優先され、`AGENTS.md` の指示は効かない（`~/.claude/CLAUDE.md` と `.claude/rules/` はこの判定に含まれない）。個人用に `CLAUDE.local.md` を 1 枚置いただけでも `AGENTS.md` が読まれなくなる。読む側を切り替える `pluginConfigs["cc-plugin-agents-md@builtin"].options.instructionFiles`（v2.1.285 より前の ID は `agents-md@builtin`）は `~/.claude/settings.json`・`--settings` ファイル・managed settings からのみ読まれ、プロジェクトの `.claude/settings.json` に書いても無視される（公式仕様。実測でも変化しなかった）。他ツール向けに `AGENTS.md` だけを運用していたチームが後から `CLAUDE.md` を 1 枚追加すると、エラーもなく `AGENTS.md` が無効になる。共存させるなら `CLAUDE.md` に `@AGENTS.md` を書いて明示的にインポートするか、`/config` の Project instructions で読む側を切り替える。サブエージェントで `CLAUDE.md` を読ませたくない場合は定義に `omitClaudeMd: true`（v2.1.271）を指定する
 
 **3層の権限モデル（AGENTS.md 推奨フォーマット）**:
 ```markdown
@@ -691,9 +691,12 @@ codex exec --skip-git-repo-check "hello"
 > "By default, Claude reads `AGENTS.md` only when you have no `CLAUDE.md` in your working directory or above it."
 > ([How Claude remembers your project](https://code.claude.com/docs/en/memory), Claude Code 公式 docs, セクション "When Claude Code reads AGENTS.md") ※2026-10-25 確認（routine-followup マージ時の追加）
 
-**バージョン**: Claude Code（全バージョン）、複数AIエージェント共存環境
+> 「`pluginConfigs["agents-md@builtin"].options.instructionFiles`をプロジェクトスコープの`.claude/settings.json`に書いても、観測は`CLAUDE_MD_MARKER`のまま変化しませんでした」
+> ([AGENTS.md移行チェックリスト:確認できた3項目、再現しなかった2項目、そして--setting-sourcesという伏兵](https://zenn.dev/clopy/articles/claude-code-agents-md-fallback-migration-checklist), セクション
+
+**バージョン**: Claude Code（全バージョン、`AGENTS.md` ネイティブフォールバックは 2.1.277 以降）、複数AIエージェント共存環境
 **確信度**: 中
-**最終更新**: 2026-09-28
+**最終更新**: 2026-10-03
 
 ---
 
@@ -2302,6 +2305,8 @@ auto mode は「全部手動承認」と `--dangerously-skip-permissions` の中
 - **導入推奨順序**: agents ビューで状況把握 → /goal で完了条件を定義 → hard deny で安全境界を確定 → auto mode を有効化 → Routines で完全自動化
 - v2.1.283 以降、auto mode は Pro/Max/Team 限定の research preview ではなく、インタラクティブなターミナル/VS Code セッションの**デフォルトの初期権限モード**になった。既存導入時に「オプトインの実験機能」という前提で hard deny 整備を先送りしていた場合、新規セッションでは整備前に auto mode が有効な状態から始まる点に注意する
 - 「機械的に判定できる完了条件」という原則は Claude Code 純正機能（`/goal`）以外でも再現できる。カスタム MCP サーバーで `list_tasks` のようなタスク管理ツールを自作し、Stop Hook でタスク完了を通知させる構成でも、完了判定は「ファイルが存在するか」ではなく「MCP 経由で取得した `status` フィールド」で行うことで、前倒しの完了判定を防げる
+- auto mode のクラシファイアは確率的な判定であり、「暴走しない」ことの担保には使わない。審査対象はユーザーのメッセージ・ツール呼び出し・CLAUDE.md で、**ツールの結果は含まれない**（プロンプトインジェクションの封じ込め）。3 回連続、またはセッション累計 20 回ブロックすると auto mode は一時停止してプロンプト方式に戻る。確実に止めたい操作は `permissions.deny` / `ask` と hook（`PreToolUse` / `Stop`）に置き、組織固有の信頼範囲は `autoMode.environment` に宣言する（`"$defaults"` を残す＝Rule #47）
+- `/loop` やセッション内のスケジュールタスクは**起動したセッションの permission mode を引き継ぐ**。手動承認のセッションから夜間ループを始めると、朝まで承認待ちで止まる。無人ループは起動前に permission mode を決めておく
 
 **コード例**:
 ```bash
@@ -2362,13 +2367,20 @@ claude agents
 **出典（追加）**:
 - [Claude Code を並列で回したら「速すぎて怖く」なったので、自分の開発を管制する環境を作った](https://zenn.dev/takerin/articles/c386a8c97f03eb) (Zenn takerin、Stop Hook + カスタム MCP タスクサーバーで `status` フィールドを完了判定に使う実装) ※2026-07-30 fetch
 - [2026-09-26 の公式ドキュメント更新：v2.1.283 で auto モードが全セッションのデフォルトに](https://qiita.com/akihidem/items/7a5c98833b79bd37d33e) (Qiita akihidem、Claude Code公式ドキュメント更新の解説、auto modeがプラン不問の初期権限モードになった変更点) ※2026-09-26に実際にfetch成功
+- [Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes) (Zenn coworker_jp、クラシファイアの審査範囲・一時停止条件・スケジュールタスクの permission mode 継承。本文は code.claude.com の permission-modes / auto-mode-config / hooks を根拠として引用) ※2026-10-03 fetch
 
 > "auto mode is the built-in starting permission mode for interactive terminal and VS Code sessions"
 > ([2026-09-26 の公式ドキュメント更新：v2.1.283 で auto モードが全セッションのデフォルトに](https://qiita.com/akihidem/items/7a5c98833b79bd37d33e), セクション "Auto Mode as Default") ※2026-09-26に実際にfetch成功
 
+> 「分類器が見るのはユーザーのメッセージ、ツール呼び出し、CLAUDE.md で、ツールの結果は除かれる。」
+> ([Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes), セクション "3. auto mode の審査") ※2026-10-03に実際にfetch成功
+
+> 「分類器が 3 回連続、またはセッション累計 20 回ブロックすると、auto mode は一時停止してプロンプト方式に戻ります。」
+> ([Claude Code で開発ループを回す：auto mode の権限設定と hook による検証](https://zenn.dev/coworker_jp/articles/claude-code-loop-engineering-brakes), セクション "4. auto mode が止める開発工程") ※2026-10-03に実際にfetch成功
+
 **バージョン**: Claude Code（2026年3月 research preview 〜 v2.1.283でデフォルト化）
 **確信度**: 中
-**最終更新**: 2026-09-26
+**最終更新**: 2026-10-03
 
 ---
 
