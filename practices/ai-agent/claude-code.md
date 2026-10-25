@@ -3467,7 +3467,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - deny ルールは条件次第でも黙って失効する: プロジェクトのサブディレクトリから起動した場合、`ask` と `Bash(*)` のような設定の組み合わせ、`defaultMode: acceptEdits` との併用などで、ルールが定義されているのに適用されないケースが報告されている
 - allow/deny の文字列マッチ設計そのものにも構造的な抜け道が4パターン報告されている: (1) 一見 read-only なコマンドがフラグ次第で write に化ける（例: `git show --output` は任意ファイルへの書き込みに使える）、(2) allowlist のパーサーとコマンド本体で引数解釈がズレる（`git ls-remote --upload-pa` を git 側は `--upload-pack` の前方一致として解釈するが、allowlist フィルタは完全一致しか見ていない）、(3) 環境変数の `export`/`unset` で許可済みコマンドの挙動を後から変える、(4) 許可した個々のコマンド自体が実行機能を内包する（`sed` の `e` 修飾子、Bash の `${VAR@P}` によるコマンド置換等）
 - 5つ目の抜け道として **空白1つの追加だけで完全一致 deny ルールが外れる** ことが実測で確認されている。`"deny": ["Bash(touch /tmp/denyprobe/repo/marker.txt)"]` に対し、コマンド中の空白を1つ増やしただけの `touch  /tmp/denyprobe/repo/marker.txt`（スペース2個）が 9/9 回すり抜けた。同条件で前置マッチ形式 `"deny": ["Bash(touch:*)"]` に書き換えると、空白追加・引用符付きパス・相対パス化など 21 パターンの変形すべてをブロックできた。すり抜けた実行は `permission_denials` に0件のまま記録されず、終了コードも0でエラー表示も無いため、ログ監視だけでは検知できない
-- `.env` の読み取り防止では `Read(**/.env)` の deny 単体だと Read ツールと単純な `cat`/`head` は止まるが、Node.js / Python スクリプトや複合ワンライナー経由の読み取りは止まらない（Bash を全許可していた実測で完走）。`sandbox.filesystem.denyRead` を併用すると読み取りは止まるが、アプリ自体も `.env` を開けず起動しなくなるため、`.env.example`（変数名のみ）を併置し、deny glob `Read(**/.env.*)` が `.env.example` も巻き込む点に注意する（15 試行・各条件 1 回の検証で再現性は限定的）
+- `.env` の読み取り防止では `Read(**/.env)` の deny 単体だと Read ツールと単純な `cat`/`head` は止まるが、Node.js / Python スクリプトや複合ワンライナー経由の読み取りは止まらない（Bash を全許可していた実測で完走）。`sandbox.filesystem.denyRead` を併用すると読み取りは止まるが、アプリ自体も `.env` を開けず起動しなくなるため、`.env.example`（変数名のみ）を併置し、deny glob `Read(**/.env.*)` が `.env.example` も巻き込む点に注意する（15 試行・各条件 1 回の検証で再現性は限定的。別記事の Windows 検証でもスクリプト経由の読み取りは止まらず、公式ドキュメントどおりの仕様とされる）。deny は「うっかり防止の網」と位置づけ、本物の秘密情報は作業ディレクトリに置かない
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
 - `sandbox.filesystem.denyRead` の glob（例: `**/.env`）は、展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になる（Claude Code v2.1.283 時点で未修正との報告）。対策は (1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）
 - 作業フォルダの外を守る `deny` を `Edit(../shared/**)` のように `../` で書くと、公式のパス記法（`//path` / `~/path` / `/path` / `path`）に該当せず、警告も出ないまま書き込みが止まらない場合がある（Windows / Claude Code 2.1.296 の実測）。ファイルシステムのルートからの絶対パスを `//` で書く（Windows は `//c/work/...`、macOS / Linux は `//Users/...` や `//home/...`）。書いた規則が効くかはダミーファイルへの書き込みで試し、AI の返答ではなくファイルのハッシュが変わったかで判定する。なお `deny` は組み込みツール向けのため、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない（OS 権限やサンドボックスと併用する）
@@ -3537,10 +3537,11 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - [禁止コマンドを一字一句で書いたら、空白を1つ増やすだけで9回とも素通りした](https://zenn.dev/numarn/articles/deny-rule-exact-string-bypass-handson) (Zenn、完全一致 deny ルールの空白バイパスをハンズオン実測、前置マッチ形式なら21パターン全ブロックを確認) ※2026-09-23 fetch
 - [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、glob 展開中の EACCES による fail-open と 3 つの回避策) ※2026-09-28 fetch
 - [Claude Code に .env を読ませない設定を入れても、読めてしまう場面があった（Codex と比較）](https://zenn.dev/bpr_prot/articles/c3c58f88e594ef) (Zenn、`permissions.deny` 単体ではスクリプト経由の `.env` 読み取りを止められず sandbox 併用が必要、Claude Code 2.1.295 で検証) ※2026-10-13 fetch
+- [Claude Codeに.envを読ませない — settings.jsonのdenyルールを試して分かった「効く範囲・効かない範囲」](https://zenn.dev/chukidx_dev/articles/claude-code-deny-env-windows) (Zenn、deny が間接読み取り経路を止めない実機検証) ※2026-10-14 fetch
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-10-13
+**最終更新**: 2026-10-14
 
 ---
 
