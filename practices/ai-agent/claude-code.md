@@ -4267,3 +4267,70 @@ claude -p "..." --output-format text && echo done
 **最終更新**: 2026-10-18
 
 ---
+
+### 54. 止められなかったら困る PreToolUse hook には `"onFailure": "block"` を付け、判定は `JSON.stringify` + exit 0 / 阻止は stderr + exit 2 で書く
+
+Claude Code の hook は既定では「壊れても操作が通る」fail-open で、スクリプト欠落・exit 1・タイムアウト・不正な JSON 出力のいずれでも Bash コマンドはそのまま実行される。危険コマンドのブロック等、素通りが許されない `command` / `http` hook には、内側の `hooks` 配列の要素に `"onFailure": "block"` を指定して fail-closed にする。ただし閉じ括弧のない壊れた JSON は「ただの文字列」と解釈されて block でも素通りするため、決定は文字列連結でなく encoder で出力する。
+
+**根拠**:
+- 実測（Claude Code 2.1.303）で、既定では「スクリプト欠落 / exit 1 / タイムアウト / `{"hookSpecificOutput": }` を出力して exit 0」の全てが素通りし、`onFailure: "block"` ではこれらが全て阻止された
+- stdout は `{` で始まり `}` で終わる単一 JSON のときだけ JSON として解釈される。`{"hookSpecificOutput": 1`（閉じ括弧なし）や平文は失敗ではなく plain text 扱いとなり、block 指定でも素通りする
+- 有効な allow JSON を出しても exit 1 なら失敗扱い（Node の未捕捉例外は exit 1）。exit 2 は `onFailure` に関係なく阻止され stderr が理由として表示される
+- `onFailure` は `command` / `http` hook のみ有効。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
+
+**コード例**:
+```json
+// .claude/settings.json — onFailure は内側の hooks 配列の要素に置く（v2.1.295+）
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/check-command.js"],
+            "timeout": 15,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+```js
+// Good: encoder で出力し、決定を返すときは必ず exit 0
+console.log(JSON.stringify({
+  hookSpecificOutput: {
+    hookEventName: "PreToolUse",
+    permissionDecision: "deny",
+    permissionDecisionReason: "この操作は hook で止めています",
+  },
+}));
+process.exit(0);
+
+// Bad: 文字列連結で JSON を組み立てる（閉じ忘れが plain text 扱いで素通りする）
+console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
+```
+
+**アンチパターン**:
+- `onFailure` に `"BLOCK"` など大文字を指定する（有効値は小文字の `"block"` / `"continue"` のみで、不正値は設定ファイル全体が無視されうる）
+- `timeout` を既定の 600 秒のままにする（15〜30 秒程度に絞る）
+- 入力が読めず止めたいときに exit 1 を使う（stderr に理由を書いて exit 2 にする）
+
+**出典引用**:
+> "hook が壊れても、既定では操作はそのまま通ります。"
+> ([Claude Code hook の onFailure: block でも止まらない出力と、止まる exit 1](https://zenn.dev/tamao825/articles/claude-code-hooks-onfailure-block-exit-code-json), セクション "先に要点を書きます") ※2026-10-21に実際にfetch成功
+
+> "Requires Claude Code v2.1.295 or later."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), Claude Code 公式 docs, `onFailure` の項) ※2026-10-25 確認（routine-followup マージ時の追加）
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の `settings.json` hook 設定スキーマ（`onFailure`）と exit code の挙動を実測検証し、実際の設定ファイルを直接示している）
+
+**バージョン**: Claude Code v2.1.295+（検証は 2.1.303 / Windows 11 / Git Bash）
+**確信度**: 中（単独ソースのパターン1c採用。検証環境は Windows のみ）
+**最終更新**: 2026-10-21
+
+---
