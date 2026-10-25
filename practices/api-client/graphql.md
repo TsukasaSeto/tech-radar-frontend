@@ -170,9 +170,11 @@ const TeamPageQuery = graphql(`
 
 GraphQL スキーマとクエリファイルから TypeScript の型を自動生成する。
 手書きの型定義は GraphQL スキーマとの乖離が生じるため使わない。
+TypeScript 7.1+ では Content Mappers で `*.graphql` を生成ファイル無しに直接 import する構成も選べる（beta 検証段階。下記）。
 
 **根拠**:
 - スキーマ変更時に型エラーが即座に検出される
+- TypeScript 7.1 の Content Mappers（`tsconfig.json` の `contentMappers` + マッパー側 `package.json` の `typescript.contentMapper`）で `graphql-codegen` コアを外部プロセスから呼べば、codegen 出力ファイルを作らずに型解決できる。外部プロセスが任意コードを実行するため `tsc --runExternalCode` が必須で、信頼できるマッパーのみ使う（Zenn 単一記事の検証、7.1.0-beta 前提）
 - `client-preset` プラグインで Fragment の型も自動生成される
 - `graphql-tag` の代わりに Codegen の `graphql()` 関数を使うことで型推論が働く
 - CI でスキーマとのチェックを自動化できる
@@ -232,10 +234,13 @@ const [{ data }] = useQuery({ query: GetUserQuery, variables: { id } });
 
 **出典**:
 - [GraphQL Code Generator Docs](https://the-guild.dev/graphql/codegen/docs/getting-started) (The Guild / GraphQL Code Generator公式)
+- [Next.js で TypeScript7.1 の Content Mappers を使い、*.graphql ファイルを直接使用する](https://zenn.dev/sora_kumo/articles/typescript7-content-mappers) (Zenn、codegen 出力無しの代替構成) ※2026-10-22 fetch
+  > "外部プロセスが任意のコードを実行できるため、安全機能としてコンパイル時には `--runExternalCode` フラグの指定が必須となっています。"
+  > (セクション "Content Mappers の仕組み")
 
-**バージョン**: @graphql-codegen/cli 5+, @graphql-codegen/client-preset 4+
-**確信度**: 高
-**最終更新**: 2026-05-05
+**バージョン**: @graphql-codegen/cli 5+, @graphql-codegen/client-preset 4+（Content Mappers 構成は TypeScript 7.1+）
+**確信度**: 高（codegen 本体）/ 中（Content Mappers 構成は単一記事・beta）
+**最終更新**: 2026-10-22
 
 ---
 
