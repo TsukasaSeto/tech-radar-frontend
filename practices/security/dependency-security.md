@@ -1188,3 +1188,37 @@ minimum-release-age=0
 **バージョン**: pnpm 11+
 **確信度**: 中（単一記事だが公式ツールの設定ファイル形式・エラーコードを直接示す実機検証のためパターン1c扱い）
 **最終更新**: 2026-08-19
+
+---
+
+### 12. 脆弱性バックログは件数ではなく解消リードタイムと連鎖経路で優先度を管理する
+
+脆弱性バックログは単なる「未対応の技術的負債」ではなく、放置期間が長いほど成立していく攻撃対象領域（attack surface）である。件数や深刻度スコアの単純な棚卸しではなく、実際の解消リードタイムを基準指標として継続的に追跡し、単独では低深刻度でも組み合わさると重大な攻撃経路になりうる脆弱性クラスタをサービス・信頼境界単位でマッピングする。
+
+**根拠**:
+- 「まだ悪用されていない」という前提は、コードが変わらないことに賭けているに過ぎない。放置は「exploitation probability に対する賭け」であり、時間が経つほど賭けは悪化する
+- 深刻度スコアは個々の脆弱性を単独で評価するが、実際の攻撃は複数の脆弱性を連鎖させる。単独では medium 相当の脆弱性でも、認証済みリモートコード実行への経路を構成しうる
+- 追跡すべき基準指標として、直近90日の実際のクローズ率・risk-accepted/won't-fix の件数と最終レビュー日・人間が書いたコードのマージ比率・直近四半期のセキュリティ修正マージ率の4つが挙げられている
+
+**コード例**:
+```yaml
+# Good: 放置期間でバックログの鮮度を可視化し、しきい値超過をCIで検知する
+# .github/workflows/vuln-backlog-age.yml
+- name: Fail if any accepted-risk finding is stale
+  run: |
+    # risk-accepted / won't-fix 判定から180日を超えたエントリを検出して fail させる
+    node scripts/check-backlog-age.js --max-age-days=180 --status=risk-accepted
+
+# Bad: 深刻度だけでソートし、放置期間や連鎖経路を見ずに上から順に対応する
+# → 単独では medium 深刻度の「見えない経路」が放置され続ける
+```
+
+**出典引用**:
+> "Accepting the rest amounted to a bet on exploitation probability, namely that an attacker would not find this specific medium-severity issue, in this specific service, before the code around it changed anyway."
+> ([Your Vulnerability Backlog Is No Longer Technical Debt, It's an Attack Surface](https://snyk.io/blog/vulnerability-backlog-attack-surface/), セクション "The backlog was a bet") ※2026-09-24に実際にfetch成功
+
+**バージョン**: N/A（プロセス・運用プラクティス）
+**確信度**: 中（Snyk Blog の単独記事）
+**最終更新**: 2026-09-24
+
+---
