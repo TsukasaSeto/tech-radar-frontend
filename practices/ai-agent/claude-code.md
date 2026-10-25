@@ -4086,3 +4086,45 @@ def variants(email: str) -> list[str]:
 **最終更新**: 2026-09-24
 
 ---
+
+### 52. Claude Code v2.1.282 で project settings からのテレメトリ有効化が無視されるようになった — アップグレード時は `claude doctor` で設定差分を確認する
+
+v2.1.282 では、リポジトリ同梱の project settings（`.claude/settings.json`）で `CLAUDE_CODE_ENABLE_TELEMETRY` や `OTEL_*` を指定してテレメトリを有効化・送信先を変える設定が無視されるようになり、`:*` を含む permission ルールが解析時に黙って破棄される不具合も修正された。`claude doctor` は無視した設定や不正なルールを表示するため、アップグレード前後の設定の効き方をモデルを呼ばずに確認できる。
+
+**根拠**:
+- project settings からのテレメトリ有効化・送信先変更が無視されるため、クローンしたリポジトリの同梱設定でテレメトリを第三者のエンドポイントへ送らせる攻撃面が塞がれる
+- `Bash(git:* push)` のように `:*` を含む permission ルールが、以前は解析時に黙って破棄されていた（v2.1.282 で修正）。旧版では書いたルールが効いていなかった可能性がある
+- `claude doctor` が無視したテレメトリ変数や不正な permission ルールを出力するため、設定の効き方をバージョン間で比べられる
+- リリース内容には「admin が強制したサンドボックス制限を project 側の `excludedCommands` で上書きできなくなった」も含まれるが、出典記事では `claude doctor` で観測できず未検証のため、本ルールの根拠には含めない
+
+**コード例**:
+```jsonc
+// Bad: リポジトリ同梱の .claude/settings.json でテレメトリの有効化や送信先を指定する
+// （v2.1.282+ では無視される。テレメトリは組織の managed settings で配布する: Rule #13）
+{
+  "env": {
+    "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+    "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector.example.com"
+  }
+}
+```
+```bash
+# Good: アップグレード前後で claude doctor の出力を比べ、無視された設定・破棄されたルールを確認する
+claude doctor
+```
+
+**アンチパターン**:
+- テレメトリや監査ログの送信設定をリポジトリ同梱の project settings に書いて配布する（v2.1.282+ では無視されるうえ、同梱設定で送信先を差し替えられる攻撃面になっていた）
+- `:*` を含む permission ルールを旧版で書いたまま、効いているか確認していない
+
+**出典引用**:
+> "v2.1.282 の `claude doctor` がこの設定に触れないため、差が出るかどうか以前に観測できませんでした"
+> ([Claude Code v2.1.282 の「設定ファイル経由の改ざん」対策を、旧版と並べて claude doctor で確かめた](https://zenn.dev/motani/articles/claude-code-v2-1-282-settings-security-fix), Zenn, セクション "結果") ※2026-09-25に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の特定バージョン間のセキュリティ設定挙動を `claude doctor` の実出力で検証している）
+
+**バージョン**: Claude Code v2.1.282+
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-25
+
+---
