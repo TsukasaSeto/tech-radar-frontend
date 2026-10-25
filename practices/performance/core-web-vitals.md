@@ -118,7 +118,7 @@ function UserCard() {
 INP は 200ms 以内を目標とする。長いタスクを分割し、メインスレッドのブロックを防ぐ。
 
 **根拠**:
-- INP は FID の後継として 2024年3月から Core Web Vitals に組み込まれた
+- INP は FID の後継として 2024年3月から Core Web Vitals に組み込まれた。Vercel Speed Insights も 2026-11-01 に FID 対応を終了し、応答性指標は INP に一本化される（FID 前提の閾値・ダッシュボードは INP に移行する）
 - 200ms を超えるインタラクション遅延はユーザーが「遅い」と感じる閘値
 - 長時間のJS実行、不必要なレンダリング、大きなDOMが主な原因
 
@@ -163,10 +163,12 @@ function SearchResults({ items }: { items: Item[] }) {
 **出典**:
 - [web.dev: INP](https://web.dev/inp/) (web.dev)
 - [React Docs: useTransition](https://react.dev/reference/react/useTransition) (React公式)
+- [Speed Insights deprecates First Input Delay on November 1st](https://vercel.com/changelog/speed-insights-deprecates-first-input-delay-on-november-first) (Vercel Changelog、FID 計測の終了と INP への一本化) ※2026-10-02に実際にfetch成功
+  > "The deprecation won't require changes on your side, affect your score, or prevent you from viewing existing FID data."
 
 **バージョン**: React 18+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-02
 
 ---
 
