@@ -555,3 +555,54 @@ html {
 **最終更新**: 2026-08-28
 
 ---
+
+### 12. `<Link prefetch>` が重いルートは `await navigation()` / `await prefetch()` で後段に処理を遅延する
+
+`<Link prefetch>` は読み込み状態を消せるが、可視リンクすべてがキャッシュ済みデータ全体を先読みするためサーバー負荷が過大になりうる。プリフェッチ自体を止めるのではなく、Next.js 16.4 の `navigation()`（実際のナビゲーションまで遅延）と `prefetch()`（明示プリフェッチまで遅延）を `await` し、重い部分だけをプリフェッチ対象から外す。
+
+**根拠**:
+- メール一覧のようにリンクが多数並ぶ画面で、全メッセージのスレッドを先読みするとコストが過大になる。最初のメッセージだけ先読みし、残りは遷移後に描画できる
+- `navigation()` はプリフェッチ時に対象を除外しナビゲーション時に描画、`prefetch()` はルートのシェルに入るはずのキャッシュ内容を除外し明示プリフェッチまで遅延する
+- 遅延する部分は `<Suspense>` で囲み、フォールバックを用意する
+- 先読みの粒度を「全部」か「なし」の二択にせず、段階ごとに調整できる
+
+**コード例**:
+```tsx
+import { navigation } from 'next/cache';
+
+async function Message({ id }: { id: string }) {
+  const message = await getMessage(id);
+  return (
+    <>
+      <p>{message.subject}</p>
+      <Suspense fallback={<Spinner />}>
+        <Thread id={id} />
+      </Suspense>
+    </>
+  );
+}
+
+// Good: スレッドはプリフェッチから除外し、実ナビゲーションで取得する
+async function Thread({ id }: { id: string }) {
+  await navigation();
+  const thread = await getThread(id);
+  return thread.map((m) => <div key={m.id}>{m.body}</div>);
+}
+```
+
+**アンチパターン**:
+- 重いデータを含むページへのリンクすべてに `prefetch` を付け、使われない先読みでサーバー負荷を増やす
+- 負荷を理由に `prefetch` を外して読み込み状態を復活させる（段階的な遅延で両立できる）
+
+**出典引用**:
+> "The new `navigation` API lets you exclude loading cached content during a prefetch, effectively deferring it until an actual navigation takes place."
+> ([Next.js 16.4](https://nextjs.org/blog/next-16-4), セクション "Excluding content from a prefetch") ※2026-10-06に実際にfetch成功
+
+**出典**:
+- [Next.js 16.4](https://nextjs.org/blog/next-16-4) (Next.js 公式ブログ、2026-10-06公開) ※2026-10-06に実際にfetch成功
+
+**バージョン**: Next.js 16.4+（`cacheComponents: true` + `partialPrefetching: true`）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-10-06
+
+---
