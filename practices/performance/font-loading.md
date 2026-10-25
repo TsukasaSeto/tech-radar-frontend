@@ -246,6 +246,7 @@ Web フォントの配信フォーマットは woff2 一択。レガシー対応
 - （運用上の落とし穴）サブセットは「表示される文字」で決まるため、記事の並べ替え・出し分け・件数変更だけでも欠字する。実例ではトップページの記事順を変えただけで必要文字が 740 → 878 字（219KB → 229.6KB）に増えた。ビルドにカバレッジ検査スクリプトを挟んで検知する
 - （キャッシュ）ファイル名を固定したサブセットに `Cache-Control: immutable` を付けると、サブセット再生成後も旧ファイルが使われ欠字が残る。ファイル名にハッシュを含めるか `immutable` を外す
 - 可変フォントは軸を絞ってからサブセット化すると更に小さくなる（`fontTools` の `instancer` でウェイト軸を 400-700 に限定する等）
+- （計測上の落とし穴）`font-display: swap` では代替フォントで先に描画されて LCP が早く確定するため、巨大フォントは LCP に現れず Speed Index に出る。未サブセットの日本語フォント 4 ウェイト（12.1MB・総重量の 37%）で LCP 3.1 秒・Speed Index 44.7 秒となった実測があり、LCP だけでフォント重量を判断しない。サブセット化の効果は実使用文字（310 字）で Google Fonts を読ませて `fonts.gstatic.com` の転送量を合計すれば上限値を実測できる（4 ウェイト全文字でも 1.5MB、約 1/8）
 
 **コード例**:
 ```css
@@ -344,6 +345,7 @@ instancer.instantiateVariableFont(font, {"wght": WGHT}, inplace=True, updateFont
 - [web.dev: Reduce web font size](https://web.dev/articles/reduce-webfont-size) (web.dev)
 - [web.dev: Variable fonts](https://web.dev/articles/variable-fonts) (web.dev)
 - [日本語フォントは unicode-range が効かない — Google Fonts をやめて 729KB を 219KB にした](https://zenn.dev/ukintech/articles/japanese-font-selfhost-subset) (Zenn ukintech、日本語での `unicode-range` 分割の反例・セルフホストサブセットの実測値・カバレッジ検査とキャッシュ運用の追加観点) ※2026-08-28 fetch
+- [LCP3.1秒なのに表示完了44.7秒、原因は日本語Webフォント12.1MBだった](https://qiita.com/kusarikakemron/items/fd26062951bf946ae5ec) (Qiita、swap 下で LCP に現れない巨大フォントと Speed Index、サブセット効果の実測手順) ※2026-10-23 fetch
 
 **出典引用**:
 > "本文に使われている文字がこの 124 区画に散らばると、その数だけリクエストが飛びます"
@@ -352,9 +354,12 @@ instancer.instantiateVariableFont(font, {"wght": WGHT}, inplace=True, updateFont
 > "サブセットは表示される文字で決まる。並べ替え・出し分け・件数の変更でも壊れます"
 > ([日本語フォントは unicode-range が効かない — Google Fonts をやめて 729KB を 219KB にした](https://zenn.dev/ukintech/articles/japanese-font-selfhost-subset), セクション "運用で壊れるポイント") ※2026-08-28に実際にfetch成功
 
+> "LCPは3.1秒なのに、画面が落ち着くまで44.7秒"
+> ([LCP3.1秒なのに表示完了44.7秒、原因は日本語Webフォント12.1MBだった](https://qiita.com/kusarikakemron/items/fd26062951bf946ae5ec), セクション "LCPが良いのに遅く感じる理由") ※2026-10-23に実際にfetch成功
+
 **バージョン**: woff2 は Chrome 36+, Firefox 39+, Safari 12+ / Variable Fonts は Chrome 62+, Firefox 62+, Safari 11+
 **確信度**: 高
-**最終更新**: 2026-08-28
+**最終更新**: 2026-10-23
 
 ---
 
