@@ -202,6 +202,7 @@ describe('formatCurrency', () => {
 - `vi.mock` はモジュール解決時点でホイストされ、インポート後の全呼び出しを置換するため副作用の完全な排除に向く
 - `vi.spyOn` は元の実装を保持しつつ呼び出しを記録できるため、実装の一部だけを差し替えたい場合に適する
 - `vi.spyOn` は `afterEach(() => vi.restoreAllMocks())` と組み合わせることで元の実装への復元が保証される
+- ホイストされる `vi.mock` は**ファイルのトップレベルに置く**。Vitest 5.0.0-rc.1 ではトップレベル以外の `vi.mock` があるとテストファイル全体がロード失敗する（4.1 は警告のみ）。あわせて `clearMocks` のデフォルトが `true` になり、各テスト前にモックの呼び出し履歴がクリアされる（RC 時点の報告）
 
 **コード例**:
 ```ts
@@ -241,10 +242,12 @@ describe('UserService', () => {
 **出典**:
 - [Vitest Docs: Mocking](https://vitest.dev/guide/mocking) (Vitest公式)
 - [Vitest API: vi.mock / vi.spyOn](https://vitest.dev/api/vi#vi-mock) (Vitest公式)
+- [Vitest 5 RC に上げてみたら、テストより先に npm が落ちた](https://zenn.dev/clopy/articles/vitest5-rc-breaking-changes) (Zenn、5.0.0-rc.1 での `vi.mock` 位置制約と `clearMocks` 既定値変更の検証。RC 段階の単一記事のため確信度は据え置き) ※2026-10-09 fetch
+  > "Hoisted Mocking Calls Must Be at the Top Level"（移行ガイドの見出しを記事が引用）
 
-**バージョン**: Vitest 2+
+**バージョン**: Vitest 2+（トップレベル必須は 5.0 RC 以降）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-09
 
 ---
 

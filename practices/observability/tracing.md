@@ -446,6 +446,72 @@ Sentry.logger.info("agent conversation started", {
 
 ---
 
+### 7. Sentry SDK v11 のトレーシングは「ライブラリ読み込み前に初期化」し、Node では `--require` ではなく `--import` を使う
+
+Sentry JavaScript SDK v11 は、OpenTelemetry の instrumentation クラス（`require-in-the-middle` 依存）をやめ、モジュールのソースを書き換えて `tracingChannel()` で包む方式（`node:diagnostics_channel`）をデフォルトにした。
+バンドル済みのサーバー（Vercel / Netlify）、Cloudflare Workers、Deno、Bun でも依存ライブラリのトレースが取れるようになる一方、**変換が効くのは hooks 登録後に読み込まれたモジュールだけ**という順序の制約がある。
+
+**根拠**:
+- v10 までの `@sentry/node/preload` / `preloadOpenTelemetry()` / `SENTRY_PRELOAD_INTEGRATIONS` は v11 で削除され（`--import` による初期化は v11 でも推奨）、「ライブラリは読み込み時に自ら instrument する」という単一の順序ルールに統一された
+- `--require` で preload すると Node がローダースレッドで再実行し `Sentry.init()` が二重実行される。CommonJS アプリでも `--import` を使う
+- external 指定された依存は変換されない。Sentry のビルドプラグインは既知パッケージを `external` から外し、直せないものは警告する
+- 初回は `debug: true` で「実行時 hook が登録されたか・バンドラープラグインが動いたか・どのモジュールに注入されたか」を確認できる
+- OTel 連携は 3 択: Sentry のみ（`tracesSampleRate`）/ `enableOpenTelemetrySetup: true`（`@opentelemetry/api` のスパンを Sentry スパン化、`@sentry/nextjs` ではデフォルト `true`）/ 自前 OTel + `Sentry.otlpIntegration()`（`tracesSampleRate` は未設定）
+
+**コード例**:
+```bash
+# Good: Node は --import で hooks を先に登録（Deno は --preload）
+node --import @sentry/node/import app.js
+deno run --preload=@sentry/deno/import app.ts
+
+# Bad: --require は loader thread で再実行され Sentry.init() が二重実行される
+node --require ./instrument.js app.js
+```
+
+```ts
+// Good: バンドラー利用時はビルド時 transform プラグインを使う
+// vite.config.ts
+import { sentryVitePlugin } from '@sentry/node/vite';
+export default {
+  plugins: [sentryVitePlugin({ org: '...', project: '...' })],
+};
+```
+
+```js
+// Good: 自前の OTel を使い Sentry は OTLP で連携（v11 では provider のスパンを Sentry ネイティブスパンにはできない）
+const provider = new NodeTracerProvider({
+  spanProcessors: [
+    new BatchSpanProcessor(
+      new OTLPTraceExporter(Sentry.getOtlpTracesEndpoint('__DSN__')),
+    ),
+  ],
+});
+provider.register();
+
+Sentry.init({
+  dsn: '__DSN__',
+  integrations: [Sentry.otlpIntegration()],
+});
+```
+
+**アンチパターン**:
+- `Sentry.init()` を instrument 対象ライブラリの import より後に置く（ESM の import 巻き上げで未変換のまま読み込まれる）
+- v10 の `skipOpenTelemetrySetup` を残したまま v11 に上げる（`enableOpenTelemetrySetup` に意味が反転して置き換わっている）
+- OTel と Sentry の HTTP スパンが重複するからと `httpIntegration` ごと外す（リクエスト分離・セッション追跡も担うため `httpIntegration({ spans: false })` で絞る）
+
+**出典引用**:
+> "Register through --import, or keep Sentry.init() above every import of an instrumented library. --require is no longer supported."
+> ([Sentry JavaScript SDK v11 adds tracing for all JS platforms](https://blog.sentry.io/tracing-for-all-js-platforms/), セクション "Pitfalls & Caveats") ※2026-10-09に実際にfetch成功（原文 HTML で逐語確認済み）
+
+**出典**:
+- [Sentry JavaScript SDK v11 adds tracing for all JS platforms](https://blog.sentry.io/tracing-for-all-js-platforms/) (Sentry公式ブログ) ※2026-10-09に実際にfetch成功
+
+**バージョン**: Sentry JavaScript SDK 11+（Deno は 2.8.3+）
+**確信度**: 高
+**最終更新**: 2026-10-09
+
+---
+
 ## 関連プラクティス
 
 - [`observability/logging.md`](./logging.md) - リクエスト ID とログの相関
