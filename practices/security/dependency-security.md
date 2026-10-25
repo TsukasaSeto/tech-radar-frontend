@@ -465,7 +465,7 @@ trustPolicy: no-downgrade
 - `--ignore-scripts`（このルール）
 - `socket-security` / `snyk` / `Aikido` 等の OSS supply chain スキャナーを CI に追加（Socket は install script の実行可否・ネットワーク接続要求・ファイルシステム操作を行動解析し、既知 CVE 外の新種マルウェアも検知; GitHub App 連携で PR ごとに差分スキャンできる）
 - Renovate の `:disablePeerDependencies` などで不要な依存追加を制限
-- **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）。7日間（10080分）への引き上げで悪意のあるバージョン検出の機会をさらに増やせる。除外が必要なパッケージは承認期限・CVE根拠・責任者を CI スクリプトで自動チェックする
+- **release-age gate**: パッケージマネージャーに最小公開経過時間を設定し、公開直後のゼロデイ汚染を回避する（pnpm 11 はデフォルト 24h 待機）。7日間（10080分）への引き上げで悪意のあるバージョン検出の機会をさらに増やせる。除外が必要なパッケージは承認期限・CVE根拠・責任者を CI スクリプトで自動チェックする。Bun も `bunfig.toml` の `[install] minimumReleaseAge`（単位は秒）で同等の設定ができ、単位はツールごとに異なる（npm は日、Yarn は `1d` 形式、pnpm は分）。ただし待機期間を長くするほどセキュリティパッチの適用も遅れ、長期間潜伏する攻撃は防げないため、ほかの対策と併用する
 
 ```bash
 # npm 11.10+: プロジェクト単位で最低公開 24h 経過を要求
@@ -531,6 +531,7 @@ updates:
 - [Miasma supply chain attack: malicious code found in @redhat-cloud-services npm packages](https://snyk.io/blog/miasma-supply-chain-attack-malicious-code-redhat-cloud-services-npm-packages/) (Snyk Blog、OIDC token hijacking・SLSA provenance bypass・自己増殖ワーム) ※2026-06-02に実際にfetch成功
 - [pnpm v11 移行メモ — サプライチェーン攻撃対策を中心に](https://zenn.dev/esta_dev/articles/bc7a8dfef21d7b) (Zenn、v11 新デフォルト allowBuilds/blockExoticSubdeps/lockfile integrity・Docker CI 対応パターン) ※2026-06-09に実際にfetch成功
 - [npm サプライチェーン攻撃対策として pnpm v11 を導入した話](https://zenn.dev/onthebakery/articles/8060f23d1f948c) (Zenn、minimumReleaseAge 7日間延長・除外リスト承認期限 CI チェックの実践) ※2026-06-22に実際にfetch成功
+- [様々なツールで導入が進んでいるクールダウン設定の機能や挙動を比較](https://zenn.dev/newt_st21/articles/package-manager-cooldown) (Zenn、npm / Yarn / Bun 等の設定キー・単位の比較と、長期潜伏型攻撃は防げない限界) ※2026-10-01 fetch
 - [Megalodon: How 5,561 GitHub Repositories Got Backdoored in Six Hours](https://dev.to/alejandxr/megalodon-how-5561-github-repositories-got-backdoored-in-six-hours-2dnn) (dev.to、direct Poisoned Pipeline Execution・弱いブランチ保護の悪用) ※2026-07-14に実際にfetch成功
 - [When a Malicious Dependency Alert Changed Our Release Policy](https://medium.com/@dominikus.nold/when-a-malicious-dependency-alert-changed-our-release-policy-f1ffef445b8b) (Medium、警告を「インストール後の報告」から「インストール前の非バイパスゲート」に転換した実例) ※2026-07-25に実際にfetch成功
 - [サプライチェーン攻撃への多層防御を「個人の開発環境」に組み込む](https://zenn.dev/crandim_r_and_d/articles/260822_a3_supply_chain_defense_personal) (Zenn、`npm`/`pnpm` を shell alias で行動解析スキャナー経由に固定する個人開発環境向けパターン) ※2026-08-23に実際にfetch成功
@@ -617,7 +618,7 @@ npm view @scope/package@1.2.4 version
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-08-29
+**最終更新**: 2026-10-01
 ---
 
 ### 5. SBOM（Software Bill of Materials）を生成して依存関係を可視化する
@@ -1131,6 +1132,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
 - ad-hoc パッチは実際に発動している: 2026-09-22 に out-of-band 緊急リリースがあり、`next/og` の Node.js `ImageResponse` 実装が上流 Satori 依存の脆弱性経由で Remote Code Execution（Critical, GHSA-vcvr-r3jv-pc5j）の影響を受けると告知された。対象は Next.js `>=16.2.0 <16.3.6`。修正版 `16.3.6`（15.x 系は RCE 自体の対象外だが hardening を含む `15.5.26`）が即日公開され、Edge の `ImageResponse` 実装は影響を受けない。月次サイクルとは別に、こうした Critical 脆弱性は告知当日中のアップグレードを要する
 - 2026-09-30 の月次リリース（v16.3.8 / v15.5.27）は、予告から内容が 2 回変わった。9/29 に公開された 16.3.7 はバグ修正のみでセキュリティ修正を含まず、修正版は 16.3.8 / 15.5.27 に変更された。さらに当日、予告していた 9 件のうち critical 1件・high 1件が上流依存の調整待ちで後日のリリースに回され、修正は 7 件（high 1・medium 5・low 1）になった。予告時点の版番号や件数で対応を確定せず、告知ページの日付付き追記とリリース当日の本告知で対象と修正版を確かめる。同リリースには `next dev` の MCP エンドポイントが接続元 Web サイトを検証せず、悪意あるサイト経由でソースやルート情報を読める問題（Low）も含まれ、開発サーバーも更新対象になる
+- 各脆弱性には**影響条件**が明記される（例: SSRF は `images.remotePatterns` 設定時のみ、Draft Mode 漏えいは Cache Components / `experimental.useCache` 有効時のみ、MCP エンドポイントの情報漏えいは `next dev` のみ）。自アプリの設定と突き合わせて優先度を決める
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1152,7 +1154,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 
 **バージョン**: Next.js 16.2+ / 15.5+（`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外。2026-09-30 の修正版は 16.3.8 / 15.5.27）
 **確信度**: 高
-**最終更新**: 2026-09-30
+**最終更新**: 2026-10-01
 
 ---
 
