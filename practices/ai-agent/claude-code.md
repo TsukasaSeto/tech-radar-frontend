@@ -1153,6 +1153,19 @@ exit 0
 | plugin-provided | - | Skills/プラグイン同梱 |
 | claude.ai connectors | - | プラットフォーム標準 |
 
+**`claude mcp add --scope` の使い分け**: `--scope` を省略すると `local`（既定）になり、チームには共有されない。チームで使うサーバーは `--scope project` で `.mcp.json` に登録してコミットし（参加メンバーには承認プロンプトが出る）、個人で全プロジェクト共通に使うものは `--scope user` で登録する。project スコープの承認選択は `claude mcp reset-project-choices` でリセットできる。
+
+```bash
+# Good: チームで共有する MCP サーバーは project スコープ（.mcp.json）に登録してコミットする
+claude mcp add --scope project github-mcp -- npx -y @some/github-mcp-server
+
+# Good: 個人で全プロジェクト共通に使うツールは user スコープに登録する（相対パスは起動ディレクトリで壊れるので絶対パスで書く）
+claude mcp add --scope user my-personal-tool -- node ~/tools/my-tool.js
+
+# Bad: スコープを省略すると local（既定）になり、チームに共有されない
+claude mcp add github-mcp -- npx -y @some/github-mcp-server
+```
+
 **MCP トランスポート選択**: クラウドサービス（Notion, Stripe, Sentry）→ HTTP が推奨。ローカルツール・CLI → Stdio。外部コンテンツを fetch する MCP サーバーはプロンプトインジェクションリスクがあるため、read-access と external-send を同時に有効化しない（詳細は `security/dependency-security.md` Rule #7 参照）
 
 **コード例（独自 Skill の定義例）**:
@@ -1215,6 +1228,7 @@ refactor: extract auth logic to separate module
 - [Claude Code Skills設計パターン ： 段階的開示とコンテキスト2%ルール](https://zenn.dev/correlate_dev/articles/claude-code-skills-progressive-disclosure) (Zenn correlate_dev、コンテキスト2%ルール・Iron Law 品質パターン・description文字数計測スクリプト) ※2026-06-15 fetch
 - [約2,000人が使うClaude Codeと向き合う。](https://developers.cyberagent.co.jp/blog/archives/64334/) (CyberAgent Engineering Blog、2,000人規模でのスキル・ルーティン化・ROI評価の組織的実践) ※2026-06-18 fetch
 - [Claude Code の MCP 連携 — 3 つの transport、scope の優先順位、企業向けコントロールまでの全体像](https://qiita.com/akihidem/items/405d5d07837c1e202af1) (Qiita akihidem、HTTP/Stdio/SSE の選択・5段階スコープ優先順位・managed-mcp.json によるエンタープライズ制御) ※2026-06-23 fetch
+- [claude mcp add の --scope local / project / user の違いと使い分け](https://qiita.com/aicoding-guide/items/e827d0151736664ef91b) (Qiita aicoding-guide、`--scope` 省略時は local になる点・`claude mcp reset-project-choices`) ※2026-09-24 fetch
 
 **コンテキスト2%ルール（Skill description の総量管理）**:
 200K トークンのコンテキストウィンドウのうち Skill description 全体の総文字数を **約 16,000 文字（2%）** 以内に収める。超過すると実作業のためのトークンが不足する。定期的に下記スクリプトで計測する:
@@ -1246,7 +1260,7 @@ echo "合計: $TOTAL 文字 / 上限目安: 16000 文字"
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-06-23
+**最終更新**: 2026-09-24
 
 ---
 
@@ -4016,5 +4030,59 @@ model_auto_compact_token_limit = 500000
 **バージョン**: Claude Code / Codex CLI（記事内で参照された公式ドキュメント時点）
 **確信度**: 中
 **最終更新**: 2026-09-12
+
+---
+
+### 51. PreToolUse / PostToolUse / SessionStart フックでアカウントのメールアドレスがツール入出力へ混入するのを機械的に遮断する
+
+Claude Code は `~/.claude.json` の `oauthAccount.emailAddress` をセッションのコンテキストに注入するため、モデルはユーザーのメールアドレスを知った状態で動作する。コンテキストに存在する値はモデルが自由に出力しうるため、git commit の identity への混入や、ツール呼び出しの入出力を経由した意図しない漏出が起こりうる。注入そのものは止められないが、PreToolUse（ツール入力の遮断）・PostToolUse（ツール出力の redact）・SessionStart（自動読み込みファイルの走査）の3フックを組み合わせることで、ツール経由の漏出だけは機械的に防げる。
+
+**根拠**:
+- コンテキストにある値はモデルが自由に出力しうるため、フィルタなしでは git commit や外部リクエストへの混入を防げない（GitHub Issue #81138 に実報告あり）
+- URLエンコード・HTMLエンティティ・`[at]`表記など、モデルが自然に生成しうるエンコーディングのバリエーションもあわせて検査する必要がある
+- 注入そのものを止める方法はないため、ドメインからの推論などモデルの「知識」に起因するリスクは残る点に留意する
+
+**コード例**:
+```json
+// .claude/settings.json — PreToolUse/PostToolUse hook でメールアドレスの混入を検査する
+{
+  "hooks": {
+    "PreToolUse": [{
+      "hooks": [{
+        "type": "command",
+        "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/account-email-guard.py\" PreToolUse",
+        "timeout": 10,
+        "statusMessage": "account-email-guard"
+      }]
+    }]
+  }
+}
+```
+```python
+# Good: エンコーディングのバリエーションも含めて比較する
+def variants(email: str) -> list[str]:
+    local, _, domain = email.partition("@")
+    return sorted({
+        email,
+        quote(email).lower(),            # user%40example.com
+        email.replace("@", "[at]"),
+        email.replace("@", "(at)"),
+        email.replace("@", "&#64;"),
+        f"{local} at {domain}",
+    })
+
+# Bad: 生のメールアドレス文字列だけを完全一致で検査する
+# → URLエンコードやHTMLエンティティ化された表記をすり抜けてしまう
+```
+
+**出典引用**:
+> "コンテキストにあるものはモデルが書き出せます。コミット identity への混入や自発的な出力は GitHub Issue #81138 に実報告があり"
+> ([Claude Code はあなたのメールアドレスを毎回モデルに渡している — 出口をフックで機械的に塞いだ話](https://zenn.dev/minedia/articles/07dab654a07022), セクション "背景") ※2026-09-24に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の hook システム（PreToolUse/PostToolUse/SessionStart）と `~/.claude.json` の `oauthAccount.emailAddress` という具体的な設定/挙動を実装込みで示している）
+
+**バージョン**: Claude Code（2026-09-24時点で観測された挙動、バージョン非明記）
+**確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-24
 
 ---

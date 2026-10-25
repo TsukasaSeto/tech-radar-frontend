@@ -135,16 +135,18 @@ ESM ネイティブで高速なウォッチモード、TypeScript のネイテ�
 - Jest より大幅に高速（コールドスタートで2〜10倍）
 - Jest と互換性のある API（`describe`, `it`, `expect`, `vi`）で移行コストが低い
 - ブラウザモードで実際のブラウザ環境でのテストも可能（Vitest Browser Mode）
+- Vite 8 以降は `resolve.tsconfigPaths` で tsconfig の `paths` をネイティブに解決でき、`vite-tsconfig-paths` を入れたままだと「不要」警告が出る。移行時は、先にプラグインだけを外して `Failed to resolve import` が出ること（＝機能自体は必要なこと）を確かめてから `resolve.tsconfigPaths: true` に置き換える。プラグインを消すだけだと import 解決が壊れる。移行で `vite-tsconfig-paths` / `tsconfck` / `globrex` の依存も減らせる
 
 **コード例**:
 ```ts
 // vitest.config.ts
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [react(), tsconfigPaths()],
+  plugins: [react()],
+  // Vite 8+: tsconfig の paths はネイティブに解決する（Vite 7 以前は vite-tsconfig-paths プラグインを使う）
+  resolve: { tsconfigPaths: true },
   test: {
     environment: 'jsdom',
     globals: true,
@@ -169,10 +171,11 @@ afterAll(() => server.close());
 **出典**:
 - [Vitest Docs](https://vitest.dev/guide/) (Vitest公式)
 - [Next.js Docs: Setting up Vitest](https://nextjs.org/docs/app/building-your-application/testing/vitest) (Next.js公式)
+- [Vitestの「vite-tsconfig-pathsは不要」警告に従う前に、プラグインを外して落としてみた](https://zenn.dev/matsutake_prgrm/articles/remove-it-first-before-migrating) (Zenn matsutake_prgrm、警告に従う前にプラグインを外して壊れることを確認する移行手順) ※2026-09-24 fetch
 
-**バージョン**: Vitest 1+, Next.js 13+
+**バージョン**: Vitest 1+, Next.js 13+（`resolve.tsconfigPaths` は Vite 8+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-09-24
 
 ---
 
