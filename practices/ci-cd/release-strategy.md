@@ -15,6 +15,7 @@
 - Conventional Commits → 自動的に semver の判定が機械化できる（`fix:` → patch, `feat:` → minor, `BREAKING CHANGE:` → major）
 - Changesets は「PR ごとに changeset ファイルを置く」ワークフローでモノレポに最適
 - リリースノートが自動で生成され、開発者が手動編集する必要がない
+- npm 公開は Trusted Publishing（OIDC）にすると `NPM_TOKEN` を保存せずに済む。publish ジョブに `permissions.id-token: write` を付けるだけで OIDC トークンを取得でき、`contents: write`（バージョン更新コミット・タグ・Release）と `pull-requests: write`（Version Packages PR）はジョブ単位で付与し、ワークフロー既定は `contents: read` にする。パッケージが未公開だと Trusted Publisher を設定できないため、初回バージョンだけは手動公開が必要
 
 **選択肢**:
 
@@ -134,10 +135,14 @@ pnpm add -D semantic-release @semantic-release/git @semantic-release/changelog
 - [semantic-release](https://semantic-release.gitbook.io/) (semantic-release)
 - [release-please](https://github.com/googleapis/release-please) (Google)
 - [Conventional Commits](https://www.conventionalcommits.org/) (Conventional Commits)
+- [Changesets と npm Trusted Publishing を利用して npm パッケージ公開フローを作った](https://zenn.dev/su3_hokkaido/articles/2026-10-24_publish_npm_package) (Zenn、Changesets + OIDC 公開の `permissions` 構成と初回手動公開の制約。Qiita に同一著者のクロスポストあり) ※2026-10-24 fetch
 
-**バージョン**: パターン
+> "これがあるとジョブが OIDC トークンを取得でき、npm へのログインがトークンなしで済みます。"
+> ([Changesets と npm Trusted Publishing を利用して npm パッケージ公開フローを作った](https://zenn.dev/su3_hokkaido/articles/2026-10-24_publish_npm_package), セクション "4. リリース用のワークフローを書く") ※2026-10-24に実際にfetch成功
+
+**バージョン**: パターン（npm Trusted Publishing 部分は OIDC 対応の npm CLI が前提）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-24
 
 ---
 

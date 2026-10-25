@@ -339,3 +339,51 @@ tools = [select_payment_method, fill_card_form, fill_address_form, submit_paymen
 **最終更新**: 2026-09-23
 
 ---
+
+### 8. エージェントへの権限委譲は「承認したプラン単位」のスコープ付き短命トークンで行い、ユーザー自身の権限を超えさせない
+
+本番環境にアクセスするエージェントは、読み取り専用を既定にし、書き込みや外部操作は明示承認を必須にする。権限は個々のステップではなくプラン全体（作業内容と必要スコープ）に対して承認させ、承認後は作業単位で発行した短命・スコープ限定の資格情報だけで動かす。Vercel が自社の Vercel Agent で採用している設計。
+
+**根拠**:
+- アクセスは認可システムが認識する名前付きの capability（スコープ）で定義する。例: 調査は `read:deployment`、再デプロイは `read-write:deployment` と、タスクに合う最小スコープだけを要求する
+- 委任された権限は常にユーザーの既存ロール権限が上限。`approving a plan cannot grant access the user does not have`（承認で権限昇格できない）
+- 資格情報は承認済み作業単位ごとに短命で発行し、API 側で毎リクエストのスコープ検査を行う。使用前にプランが有効かを再確認し、停止・期限切れのプランが動けないようにする
+- スコープ名は共有レジストリで検証し、未知・旧式のスコープはプラン作成時に拒否する（暗黙に広い権限へフォールバックさせない）
+- 外部プロバイダー向け資格情報も特定リソース（例: 単一リポジトリ）に限定する
+- スコープ付き資格情報だけでは不十分。許可された操作でも害は起こりうるため、サンドボックス・ネットワークポリシー・シークレット管理・レート制限・監査ログを重ねる（Rule #4 のサンドボックス最小権限、`claude-code.md` Rule #25 の承認ゲートと併用）
+
+**コード例（概念）**:
+```typescript
+// Good: プラン単位で最小スコープを宣言し、ユーザー権限との積集合で資格情報を発行する
+type Scope = 'read:deployment' | 'read-write:deployment'; // 共有レジストリで定義
+
+function issueCredential(plan: ApprovedPlan, user: User) {
+  const unknown = plan.scopes.filter((s) => !SCOPE_REGISTRY.has(s));
+  if (unknown.length) throw new Error(`unknown scope: ${unknown.join(',')}`); // 計画時に拒否
+  const granted = plan.scopes.filter((s) => user.can(s)); // ユーザー権限が上限
+  return mintToken({ scopes: granted, planId: plan.id, ttlSeconds: 900 });
+}
+
+// 使用時: API は毎回スコープを検査し、プランが有効かも再確認する
+// Bad: 全権限の長期トークンをエージェントに渡し、プロンプトで「書き込まないで」と指示する
+```
+
+**アンチパターン**:
+- 承認ダイアログを個別ステップごとに出し、利用者が全体の影響を判断できないまま権限を積み上げさせる
+- エージェント用に管理者相当の共有トークンを発行し、ユーザー本人の権限を超えて操作できる状態にする
+
+**出典引用**:
+> "Access is defined by scopes, the named capabilities recognized by the Vercel authorization system."
+> ([How Vercel Agent accesses production safely](https://vercel.com/blog/how-vercel-agent-accesses-production-safely), セクション "The plan determines the permissions") ※2026-10-24に実際にfetch成功
+
+> "approving a plan cannot grant access the user does not have."
+> ([How Vercel Agent accesses production safely](https://vercel.com/blog/how-vercel-agent-accesses-production-safely), セクション "Vercel Agent can only use permissions the user already has") ※2026-10-24に実際にfetch成功
+
+**出典**:
+- [How Vercel Agent accesses production safely](https://vercel.com/blog/how-vercel-agent-accesses-production-safely) (Vercel 公式ブログ、2026-10-23公開。プラン単位の承認・名前付きスコープ・短命トークン) ※2026-10-24に実際にfetch成功
+
+**バージョン**: 設計パターン（Vercel Agent、2026年10月時点）。コード例は記事の原則を示す概念例で、Vercel の実 API ではない
+**確信度**: 高（Vercel 公式ブログ）
+**最終更新**: 2026-10-24
+
+---

@@ -725,6 +725,8 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **危険操作のブロックだけでなく、ノイズの多いプラグイン/Skill 呼び出しをゲートする用途にも同じ `PreToolUse` の型が使える**: `matcher: "Skill"` で特定 Skill の呼び出しをフックし、`permissionDecision: "ask"` ではなく `deny` を返しつつメッセージで Claude に `AskUserQuestion` の呼び出しを促すことで、実行を完全停止させずに軽量な確認フローを挟める。制御点を1箇所（フック側）に集約するのが要点
 - **`Bash("rm*")` の deny 文字列一致は `find <dir> -delete` や `rm -r -f` のような表記ゆれ・別コマンドですり抜ける**: 特定コマンド文字列の deny ルール／PreToolUse 正規表現は「列挙した分だけ」しか守れないという弱点が、削除コマンドでも再現する。`find` サブコマンドは `rm` の deny リストに引っかからず、`-delete` オプションで同等の破壊操作ができてしまう。根本対策は `.claude/settings.json` の `sandbox.filesystem.denyWrite` でディレクトリ単位の書き込みを OS レベルで拒否することで、コマンド名の列挙に依存しない防御にする
 - **`permissions.deny` はコマンド文字列にマッチするため等価な別形式で抜けられ、フック自体も fail-closed にしないと素通りする**: `Bash(git push *)` は `git -C . push origin main` / `git -c push.default=current push ...` / `git 'push' ...` にマッチしない。PreToolUse フックは `tool_input.command` を解析して `-C`/`-c` オプション・`env`/`timeout` 等の前置・`bash -c` や `$( )` の中身まで再検査し、`exit 2` で止める。フック自体のクラッシュ・タイムアウト・パス誤りでもコマンドが通らないよう、フックは fail-closed にする（v2.1.295+ の `"onFailure": "block"`）。must-block / must-allow のテスト一覧でフックを検証し、パーサをわざと壊してテストが落ちることも確認する。なお `.claude/settings.json` とフックスクリプトは AI 自身が編集できる通常ファイルなので、最終的な防壁は専用 OS アカウント（push 資格情報なし）とブランチ保護で担保する
+- **ガードは「確実に判定できる形でだけ止め」、判定不能な部分は通す**: 誤ブロックは作業を止めるだけでなく、止められた人を「確かめずにすり抜ける」方向へ押すため、ガードが無いより悪くなりうる。ファイルの判定は付随テキストの部分一致ではなく、ファイル自身が宣言するマーカーで行い、情報表示だけのフックは block ではなく warn にする。各ガードには「止めるべき入力」と「通すべき入力」の両方のテストを書く（誤ブロック実例: リダイレクトの誤解析、変数名を漏洩値と誤認、引用符内の文字列をコマンド扱い、読み取り専用コマンドのキーワード誤マッチ）
+- **ルールは「不変条件（hook で強制）」と「推奨（CLAUDE.md）」に分け、同じ間違いが繰り返された時点で hook を足す**: 自然言語の指示は全て「お願い」であり、`.env` 読み取りや生成物ディレクトリ編集のような破られて困る数カ所だけを PreToolUse hook で `exit 2` + stderr に代替手段を説明して機械的に守る
 
 ```json
 {
@@ -1001,9 +1003,18 @@ fi
 > "CLAUDE.md はソフトガード(読まれる前提の文脈)、Hooks はハードガード(ツール実行の手前で機械的に止まる仕組み)です。"
 > ([CLAUDE.mdはソフトガード、Hooksはハードガード](https://zenn.dev/m16_llc/articles/claude-code-hooks-hard-guardrails), セクション "3段構えにする 〜ソフトガード・ハードガード・CI〜") ※2026-09-22に実際にfetch成功
 
+- [誤って止めるガードは、無いより悪い。Claude Codeのhooksを止めすぎない作り方](https://zenn.dev/waiteu/articles/guard-without-false-blocks) (Zenn、誤ブロック実例5件と「確実な所だけ止める」「両側テスト」の設計原則) ※2026-10-24 fetch
+- [Claude Codeにハーネスを導入した — 不変条件はHookで強制する](https://zenn.dev/pythona/articles/claude-code-harness-first-setup) (Zenn、不変条件=hook / 推奨=CLAUDE.md の分離と PreToolUse `exit 2` 構成) ※2026-10-24 fetch
+
+> "確実に判定できる形でだけ止め、本当に判定できない部分は通す"
+> ([誤って止めるガードは、無いより悪い。Claude Codeのhooksを止めすぎない作り方](https://zenn.dev/waiteu/articles/guard-without-false-blocks), セクション "判定できない所だけ止めるのをやめる判断") ※2026-10-24に実際にfetch成功
+
+> "「お願い」を増やすより、破られたら困る数カ所だけ機械で守る。"
+> ([Claude Codeにハーネスを導入した — 不変条件はHookで強制する](https://zenn.dev/pythona/articles/claude-code-harness-first-setup), セクション "まとめ") ※2026-10-24に実際にfetch成功
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-10-12
+**最終更新**: 2026-10-24
 
 ---
 
