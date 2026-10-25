@@ -606,6 +606,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - **OIDC 導入後も `sub` クレーム自体の形式変更を追う必要がある**: GitHub は 2026-07-15 以降に作成・rename されたリポジトリで `sub` のデフォルト形式を「オーナー名/リポジトリ名（可変）」から「オーナーID/リポジトリID を付加した immutable subject claim」に変更した（例: `repo:octocat/my-repo:ref:refs/heads/main` → `repo:octocat@123456/my-repo@456789:ref:refs/heads/main`）。目的はリポジトリ名の再利用（削除→別オーナーが同名で再作成）によるなりすましを防ぐこと。信頼ポリシーの `sub` 条件を名前ベースで書いている既存環境は、移行時に**新形式を先に追加し旧形式を残したまま切り替え、最後に旧形式を削除する**順序を守らないと、切り替え中に正当なワークフローの認証が失敗する
 - **EC2 への運用アクセスにも同じ「長期クレデンシャルを持たない」原則を延長できる**: OIDC で発行した短命トークンで IAM ロールを assume し、そのロールの権限で `aws ssm send-command` を実行すれば、SSH ポート開放・EC2 固定 IP・GitHub Secrets への長期 SSH 秘密鍵保存のいずれも不要になる。SSM Agent 経由の内部通信のみで完結するため、インバウンドのネットワーク経路自体が不要になる点が OIDC 単体（AssumeRole のみ）との違い
 - **フェデレーションは「侵害されたジョブ」を信頼できるものにしない**: OWASP は、信頼ポリシー（どの外部ワークロードが資格情報を取得できるか）と権限ポリシー（その資格情報で何ができるか）を別々に設計するよう求めている。`iss` / `aud` / `sub` を厳密に絞っても、デプロイ用ロールが管理者権限なら補えない。`id-token: write` は**トークン要求を許可するだけ**で、クラウド権限そのものは付与しないため、クラウドアクセスが必要なジョブ単位で付ける。また発行されたクラウド資格情報はジョブや OIDC トークンの終了とは別の有効期限を持つ。信頼できない Pull Request のコードは、本番アクセスを取得できるジョブから切り離す
+- **OIDC 未対応のデプロイ先では「長期トークン + 保護 environment」で露出面を狭める**: Vercel は Marketplace ベンダーに長期 API キーから OIDC・短命トークンへの移行を求めているが、公式の GitHub Actions デプロイガイドは依然 `VERCEL_TOKEN` シークレットを要求する。OIDC が使えるまでは、トークンに有効期限を設定し、required reviewers 付きの `environment` に置き、fork 起点のジョブから隔離し、定期的にローテーションする。OIDC は「誰がシークレットを読めるか」ではなく「どの workflow がポリシーに一致して動けるか」に信頼判断を移すため、信頼ポリシーが緩いと静的シークレットと同じ露出になる
 
 **コード例**:
 ```yaml
@@ -770,13 +771,14 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 **出典（追加）**:
 - [Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392) (dev.to leobaniak、Docker Hub版OIDC federationの`permissions.id-token:write`+`docker/login-action`構成) ※2026-08-01に実際にfetch成功
 - [Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action) (Vercel Changelog公式、`vercel/vcr-action/login@v1`によるVCR版OIDCログイン) ※2026-09-26に実際にfetch成功
+- [Vercel wants static credentials gone. Its own GitHub Actions deploy still needs one.](https://dev.to/leobaniak/vercel-wants-static-credentials-gone-its-own-github-actions-deploy-still-needs-one-1gj6) (dev.to leobaniak、OIDC 未対応デプロイ先での暫定緩和策: 保護 environment・期限設定・fork 隔離) ※2026-10-24 fetch
 
 > "It exchanges the workflow's OIDC token for a short-lived Vercel access token, then uses that token to log in to vcr.vercel.com."
 > ([Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action), セクション本文) ※2026-09-26に実際にfetch成功
 
 **バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
 **確信度**: 高
-**最終更新**: 2026-10-03
+**最終更新**: 2026-10-24
 
 ---
 
@@ -1257,3 +1259,59 @@ runs:
 **バージョン**: GitHub Actions ランナー（2026-09-23 以降）
 **確信度**: 高
 **最終更新**: 2026-10-01
+
+---
+
+### 16. GitHub Actions の依存は workflow dependency lockfile（`actions.lock`）で固定し、CI で鮮度を検証する（public preview）
+
+タグやブランチは後から動かせるため、同じ `uses:` 参照でも次回実行時に別コードを指しうる。GitHub が 2026-10-14 に public preview で公開した workflow dependency lockfile は、レビュー済みのコミットを `.github/workflows/actions.lock` に記録し、workflow ファイル側は通常の参照のまま実行時は記録済みコミットを使わせる。Rule #9 の SHA ピン留めを `uses:` ごとに手で書き換える代わりに、推移的依存（アクション内部の `uses:`）や reusable workflow まで一括で固定できる。
+
+**根拠**:
+- 公式 changelog: ロックは「依存が安全か」を判定しない。`Locking does not determine whether the dependency itself is safe, so review dependencies before locking them.` — ロック前のレビューが前提
+- 第三者検証記事（dev.to）は、lockfile で固定した workflow ではインライン SHA ピン留めが不要になるとしている。ただし未 onboard の workflow は従来どおり完全長 SHA が必要で、workflow 単位で段階的に移行する（公式 changelog にこの位置づけの記載はない）
+- onboard 済み workflow は全依存に lockfile エントリが必要になり、未ロックのアクションを追加すると検証が失敗する（第三者検証で `--verify` が exit 1）
+- Dependabot version updates は onboard 済み workflow の lockfile エントリを同じ PR で再生成する。ロック更新が人手の作業にならない
+- lockfile は「差分を読む人がいて初めてセキュリティ統制になる」。レビュー時は変更された `commit`、`owner_id` / `repo_id` の変化、新規の推移的 `uses:`、`workflows` セクションから消えた workflow を確認する
+- 制約（preview 時点、第三者検証記事による）: GHES 非対応、コンテナイメージのタグは未ロック、第三者検証 v0.2.0 では job レベルの reusable workflow 呼び出しが記録されなかったため、その呼び出しは SHA ピン留めを併用する
+
+**コード例**:
+```bash
+# Good: gh 拡張を導入し、workflow を 1 本ずつ onboard して lockfile を生成・コミット
+gh extension install github/gh-actions-lock
+# 生成物: .github/workflows/actions.lock（手編集しない）
+
+# CI では lockfile が最新かを変更なしで検証する（未ロックの依存があると exit 1。第三者検証記事の手順で、公式 changelog には記載なし）
+gh actions-lock --verify
+```
+
+```yaml
+# .github/workflows/actions.lock（生成物の抜粋）
+workflows:
+    '.github/workflows/release.yml':
+        - 'actions/checkout@v4.4.0'
+dependencies:
+    'actions/checkout@v4.4.0':
+        ref: 'v4.4.0'
+        commit: 'sha1-11d5960a326750d5838078e36cf38b85af677262'
+        owner_id: ...
+        repo_id: ...
+```
+
+**アンチパターン**:
+- lockfile を生成しただけでレビューせずマージする（悪意ある更新を固定化しうる）
+- onboard していない workflow があるのに「SHA ピン留めは不要になった」と判断して Rule #9 を外す
+
+**出典引用**:
+> "Locking does not determine whether the dependency itself is safe, so review dependencies before locking them."
+> ([GitHub Actions: Workflow lockfiles in public preview](https://github.blog/changelog/2026-10-14-github-actions-workflow-lockfiles-in-public-preview/), GitHub changelog 本文) ※2026-10-24に実際にfetch成功
+
+> "A lockfile is only a security control if someone reads the diff."
+> ([What Are GitHub Actions Lockfiles, and Do They Replace SHA Pinning?](https://dev.to/alisa_hester_1/what-are-github-actions-lockfiles-and-do-they-replace-sha-pinning-3kg0), セクション "Verifying and reviewing changes") ※2026-10-24に実際にfetch成功
+
+**出典**:
+- [GitHub Actions: Workflow lockfiles in public preview](https://github.blog/changelog/2026-10-14-github-actions-workflow-lockfiles-in-public-preview/) (GitHub Changelog 公式、機能概要・有効化手順・対象プラン) ※2026-10-24に実際にfetch成功
+- [What Are GitHub Actions Lockfiles, and Do They Replace SHA Pinning?](https://dev.to/alisa_hester_1/what-are-github-actions-lockfiles-and-do-they-replace-sha-pinning-3kg0) (dev.to、`--verify` 検証・レビュー観点・reusable workflow の制約を第三者検証) ※2026-10-24に実際にfetch成功
+
+**バージョン**: GitHub Actions workflow dependency lockfiles（public preview、2026-10-14〜）/ `gh-actions-lock` 拡張（pre-1.0）
+**確信度**: 中（機能の存在とロック前レビューの前提は GitHub 公式 changelog。`--verify` や制約の詳細は第三者検証記事のみ。preview 機能のため仕様変更の可能性あり）
+**最終更新**: 2026-10-24
