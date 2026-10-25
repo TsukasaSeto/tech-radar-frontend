@@ -2926,6 +2926,7 @@ hookのラッパースクリプトで実行時間を JSONL ログに記録し、
 - 同期フックは完了するまで Claude Code をブロックする。`async: true` フックはバックグラウンド実行のためユーザー体験に影響しない
 - 平均値（mean）はゾンビプロセスや sleep 状態の外れ値で歪む。p95 が「日常的に体験する遅延」を正直に示す
 - どのフックが遅いか特定できなければ最適化対象を絞れない。ラッパーで全フックを一律計測するのが最も低コスト
+- 空振りするフックも実行系の起動コストを払う（node 約100ms / python3 約80ms / bash 約17ms / jq 約15ms、Intel Mac 実測）。同期の Pre/PostToolUse に登録すると 1 回のツール呼び出しで前後 2 回・直列に効くため、連携先が停止済みの「登録だけ残ったフック」は削除する。またフック定義の `timeout` の単位は**秒**であり、`"timeout": 5000` のようなミリ秒取り違え（実質 5000 秒）を 3 桁以上の値として棚卸しで検出する
 
 **コード例（ラッパースクリプト）**:
 ```bash
@@ -3020,10 +3021,13 @@ if pattern.MatchString(line) {
 **出典**:
 - [Claude Codeのhookが遅い原因を特定する ― wrap 1行でp95を計測](https://zenn.dev/bokuwalily/articles/hook-latency-profiling) (Zenn)
 - [Claude Code hookが遅い原因はpydanticだった ― 起動コストを実測してGoに移植したら約8割削減できた話](https://qiita.com/nomurasan/items/c227b092ba30d18aa8a1) (Qiita、`python3 -X importtime` によるroot cause診断とGo移植による約80%削減の実測。39日間・244万回のフック呼び出しで年間約550 CPU時間の削減) ※2026-08-19 fetch
+- [Claude Codeのフック監査で見つけた、空振りで約200msとtimeoutの1000倍ずれ](https://zenn.dev/starken/articles/claude-code-hook-cost-and-timeout-unit) (Zenn、空振りフックの起動コスト実測と `timeout` 秒単位の取り違え、Claude Code 2.1.261/2.1.270) ※2026-09-29 fetch
+  > "何もしないのだから時間もかからない、と私は考えていました。" / "node の起動だけで約100msかかります。スクリプトの中身が exit(0) だけでも、この時間は減りません。"
+  > ([同記事](https://zenn.dev/starken/articles/claude-code-hook-cost-and-timeout-unit), セクション "何が起きたか" / "どう測ったか")
 
 **バージョン**: Claude Code（全バージョン）、bash 5+ / Python 3 / Go
 **確信度**: 中
-**最終更新**: 2026-08-19
+**最終更新**: 2026-09-29
 
 ---
 
