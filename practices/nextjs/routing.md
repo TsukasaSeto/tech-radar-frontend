@@ -440,6 +440,7 @@ export async function middleware(request: NextRequest) {
 Next.js 16.3 Preview で導入された「Instant Navigations」を使うと、サーバー駆動モデルを維持しながら SPA と同等のクリック即応性を得られる。
 ルートが `<Suspense>` でストリームするか `"use cache"` でキャッシュしていれば、クリック後にサーバーレスポンスを待たずにシェルが即座に表示される。
 `partialPrefetching: true` を有効化すると、ビューポート内の全リンクに対して個別プリフェッチする代わりに、**ルートごとに再利用可能なシェルを 1 回だけプリフェッチ**するため、プリフェッチリクエスト数が大幅に削減される。
+Next.js 16.4 以降は `create-next-app` が両フラグを既定で有効化する。大きなリスト・グリッドでの prefetch の昇格は Rule #13、低優先度コンテンツを遷移後に回す方法は Rule #12 を参照。
 
 **根拠**:
 - サーバー駆動アプリのナビゲーションが「遅く感じる」根本原因は、クリック後のネットワーク往復とサーバー処理の 2 つ。`<Suspense>`（ストリーム）か `"use cache"`（キャッシュ）でサーバー処理ブロックを排除し、シェルプリフェッチでネットワーク往復を隠蔽することで両方を解消する
@@ -449,7 +450,7 @@ Next.js 16.3 Preview で導入された「Instant Navigations」を使うと、�
 
 **コード例**:
 ```ts
-// next.config.ts — 両フラグを有効化（将来のメジャーバージョンでデフォルト化予定）
+// next.config.ts — 両フラグを有効化（Next.js 16.4 以降の create-next-app では既定で有効）
 import type { NextConfig } from 'next';
 const nextConfig: NextConfig = {
   cacheComponents: true,
@@ -501,9 +502,13 @@ test('product title is immediately visible', async ({ page }) => {
 > "Instead of prefetching a page *per link*, Next.js will now prefetch a reusable shell *per route*."
 > ([Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations), セクション "Rethinking prefetching") ※2026-06-25に実際にfetch成功
 
-**バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須）
+**出典**:
+- [Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations) (Next.js 公式ブログ)
+- [Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4) (Next.js 公式ブログ、16.4 で両フラグが `create-next-app` の既定になった点) ※2026-10-17 fetch
+
+**バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須。16.4+ は `create-next-app` の既定）
 **確信度**: 高（Next.js 公式ブログ）
-**最終更新**: 2026-06-25
+**最終更新**: 2026-10-17
 
 ---
 
