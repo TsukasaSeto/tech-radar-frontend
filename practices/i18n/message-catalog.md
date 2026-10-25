@@ -14,6 +14,7 @@ JavaScript 側で if-else しない。
 - if-else でロジックを組むと多言語化で必ず破綻する
 - ICU MessageFormat は Unicode CLDR の plural rules を準拠して扱う標準フォーマット
 - FormatJS / next-intl / i18next-icu などほぼ全ての主要 i18n ライブラリが対応
+- ゼロの扱いも言語で分かれる（英語は 0 を複数扱い、フランス語は 0 を単数扱いにする等）。`plural` カテゴリを対象言語ごとに正しく網羅しないと、未対応カテゴリが `other` へ静かにフォールバックし不自然な文言のまま気づかれずに残る
 
 **コード例（ICU MessageFormat）**:
 ```json
@@ -84,15 +85,20 @@ t('messages.unread', { count });
 - `{n, number, ::currency/USD}` — 数値・通貨フォーマット
 - `{n, number, percent}` — パーセンテージ
 
+**出典引用**:
+> "English treats zero as plural. French treats it as singular."
+> ([Zero is singular in French, and five other translation bugs that never throw](https://dev.to/catidegla/zero-is-singular-in-french-and-five-other-translation-bugs-that-never-throw-2gpi), セクション "Zero Plurality") ※2026-09-10に実際にfetch成功
+
 **出典**:
 - [ICU MessageFormat](https://unicode-org.github.io/icu/userguide/format_parse/messages/) (Unicode)
 - [next-intl: Messages](https://next-intl-docs.vercel.app/docs/usage/messages) (next-intl)
 - [FormatJS: ICU Message Syntax](https://formatjs.io/docs/core-concepts/icu-syntax) (FormatJS)
 - [Unicode CLDR: Plural Rules](https://cldr.unicode.org/index/cldr-spec/plural-rules) (Unicode CLDR)
+- [Zero is singular in French, and five other translation bugs that never throw](https://dev.to/catidegla/zero-is-singular-in-french-and-five-other-translation-bugs-that-never-throw-2gpi) (dev.to、ゼロの単複判定・空文字列がフォールバックを迂回する事例等、実運用で踏みやすい6つの落とし穴) ※2026-09-10 fetch
 
 **バージョン**: ICU MessageFormat 標準, next-intl 3+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-09-10
 
 ---
 
