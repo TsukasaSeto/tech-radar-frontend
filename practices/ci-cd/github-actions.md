@@ -915,6 +915,7 @@ rules:
 - 1台の runner で `workers` を増やしても CPU / メモリの上限は変わらないため、`matrix.shard` で runner ごと分散させたほうが実効速度が上がる（総 runner-minutes は増えるが wall-clock は縮む、というトレードオフを意図的に取る）
 - CI では Vite を `dev` サーバーではなく `preview` サーバーで起動すると、ランタイムのモジュール変換オーバーヘッドを避けられる
 - 固定秒数の `sleep` ではなく実際のヘルスチェックで Docker / アプリの起動完了を待つと、無駄な待ち時間と不安定さの両方を減らせる
+- ARM64 向け Docker イメージを x86_64 runner + QEMU エミュレーションでビルドすると、QEMU が ARM 命令を x86 命令へ逐次変換するオーバーヘッドが CPU バウンドな処理（`next build` 等）に直撃する。GitHub Actions のネイティブ ARM64 runner（`ubuntu-24.04-arm` 等）に切り替えて QEMU を撤去すると、エミュレーションのオーバーヘッドそのものがなくなる
 
 **テストシャーディング**:
 ```yaml
@@ -973,14 +974,18 @@ jobs:
 > "一台の GitHub Actions runner で workers を増やしても、CPU とメモリの上限は変わりません。"
 > ([Playwright の E2E CI を4分割し、3時間13分から25分に短縮した](https://zenn.dev/thaddeusjiang/articles/ci-e2e-runtime-optimization), セクション "workers ではなく sharding を使った理由") ※2026-08-21に実際にfetch成功
 
+> "`next build` のステップだけで1106秒(≒ 約19分)かかっている" / "QEMUはARM命令をx86命令に逐次変換して実行するので、CPU実行そのものにオーバーヘッドが乗る"
+> ([Next.jsのDockerビルド時間を約19分短縮した話](https://zenn.dev/rb_engineering/articles/b642bdb5206cb9), セクション "紐解いていく" / "なぜQEMUを使っていたのか") ※2026-09-11に実際にfetch成功
+
 **出典**:
 - [CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques) (Zenn) ※2026-06-04 fetch
 - [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式、テスト並列分割)
 - [Playwright の E2E CI を4分割し、3時間13分から25分に短縮した](https://zenn.dev/thaddeusjiang/articles/ci-e2e-runtime-optimization) (Zenn、3時間13分→25分の実測改善、Vite preview サーバー化とヘルスチェック導入を含む) ※2026-08-21 fetch
+- [Next.jsのDockerビルド時間を約19分短縮した話](https://zenn.dev/rb_engineering/articles/b642bdb5206cb9) (Zenn、QEMU エミュレーションからネイティブ ARM64 runner への切り替えで `next build` を含むビルド&プッシュが24m43s→5m35sに短縮) ※2026-09-11 fetch
 
 **バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v3
-**確信度**: 中（コミュニティ記事、実績多数）
-**最終更新**: 2026-08-21
+**確信度**: 中(コミュニティ記事、実績多数)
+**最終更新**: 2026-09-11
 
 ---
 
