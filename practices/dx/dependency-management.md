@@ -1,7 +1,7 @@
 # 依存管理のベストプラクティス
 
-> **役割分担**: このファイルは **環境再現性 / 開発体験**（lockfile 戦略、packageManager の固定、未使用検出、パッチ管理、更新フロー）を扱う。
-> **脆弱性スキャン / supply chain attack 対策 / 自動緊急アップデート**は [`security/dependency-security.md`](../security/dependency-security.md) を参照。
+> **役割分担**: このファイルは **環境再現性 / 開発体験**（lockfile 戦略、packageManager の固定、未使用検出、パッチ管理、range の決め方と major 更新の進め方）を扱う。lockfile / `packageManager` / Corepack は #1 が正本。
+> **脆弱性スキャン / supply chain attack 対策 / 自動更新 PR（Renovate / Dependabot）の設定と自動マージの範囲**は [`security/dependency-security.md`](../security/dependency-security.md) を参照（更新ポリシーの正本は同 #2）。
 > lockfile 周りは両ファイルで触れるが、**「正しく固定する」は dx 側、「壊れた依存を検知・封じ込める」は security 側** という分担を基本にする。
 
 `package.json` の `dependencies` は本番に乗る代物。雑な追加・放置がそのまま負債とセキュリティリスクになる。
@@ -16,18 +16,20 @@ CI / 本番 / ローカルで完全に同じ依存ツリーが構築されるこ
 **根拠**:
 - 「ローカルで動くが CI で壊れる」「先週は動いたが今日は動かない」の主因は依存バージョンの非決定性
 - lockfile は依存パッケージ・transitive deps・パッチを完全固定する
-- `packageManager` フィールド + Corepack で pnpm 自体のバージョンも固定可能
+- `packageManager` フィールドで pnpm 自体のバージョンも固定できる。pnpm 11 以降は、宣言された版を pnpm 自身が取得して実行する（`pmOnFail: download` が既定）ので、Corepack は必須ではない
+- Corepack は Node.js 16.9.0（14 系は 14.19.0）から 24.x まで同梱されているが、Node.js 25 以降は同梱されない。使う場合は `npm install -g corepack` で別途入れる
 - 同じ commit から make したビルドが常に同じ結果になる reproducibility が CI / 監査の前提
 - `package.json` だけ編集して `pnpm install` を実行し忘れると、lockfile と不整合を起こし `--frozen-lockfile` の CI が全ジョブ同時に fail する実例が報告されている（1パッケージの削除忘れで 7 ジョブ同時 fail）
+- lockfile がもたらすセキュリティ上の効果（dependency confusion への耐性など）は [`security/dependency-security.md`](../security/dependency-security.md) #3 を参照
 
 **`package.json`**:
 ```json
 {
   "name": "myapp",
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@11.28.8",
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
   },
   "scripts": {
     "preinstall": "npx only-allow pnpm"
@@ -35,42 +37,56 @@ CI / 本番 / ローカルで完全に同じ依存ツリーが構築されるこ
 }
 ```
 
-**Corepack で CLI 自動切替**:
+**pnpm の版の切り替え**:
 ```bash
-# Corepack 有効化（Node.js 16.9+ 同梱）
-corepack enable
+# pnpm 11 以降: packageManager の版を pnpm 自身が取得して実行する
+pnpm install  # → 11.28.8 で実行される
 
-# packageManager フィールドに従って自動で pnpm を実行
-pnpm install  # → 9.12.0 で実行される
+# Corepack を使う場合（Node.js 25 以降は同梱されないので先に入れる）
+npm install -g corepack
+corepack enable
 ```
+
+**コマンド対応表**:
+| ツール | ローカル install | CI install |
+|---|---|---|
+| npm | `npm install` | `npm ci` |
+| pnpm | `pnpm install` | `pnpm install --frozen-lockfile` |
+| yarn | `yarn install` | `yarn install --immutable`（Berry） |
+| bun | `bun install` | `bun install --frozen-lockfile` |
+
+pnpm は CI 環境を検出すると、lockfile がある場合は `--frozen-lockfile` を既定で有効にするが、意図を明示するために書いておく。
 
 **CI で完全一致を強制**:
 ```yaml
 # .github/workflows/ci.yml
-- uses: pnpm/action-setup@v3
-  # version 指定不要、packageManager フィールドから読む
-
-- uses: actions/setup-node@v4
-  with:
-    node-version-file: '.nvmrc'  # or 'package.json' で engines.node を読む
-    cache: pnpm
+- uses: actions/checkout@v7
+- uses: actions/setup-node@v7
+  with: { node-version-file: '.nvmrc' }
+# 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
+- uses: pnpm/setup@v3          # pnpm v11+ を package.json の packageManager のバージョンで導入
+  with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次のステップで明示する
 
 - run: pnpm install --frozen-lockfile
   # lockfile と package.json が不一致なら fail
 ```
 
-**`.npmrc` で挙動を強制**:
-```ini
-# .npmrc
-auto-install-peers=true
-strict-peer-dependencies=true
-shamefully-hoist=false
-node-linker=isolated  # symlink ベース（デフォルト）
-prefer-frozen-lockfile=true
+pnpm 11 以降の GitHub Actions では、`pnpm/action-setup` の後継の `pnpm/setup` を使う（`pnpm/action-setup` は pnpm 10 以前向け）。`actions/setup-node` の `cache: pnpm` は、pnpm が先に PATH にないと失敗するので使わず、キャッシュは `pnpm/setup` の `cache: true` で行う。
 
-# pnpm でなければエラー
-engine-strict=true
+**`pnpm-workspace.yaml` で挙動を強制**:
+```yaml
+# pnpm-workspace.yaml（pnpm 11 は認証・レジストリ以外の設定を .npmrc から読まない）
+autoInstallPeers: true
+strictPeerDependencies: true
+shamefullyHoist: false
+nodeLinker: isolated  # symlink ベース（デフォルト）
+preferFrozenLockfile: true
+
+# engines.node を満たさない依存パッケージのインストールを拒否する
+engineStrict: true
 ```
+
+`.npmrc` には認証・レジストリの設定だけを書く。pnpm 10 以前は上記を `.npmrc` に kebab-case（`auto-install-peers=true` など）で書いていた。設定場所の変更で起きる CI 専用の失敗は [`security/dependency-security.md`](../security/dependency-security.md) #11 を参照。
 
 **`only-allow` で他のパッケージマネージャを禁止**:
 ```bash
@@ -81,7 +97,7 @@ npx only-allow pnpm
 **`.nvmrc` でも Node.js バージョン管理**:
 ```
 # .nvmrc
-20.18.0
+24.22.1
 ```
 
 Volta を使う場合:
@@ -89,8 +105,8 @@ Volta を使う場合:
 // package.json
 {
   "volta": {
-    "node": "20.18.0",
-    "pnpm": "9.12.0"
+    "node": "24.22.1",
+    "pnpm": "11.28.8"
   }
 }
 ```
@@ -103,27 +119,47 @@ git checkout --theirs pnpm-lock.yaml
 pnpm install
 ```
 
+pnpm は競合マーカーの入った `pnpm-lock.yaml` も `pnpm install` で自動解消できるが、どちらの版が採られたかは commit 前に diff で確認する。壊れたエントリは `pnpm install --fix-lockfile` で直す。
+
 **pre-commit hook で unsync を検知する**（`package.json` の編集忘れ対策）:
 ```bash
 # .husky/pre-commit
-# package.json が staged なのに pnpm-lock.yaml が staged されていなければ commit を止める
-if git diff --cached --name-only | grep -q '^package\.json$'; then
-  if ! git diff --cached --name-only | grep -q '^pnpm-lock\.yaml$'; then
-    echo "package.json を変更しましたが pnpm-lock.yaml が未更新です。'pnpm install' を実行してください。"
+# package.json が staged のときだけ、lockfile が依存定義と一致しているかを検証する
+if git diff --cached --name-only | grep -qE '(^|/)package\.json$'; then
+  if ! pnpm install --frozen-lockfile > /dev/null; then
+    echo "pnpm-lock.yaml が package.json の依存定義と一致しません。'pnpm install' を実行してください。"
+    exit 1
+  fi
+  if ! git diff --quiet -- pnpm-lock.yaml; then
+    echo "pnpm-lock.yaml の変更が stage されていません。'git add pnpm-lock.yaml' を実行してください。"
     exit 1
   fi
 fi
 ```
+staged のファイル名だけで判定すると、`scripts` や `description` だけを変えた正常な commit まで止めてしまう。依存定義との整合は `--frozen-lockfile` に判定させる。
 CI が fail してから気づくより、ローカルの commit 時点で検知した方が手戻りが小さい。CI ログを読む際も「Install dependencies のステップ」から遡って原因を特定する。
 
 **判断軸**:
-- 新規プロジェクト → pnpm + Corepack + `packageManager` フィールド
+- 新規プロジェクト → pnpm + `packageManager` フィールド（pnpm 11 以降は Corepack なしで版が切り替わる）
 - 既存プロジェクト（npm / yarn 採用）→ 既存を維持、ただし lockfile + `packageManager` は徹底
 - Bun を使うなら `bun install --frozen-lockfile` も同様にサポート
 
+**どのパッケージマネージャーを選ぶか**:
+- pnpm（推奨デフォルト）: disk 使用量最小、リンク経由のインストールで速い、モノレポ対応良好
+- npm: Node.js 同梱、追加インストール不要、CI で安定
+- yarn (Berry): Plug'n'Play で `node_modules` を使わない設計、上級者向け
+- bun: 速度最強だが、まだ実戦投入のリスク残る
+
 **出典**:
-- [Node.js: Corepack](https://nodejs.org/api/corepack.html) (Node.js)
-- [pnpm: Configuration](https://pnpm.io/configuration) (pnpm)
+- [Node.js: Corepack](https://nodejs.org/docs/latest-v24.x/api/corepack.html) (Node.js、「Corepack will no longer be distributed starting with Node.js v25」) ※2026-10-25 確認
+- [nodejs/corepack](https://github.com/nodejs/corepack) (Node.js、同梱範囲と `npm install -g corepack` による導入) ※2026-10-25 確認
+- [pnpm: Settings (pnpm-workspace.yaml)](https://pnpm.io/11.x/settings) (pnpm、「Only auth and registry settings are read from `.npmrc` files.」) ※2026-10-25 確認
+- [pnpm: pmOnFail](https://pnpm.io/11.x/settings/cli#pmonfail) (pnpm、v11.0.0 で追加、既定 `download`) ※2026-10-25 確認
+- [pnpm install](https://pnpm.io/11.x/cli/install) (pnpm、`--frozen-lockfile` は CI で lockfile があれば既定 true、`--fix-lockfile`) ※2026-10-25 確認
+- [pnpm: Continuous Integration](https://pnpm.io/11.x/continuous-integration) (pnpm、GitHub Actions は `pnpm/setup` を使う) ※2026-10-25 確認
+- [pnpm/setup](https://github.com/pnpm/setup) (pnpm、pnpm v11+ 専用。版は `packageManager` から読む。`cache` / `install` / `node-version-file` 入力) ※2026-10-25 確認
+- [actions/setup-node](https://github.com/actions/setup-node) (GitHub、`cache` を使うときは「Package manager should be pre-installed」) ※2026-10-25 確認
+- [pnpm: Working with Git](https://pnpm.io/11.x/git) (pnpm、lockfile の競合の自動解消) ※2026-10-25 確認
 - [packageManager 仕様](https://nodejs.org/docs/latest/api/packages.html#packagemanager) (Node.js)
 - [package.json 編集後の lockfile 同期忘れで CI 7 ジョブ同時 fail した話](https://qiita.com/teppei19980914/items/3be544670087e8cc0b33) (Qiita、Husky pre-commit での unsync 検知パターン) ※2026-07-05に実際にfetch成功
 
@@ -131,16 +167,16 @@ CI が fail してから気づくより、ローカルの commit 時点で検知
 > "package.json が staging にあるが、pnpm-lock.yaml がない → エラー"
 > ([package.json 編集後の lockfile 同期忘れで CI 7 ジョブ同時 fail した話](https://qiita.com/teppei19980914/items/3be544670087e8cc0b33), セクション "pre-commit hook で防ぐ") ※2026-07-05に実際にfetch成功
 
-**バージョン**: pnpm 9+, Node.js 20+
+**バージョン**: pnpm 11+（pnpm 10 以前は設定を `.npmrc` に書く）, Node.js 24+
 **確信度**: 高
-**最終更新**: 2026-07-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. メジャー / マイナー / パッチで更新ポリシーを区別する
 
 すべての更新を同じ重みで扱わない。
-パッチ（バグ修正）は自動マージ、メジャー（破壊的変更）は手動レビュー、マイナーは間。
+パッチ（バグ修正）は自動マージ、メジャー（破壊的変更）は手動レビュー、マイナーは依存の種類で分ける。
 
 **根拠**:
 - semver では `patch` は破壊的変更なし、`minor` は機能追加（後方互換）、`major` は破壊的変更
@@ -148,76 +184,8 @@ CI が fail してから気づくより、ローカルの commit 時点で検知
 - すべて手動レビューだと CI / レビュー疲労
 - 自動化と慎重さのバランスをポリシーで明文化する
 
-**更新ポリシーの 3 層**:
-
-| 更新タイプ | ポリシー | 例 |
-|---|---|---|
-| **patch** (1.2.3 → 1.2.4) | CI green なら自動マージ | bug fix |
-| **minor** (1.2.3 → 1.3.0) | 1 営業日後に自動マージ（人間レビュー機会あり） | 新機能追加 |
-| **major** (1.2.3 → 2.0.0) | 手動マージ必須、migration guide 確認 | breaking change |
-| **security** (任意) | 即時マージ（patch 扱いより優先） | 脆弱性修正 |
-
-**Renovate での実装**:
-```json
-{
-  "extends": ["config:recommended"],
-  "schedule": ["before 9am on monday"],
-
-  "packageRules": [
-    {
-      "matchUpdateTypes": ["patch", "pin", "digest"],
-      "automerge": true,
-      "automergeType": "branch"
-    },
-    {
-      "matchUpdateTypes": ["minor"],
-      "matchDepTypes": ["devDependencies"],
-      "automerge": true,
-      "minimumReleaseAge": "1 day"
-    },
-    {
-      "matchUpdateTypes": ["major"],
-      "automerge": false,
-      "labels": ["breaking-change"],
-      "reviewers": ["team:frontend-leads"]
-    },
-    {
-      "matchPackageNames": ["next", "react", "react-dom", "typescript"],
-      "matchUpdateTypes": ["major"],
-      "addLabels": ["framework-update"],
-      "minimumReleaseAge": "7 days"
-    },
-    {
-      "vulnerabilityAlerts": {
-        "enabled": true,
-        "schedule": ["at any time"],
-        "labels": ["security"],
-        "automerge": true
-      }
-    }
-  ]
-}
-```
-
-**Dependabot での実装**:
-```yaml
-# .github/dependabot.yml
-version: 2
-updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      patch-and-minor-devdeps:
-        dependency-type: "development"
-        update-types: ["patch", "minor"]
-    labels: ["dependencies"]
-    ignore:
-      - dependency-name: "next"
-        update-types: ["version-update:semver-major"]
-        # → major は別途手動 PR
-```
+**更新ポリシー**:
+更新タイプごとの自動マージの範囲（patch は公開から 7 日たった版を CI green で自動マージ、本番依存の minor と major は人がレビュー、セキュリティ修正は待機期間・スケジュールの外で即時 PR）と、Renovate / Dependabot の設定例は [`security/dependency-security.md`](../security/dependency-security.md) #2 を正本とする。ここでは range の決め方と、major 更新の進め方を扱う。
 
 **バージョン pinning vs ranged**:
 ```json
@@ -241,7 +209,8 @@ updates:
 **Renovate の `rangeStrategy`**:
 - `bump`: lockfile も含めて更新（推奨）
 - `pin`: 厳密バージョンに固定
-- `update-lockfile`: lockfile のみ更新（package.json は維持）
+- `update-lockfile`: range 内の更新は lockfile だけを更新する。range 外の更新は `replace` として扱い、package.json も書き換える
+- `in-range-only`: range 内の更新だけを lockfile に反映し、package.json は変えない（range 外の更新は捨てるので、気づかないまま古い版に留まりやすい）
 
 **Major upgrade の手順**:
 1. CHANGELOG / Migration Guide を読む
@@ -265,12 +234,13 @@ updates:
 **出典**:
 - [semver](https://semver.org/) (Semantic Versioning)
 - [Renovate Docs](https://docs.renovatebot.com/) (Mend)
+- [Renovate: Configuration Options](https://docs.renovatebot.com/configuration-options/) (Mend、`rangeStrategy` の `update-lockfile` / `in-range-only`) ※2026-10-25 確認
 - [Dependabot Docs](https://docs.github.com/en/code-security/dependabot) (GitHub)
 - [内定者インターンがUIライブラリを20バージョン分アップデートするまで](https://tech.smarthr.jp/entry/2026/07/10/103000) (SmartHR Tech Blog、v75.4.1→v96・約950ファイル・13PRの実例) ※2026-07-10に実際にfetch成功
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-07-10
+**最終更新**: 2026-10-25
 
 ---
 
@@ -331,22 +301,18 @@ pnpm why react
 pnpm dedupe
 
 # 強制 override
-# package.json の "pnpm" / "resolutions" を設定
+# pnpm は pnpm-workspace.yaml の overrides、yarn は package.json の resolutions を設定
 ```
 
-**`pnpm.overrides` で強制統一**:
-```json
-{
-  "pnpm": {
-    "overrides": {
-      "react": "^18.3.0",
-      "react-dom": "^18.3.0"
-    }
-  }
-}
+**`overrides` で強制統一**:
+```yaml
+# pnpm-workspace.yaml（pnpm 11 は package.json の "pnpm" フィールドを読まない）
+overrides:
+  react: ^18.3.0
+  react-dom: ^18.3.0
 ```
 
-これで transitive deps も含めて react のバージョンが統一される。
+これで transitive deps も含めて react のバージョンが統一される。pnpm 10 以前は package.json の `pnpm.overrides` に書く。
 
 **npm の `overrides`** / yarn の `resolutions` も同等機能を持つ。
 
@@ -354,7 +320,8 @@ pnpm dedupe
 | パッケージ種別 | 配置 |
 |---|---|
 | React コンポーネントライブラリの `react` / `react-dom` | peerDependencies |
-| TypeScript 用ライブラリの `typescript` | peerDependencies |
+| TypeScript の compiler API を使うツール（ESLint プラグイン等）の `typescript` | peerDependencies |
+| 型定義付きの JS を配布する通常のライブラリの `typescript` | devDependencies |
 | Next.js 専用プラグインの `next` | peerDependencies (optional 可) |
 | Tailwind プラグインの `tailwindcss` | peerDependencies |
 | Internal な型・ユーティリティ | dependencies |
@@ -369,21 +336,22 @@ ERR_PNPM_PEER_DEP_ISSUES Unmet peer dependencies
 ```
 
 **自動修正フロー**:
-```bash
-# pnpm は auto-install-peers をデフォルトで有効（pnpm 8+）
-# 必要に応じて .npmrc で明示
-auto-install-peers=true
-strict-peer-dependencies=true  # 不一致を error にする
+```yaml
+# pnpm-workspace.yaml
+# autoInstallPeers は既定で有効（pnpm 8+）。必要に応じて明示する
+autoInstallPeers: true
+strictPeerDependencies: true  # 不一致を error にする
 ```
 
 **出典**:
 - [npm: peerDependencies](https://docs.npmjs.com/cli/v10/configuring-npm/package-json#peerdependencies) (npm)
 - [pnpm: Peer Dependencies](https://pnpm.io/package_json#peerdependencies) (pnpm)
-- [pnpm: Overrides](https://pnpm.io/package_json#pnpmoverrides) (pnpm)
+- [pnpm: overrides](https://pnpm.io/11.x/settings/dependency-resolution#overrides) (pnpm、pnpm 11 は `pnpm-workspace.yaml` に書く) ※2026-10-25 確認
+- [pnpm v11.0.0 リリースノート](https://github.com/pnpm/pnpm/releases/tag/v11.0.0) (pnpm、「pnpm no longer reads settings from the `pnpm` field of `package.json`」) ※2026-10-25 確認
 
-**バージョン**: pnpm 8+
+**バージョン**: pnpm 11+（pnpm 10 以前は package.json の `pnpm` フィールドと `.npmrc` に書く）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -540,18 +508,13 @@ pnpm patch react@18.3.1
 # 編集が終わったら commit
 pnpm patch-commit /tmp/d8a32...
 # → patches/react@18.3.1.patch が作成される
-# → package.json に pnpm.patchedDependencies が追加される
+# → pnpm-workspace.yaml に patchedDependencies が追加される
 ```
 
-```json
-// package.json
-{
-  "pnpm": {
-    "patchedDependencies": {
-      "react@18.3.1": "patches/react@18.3.1.patch"
-    }
-  }
-}
+```yaml
+# pnpm-workspace.yaml（pnpm 10 以前は package.json の pnpm.patchedDependencies）
+patchedDependencies:
+  react@18.3.1: patches/react@18.3.1.patch
 ```
 
 **`patches/react@18.3.1.patch` の中身**:
@@ -580,7 +543,7 @@ pnpm install
 3. パッケージ更新時にパッチが当たらなくなる → 検証して更新
 4. パッチは最小限に（行数が多いほどメンテコスト上がる）
 
-**`npm overrides` / `pnpm.overrides` も同じ「技術負債」として扱う**:
+**npm / pnpm の `overrides` も同じ「技術負債」として扱う**:
 `overrides` は依存グラフ内のバージョン番号を強制的に書き換えるだけで、
 上書き対象パッケージのコードが実際にそのバージョンと互換かは検証しない。
 `ERESOLVE` エラーを消すためだけにコピペで追加すると、非互換が黙って残ったまま
@@ -629,12 +592,12 @@ npx patch-package <package-name>
 - 上流マージされたパッチは即削除
 
 **出典**:
-- [pnpm patch](https://pnpm.io/cli/patch) (pnpm)
+- [pnpm patch](https://pnpm.io/11.x/cli/patch) (pnpm、pnpm 11 では `patchedDependencies` を `pnpm-workspace.yaml` に書く) ※2026-10-25 確認
 - [patch-package](https://github.com/ds300/patch-package) (ds300)
 - [The npm `overrides` Snippet Everyone Copy-Pastes — And What It Actually Does](https://dev.to/mayank7924/the-npm-overrides-snippet-everyone-copy-pastes-and-what-it-actually-does-3flg) (dev.to mayank7924、`overrides` のスコープ限定パターンと「設定ではなく負債として扱う」原則) ※2026-08-03に実際にfetch成功
   > "If you do add an override, treat it like debt, not like settings."
   > (セクション "A temporary patch. Not permanent config")
 
-**バージョン**: pnpm 8+
+**バージョン**: pnpm 8+（`patchedDependencies` の置き場所は pnpm 11 から `pnpm-workspace.yaml`）
 **確信度**: 高
-**最終更新**: 2026-08-03
+**最終更新**: 2026-10-25

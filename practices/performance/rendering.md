@@ -9,7 +9,8 @@
 ### 1. 不要な再レンダリングを `React DevTools Profiler` で特定してから最適化する
 
 最適化は計測なしに行わない。`React DevTools Profiler` でボトルネックを特定してから
-`memo`・`useMemo`・`useCallback` を適用する。
+`memo`・`useMemo`・`useCallback` を適用する。予防的な過剰適用を避ける具体例は #4 を参照。
+React Compiler を導入しているコンポーネントは、コンパイラが自動でメモ化するので手動の `memo` / `useMemo` / `useCallback` は原則書かない。Profiler で計測して問題を特定する手順は同じで、対処はコンパイラの対象範囲の見直し（`practices/react/rendering.md` #7）から始める。
 
 **根拠**:
 - 計測なしの最適化はコードを複雑にするだけで効果がないことが多い
@@ -18,6 +19,8 @@
 
 **コード例**:
 ```tsx
+import { memo, useCallback, useState } from 'react';
+
 // Step 1: Profiler で計測して問題のあるコンポーネントを特定
 // React DevTools → Profiler → Record → 操作 → Stop
 
@@ -25,18 +28,20 @@
 
 // 親コンポーネントが再レンダリングされるたびに子も再レンダリングされる問題
 // ↓ memo で解決
-const ExpensiveChild = React.memo(function ExpensiveChild({
+const ExpensiveChild = memo(function ExpensiveChild({
   data,
+  onAction,
 }: {
   data: ComplexData;
+  onAction: () => void;
 }) {
-  return <ComplexVisualization data={data} />;
-  // data が変わらなければ再レンダリングをスキップ
+  return <ComplexVisualization data={data} onAction={onAction} />;
+  // data と onAction の参照が変わらなければ再レンダリングをスキップ
 });
 
 // 関数を props として渡す場合、参照が毎回変わる問題
 // ↓ useCallback で解決
-function Parent() {
+function Parent({ data }: { data: ComplexData }) {
   const [count, setCount] = useState(0);
 
   // useCallback なしでは毎回新しい関数参照 → ExpensiveChild が再レンダリング
@@ -55,10 +60,11 @@ function Parent() {
 
 **出典**:
 - [React Docs: Profiling React App Performance](https://react.dev/learn/react-developer-tools) (React公式)
+- [React Docs: React Compiler](https://react.dev/learn/react-compiler) (React公式)
 
-**バージョン**: React 18+
+**バージョン**: React 18+（React Compiler は 1.0+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -181,8 +187,7 @@ function AppProviders({ children }: { children: React.ReactNode }) {
 
 ### 4. `memo`・`useMemo`・`useCallback` の過剰適用を避ける
 
-最適化フックは「計測で問題が確認されたコンポーネント」にのみ適用する。
-全コンポーネントへの予防的な適用はコードの複雑さを増すだけで逆効果になる。
+「計測してから適用する」という判断基準と React Compiler 導入時の扱いは #1 を正とする。このルールでは、全コンポーネントへの予防的な適用がコードの複雑さを増すだけで逆効果になる典型例を扱う。
 
 **根拠**:
 - `React.memo` は毎回 props のシャロー比較を行うため、それ自体がコストを持つ
@@ -233,38 +238,36 @@ function Parent() {
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 5. `startTransition` でレンダリング優先度を制御し UI の応答性を保つ
 
 ユーザーの即時フィードバックを必要とする更新と、時間のかかる二次的な更新を
-`startTransition` で分離し、入力遅延をなくす。
+分離し、入力遅延をなくす。`startTransition` / `useTransition` / `useDeferredValue` の基本パターンと意味論は `practices/react/rendering.md` #5 / #6 を正とする。このルールでは、Profiler や INP の計測で入力遅延が確認された画面への適用例を扱う。
 
 **根拠**:
 - React 18 の Concurrent Features により、更新に優先度をつけられるようになった
 - `startTransition` で囲まれた更新は「非緊急」として扱われ、緊急な更新（入力反映など）が優先される
 - タブ切り替え・検索フィルタリング・ページ遷移などの重い UI 更新に有効
 - INP（Interaction to Next Paint）の改善に直接寄与する
+- 選択状態そのもの（`aria-selected` の元になる state）を transition に入れると、タブの選択表示まで遅れる。選択状態は即座に更新し、重いコンテンツだけを `useDeferredValue` で遅らせる
 
 **コード例**:
 ```tsx
 'use client';
-import { startTransition, useTransition, useState } from 'react';
+import { memo, useDeferredValue, useState } from 'react';
+import { HeavyTabContent } from './HeavyTabContent';
 
-// パターン1: useTransition でペンディング状態を表示
+// deferredTab が変わるまで再レンダリングをスキップさせるため memo で包む
+const TabContent = memo(HeavyTabContent);
+
+// パターン1: 選択状態は即座に、重いタブコンテンツだけ遅れて追従させる
 function TabSwitcher({ tabs }: { tabs: Tab[] }) {
   const [activeTab, setActiveTab] = useState(tabs[0].id);
-  const [isPending, startTransition] = useTransition();
-
-  function handleTabChange(tabId: string) {
-    // タブの見た目の変更は即座に（緊急）
-    // 重いコンテンツレンダリングは非緊急として後回し
-    startTransition(() => {
-      setActiveTab(tabId);
-    });
-  }
+  const deferredTab = useDeferredValue(activeTab);
+  const isPending = activeTab !== deferredTab;
 
   return (
     <div>
@@ -273,22 +276,25 @@ function TabSwitcher({ tabs }: { tabs: Tab[] }) {
           <button
             key={tab.id}
             role="tab"
-            aria-selected={tab.id === activeTab}
-            onClick={() => handleTabChange(tab.id)}
+            aria-selected={tab.id === activeTab}  // 選択表示はクリック直後に切り替わる
+            onClick={() => setActiveTab(tab.id)}
           >
             {tab.label}
           </button>
         ))}
       </div>
-      {/* isPending 中はタブコンテンツを薄く表示（UIがブロックされない） */}
+      {/* 古いコンテンツを表示している間は薄く表示（UIがブロックされない） */}
       <div style={{ opacity: isPending ? 0.6 : 1 }}>
-        <TabContent tabId={activeTab} />
+        <TabContent tabId={deferredTab} />
       </div>
     </div>
   );
 }
+```
 
+```tsx
 // パターン2: startTransition（インポート版）でルーター遷移を最適化
+'use client';
 import { startTransition } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -312,9 +318,10 @@ function NavigationButton({ href, children }: { href: string; children: React.Re
 **出典**:
 - [React Docs: startTransition](https://react.dev/reference/react/startTransition) (React公式)
 - [React Docs: useTransition](https://react.dev/reference/react/useTransition) (React公式)
+- [React Docs: useDeferredValue](https://react.dev/reference/react/useDeferredValue) (React公式)
 
 **バージョン**: React 18+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---

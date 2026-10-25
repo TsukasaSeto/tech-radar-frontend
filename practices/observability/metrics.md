@@ -84,9 +84,9 @@ async function handleCheckout(cart: Cart) {
       'order.currency': 'JPY',
     });
     businessMetrics.checkoutDuration.record(duration);
-  } catch {
+  } catch (error) {
     businessMetrics.checkoutAbandoned.add(1, { reason: 'payment_error' });
-    throw;
+    throw error;
   }
 }
 ```
@@ -96,7 +96,7 @@ async function handleCheckout(cart: Cart) {
 
 **バージョン**: @opentelemetry/api 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -118,11 +118,12 @@ export async function register() {
     const { NodeSDK } = await import('@opentelemetry/sdk-node');
     const { OTLPMetricExporter } = await import('@opentelemetry/exporter-metrics-otlp-http');
     const { PeriodicExportingMetricReader } = await import('@opentelemetry/sdk-metrics');
-    const { Resource } = await import('@opentelemetry/resources');
+    const { resourceFromAttributes } = await import('@opentelemetry/resources');
     const { ATTR_SERVICE_NAME } = await import('@opentelemetry/semantic-conventions');
 
     const sdk = new NodeSDK({
-      resource: new Resource({
+      // SDK 2.x では Resource クラスが export されない。1.x 系（sdk-node 0.200 未満）は new Resource({...})
+      resource: resourceFromAttributes({
         [ATTR_SERVICE_NAME]: 'tech-radar-frontend',
         'service.version': process.env.APP_VERSION ?? 'unknown',
         'deployment.environment': process.env.NODE_ENV,
@@ -167,11 +168,13 @@ function reportMetric(name: string, value: number, tags: Record<string, string>)
 
 **出典**:
 - [OpenTelemetry: Exporters](https://opentelemetry.io/docs/languages/js/exporters/) (OpenTelemetry公式)
+- [OpenTelemetry: Resources（JS）](https://opentelemetry.io/docs/languages/js/resources/) (OpenTelemetry公式、`resourceFromAttributes()`) ※2026-10-25 確認
+- [Upgrade to OpenTelemetry JS SDK 2.x](https://github.com/open-telemetry/opentelemetry-js/blob/main/doc/upgrade-to-2.x.md) (OpenTelemetry公式、`new Resource()` → `resourceFromAttributes()`、安定版 2.0.0+ / 実験版 0.200.0+) ※2026-10-25 確認
 - [Datadog: OpenTelemetry](https://docs.datadoghq.com/opentelemetry/) (Datadog公式)
 
-**バージョン**: @opentelemetry/sdk-node 0.50+
+**バージョン**: @opentelemetry/sdk-node 0.200+ / @opentelemetry/resources 2.0+（SDK 2.x 系）
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -183,23 +186,16 @@ function reportMetric(name: string, value: number, tags: Record<string, string>)
 **根拠**:
 - ダッシュボードをながめるだけでは問題の検知が遅れる
 - SLO（サービスレベル目標）に基づくアラートで誤アラートを減らせる
-- エラー率・レイテンシ・ビジネス指標それぞれにアラートを設定する
+- エラー率・レイテンシ・ビジネス指標それぞれにアラートを設定する。しきい値の決め方は #5（SLO ベースの Burn Rate）に従う
 
 **コード例**:
 ```yaml
 # Datadog モニター定義例（IaC で管理）
 # datadog-monitors.yaml
+# API のエラー率・レイテンシは SLO を定義し、Burn Rate アラートにする（#5 を参照）
 monitors:
-  - name: "API Error Rate > 1%"
-    type: metric alert
-    query: "sum(last_5m):sum:system.api.error{service:frontend}.as_count() / sum:system.api.requests{service:frontend}.as_count() * 100 > 1"
-    message: |
-      API エラー率が 1% を超えています。
-      @slack-alerts-channel
-    thresholds:
-      critical: 1
-      warning: 0.5
-
+  # SLO をまだ定義していないビジネス指標は、過去の分布から決めたしきい値で暫定運用し、
+  # SLO を定めたら #5 の Burn Rate アラートに移す
   - name: "Checkout Abandonment Rate > 20%"
     type: metric alert
     query: "sum(last_10m):sum:business.checkout.abandoned{service:frontend}.as_count() / sum:business.checkout.started{service:frontend}.as_count() * 100 > 20"
@@ -216,7 +212,7 @@ monitors:
 
 **バージョン**: Datadog 最新版
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -230,6 +226,7 @@ monitors:
 - P99 は「最も遅い 1% のユーザー」を示し、SLO 違反検知や高優先度ユーザーの保護に不可欠
 - Google の Core Web Vitals も p75 を基準としており、分布ベース評価が業界標準になっている
 - OpenTelemetry の `Histogram` 計装と Datadog の `distribution` メトリクスタイプを組み合わせることでパーセンタイルを自動計算できる
+- `http.route` にはルートテンプレート（`/users/{id}`）を入れる。生のパスや ID を入れると時系列が爆発する（OpenTelemetry のセマンティック規約は低カーディナリティを要求している）
 
 **コード例**:
 ```ts
@@ -249,16 +246,17 @@ const apiLatencyHistogram = meter.createHistogram('api.request.duration', {
   },
 });
 
-export async function fetchWithMetrics(url: string, options?: RequestInit) {
+// route にはテンプレートを渡す（例: fetchWithMetrics('/users/{id}', `/api/users/${id}`)）。
+// URL から生のパスを取り出さないので、相対 URL でも new URL() の例外が起きない
+export async function fetchWithMetrics(route: string, url: string, options?: RequestInit) {
   const start = performance.now();
-  const endpoint = new URL(url).pathname;
 
   try {
     const res = await fetch(url, options);
     const duration = performance.now() - start;
 
     apiLatencyHistogram.record(duration, {
-      'http.route': endpoint,
+      'http.route': route,
       'http.status_code': res.status,
       'http.method': options?.method ?? 'GET',
     });
@@ -267,7 +265,7 @@ export async function fetchWithMetrics(url: string, options?: RequestInit) {
   } catch (error) {
     const duration = performance.now() - start;
     apiLatencyHistogram.record(duration, {
-      'http.route': endpoint,
+      'http.route': route,
       'error': 'true',
     });
     throw error;
@@ -296,18 +294,19 @@ const avgLatency = meter.createObservableGauge('api.avg_latency');
 
 **出典**:
 - [OpenTelemetry: Histogram](https://opentelemetry.io/docs/concepts/signals/metrics/#histogram) (OpenTelemetry公式)
+- [OpenTelemetry Semantic Conventions: HTTP attributes](https://opentelemetry.io/docs/specs/semconv/registry/attributes/http/) (OpenTelemetry公式、`http.route` は "The matched route template" で低カーディナリティ必須) ※2026-10-25 確認
 - [Google SRE Book: Monitoring Distributed Systems](https://sre.google/sre-book/monitoring-distributed-systems/) (Google SRE / 2016)
 
 **バージョン**: @opentelemetry/api 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 5. Alerting Fatigue を避けるしきい値設計をSLOベースで行う
 
 アラートのしきい値は「感覚」ではなくSLO（サービスレベル目標）から逆算して設計し、
-アラート疆れによる重大インシデントの見落としを防ぐ。
+アラート疲れによる重大インシデントの見落としを防ぐ。
 
 **根拠**:
 - しきい値が低すぎると誤アラートが多発し、開発チームがアラートを無視するようになる（Alerting Fatigue）
@@ -318,24 +317,25 @@ const avgLatency = meter.createObservableGauge('api.avg_latency');
 **コード例**:
 ```yaml
 # Good: SLO ベースの Burn Rate アラート（Datadog）
-# 例: 月次 SLO 99.9% → Error Budget = 0.1% = 月43.8分
+# 例: 30 日（720h）の SLO 99.9% → Error Budget = 0.1% = 30 日で 43.2 分
+# Burn Rate = 消費した予算の割合 × (SLO 期間 / ウィンドウ)
 monitors:
-  # Fast Burn: 1時間で Error Budget の 5% を消費しているか
+  # Fast Burn: 1時間で Error Budget の 2% を消費しているか
   - name: "SLO Burn Rate: Fast (1h window)"
     type: slo alert
     slo_id: "<your-slo-id>"
     time_window: 1h
-    burn_rate_threshold: 14.4   # 1/0.001 * 5% / (1h/720h) = 14.4x
+    burn_rate_threshold: 14.4   # 2% × (720h / 1h) = 14.4x
     message: |
       SLO の高速消費を検知。今すぐ対応が必要です。
       @pagerduty-critical
 
-  # Slow Burn: 6時間で Error Budget の 10% を消費しているか
+  # Slow Burn: 6時間で Error Budget の 5% を消費しているか
   - name: "SLO Burn Rate: Slow (6h window)"
     type: slo alert
     slo_id: "<your-slo-id>"
     time_window: 6h
-    burn_rate_threshold: 6.0
+    burn_rate_threshold: 6.0    # 5% × (720h / 6h) = 6x
     message: |
       SLO の緩やかな消費を検知。作業時間内に確認してください。
       @slack-oncall
@@ -348,12 +348,12 @@ monitors:
 ```
 
 **出典**:
-- [Google SRE Workbook: Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) (Google SRE / 公開)
+- [Google SRE Workbook: Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/) (Google SRE / 公開、99.9% SLO で 1h・14.4 = 予算の 2%、6h・6 = 5%) ※2026-10-25 確認
 - [Datadog Docs: SLO-based Alerts](https://docs.datadoghq.com/service_management/service_level_objectives/burn_rate/) (Datadog公式)
 
 **バージョン**: Datadog 最新版
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -370,7 +370,7 @@ monitors:
 - Sentry のエラートラッキングは「すでに壊れたもの」を捕えるが、問題の予兆（決済拒否・API 遅延・キュー滞積）は数値シグナルで現れる
 - 同一ツール（Sentry）でエラーとメトリクスを一元管理でき、メトリクス異常とエラースパイクを同一ダッシュボードで相関分析できる
 - Counter・Distribution・Gauge の3種類で主要なメトリクスパターンを網羅できる
-- タグを付与することで `reason` / `userId` / `queue` 別のドリルダウン分析が可能
+- 属性（`attributes`）を付与することで `reason` / `queue` 別のドリルダウン分析が可能。`userId`・生のパス・エラーメッセージ全文のように値の種類が多いものや PII は属性に入れない（カーディナリティが爆発し、個人情報も送られる）
 - 同じ仕組みは自作の Counter/Distribution だけでなく、SDK 組み込みの `bfcacheMetricsIntegration()` のように「ブラウザイベントを Application Metrics に変換する」用途にも使える。back/forward navigation の hit/miss を `browser.bfcache.navigation`（Counter）、ブロック理由別件数を `browser.bfcache.not_restored`（Counter）、ミス時のリロード所要時間を `browser.bfcache.reload.duration`（Distribution）として計測でき、初期化は1行で済む
 
 **コード例**:
@@ -379,22 +379,24 @@ import * as Sentry from '@sentry/nextjs';
 
 // Counter: イベントの発生回数を増加のみで追跡
 // 用途: 決済失敗数、ログイン失敗数、API エラー数
-function handlePaymentDeclined(reason: string, userId: string) {
+// reason は決まった値（'insufficient_funds' など）に限る。userId は属性に入れない
+function handlePaymentDeclined(reason: string) {
   Sentry.metrics.count('payment.declined', 1, {
-    attributes: { reason, userId },
+    attributes: { reason },
   });
 }
 
 // Distribution: 値の分布を記録（パーセンタイル計算可能）
 // 用途: API レスポンスタイム、ファイルサイズ、処理件数
-async function fetchWithMetrics(url: string) {
+// route にはテンプレートを渡す（例: fetchWithMetrics('/users/{id}', `/api/users/${id}`)）
+async function fetchWithMetrics(route: string, url: string) {
   const start = Date.now();
   const res = await fetch(url);
   const latencyMs = Date.now() - start;
 
   Sentry.metrics.distribution('api.response_time', latencyMs, {
     unit: 'millisecond',
-    attributes: { endpoint: new URL(url).pathname },
+    attributes: { endpoint: route },
   });
 
   return res;
@@ -421,7 +423,8 @@ async function processOrder(order: Order) {
   } catch (error) {
     Sentry.metrics.count('order.processing.failed', 1, {
       attributes: {
-        reason: error instanceof Error ? error.message : 'unknown',
+        // error.message は値の種類が多く PII も含みうるので、エラーの種類（name）にとどめる
+        reason: error instanceof Error ? error.name : 'unknown',
       },
     });
     throw error;
@@ -443,7 +446,7 @@ async function processOrder(order: Order) {
 
 **バージョン**: @sentry/nextjs 10.25+（`Sentry.metrics.count` / `gauge` / `distribution` と `attributes`）/ @sentry/browser 11+（`bfcacheMetricsIntegration`）
 **確信度**: 高
-**最終更新**: 2026-10-22
+**最終更新**: 2026-10-25
 
 ---
 
@@ -462,7 +465,7 @@ import { metric } from "@vercel/functions";
 
 export async function GET() {
   const start = Date.now();
-  const rows = await db.query("SELECT * FROM my-table");
+  const rows = await db.query('SELECT * FROM "my-table"');
   metric("database.query_ms", Date.now() - start, {
     table: "my-table",
     db: "my-database",
@@ -480,7 +483,7 @@ export async function GET() {
 
 **バージョン**: @vercel/functions（2026年8月時点、Observability Plus プラン）
 **確信度**: 高（Vercel公式changelog）
-**最終更新**: 2026-08-21
+**最終更新**: 2026-10-25
 
 ---
 

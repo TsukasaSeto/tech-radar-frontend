@@ -66,8 +66,11 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
-      - uses: amannn/action-semantic-pull-request@v5
+      # 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
+      - uses: amannn/action-semantic-pull-request@v6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -89,10 +92,12 @@ jobs:
             api
             ui
             deps
+            images
           requireScope: false
-          subjectPattern: ^[A-Z].+[^.]$
+          # 上の例に合わせて、小文字始まり・末尾ピリオドなしを要求する
+          subjectPattern: ^(?![A-Z]).+[^.]$
           subjectPatternError: |
-            Subject must start with an uppercase letter and not end with a period.
+            Subject must not start with an uppercase letter and must not end with a period.
 ```
 
 **ラベル運用**:
@@ -121,25 +126,29 @@ on:
 jobs:
   label:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/labeler@v5
+      - uses: actions/labeler@v7
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 **判定軸**:
 - PR タイトルが Conventional Commits ＝ release-notes 自動生成と直結
-- ラベルは検索 / 優先度判定 / 自動ルーティング（CODEOWNERS）で活用
+- ラベルは検索 / 優先度判定 / ラベルを条件にした独自の自動化で活用する。レビュアーの自動割り当て（CODEOWNERS）は変更ファイルのパスで決まり、ラベルは使われない
 - scope は省略可だが、大規模リポジトリでは推奨
 
 **出典**:
 - [Conventional Commits](https://www.conventionalcommits.org/) (Conventional Commits)
-- [amannn/action-semantic-pull-request](https://github.com/amannn/action-semantic-pull-request) (amannn)
-- [actions/labeler](https://github.com/actions/labeler) (GitHub)
+- [amannn/action-semantic-pull-request](https://github.com/amannn/action-semantic-pull-request) (amannn、v6 の `permissions: pull-requests: read` と `subjectPattern` の例) ※2026-10-25 確認
+- [actions/labeler](https://github.com/actions/labeler) (GitHub、`contents: read` / `pull-requests: write`) ※2026-10-25 確認
+- [About code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners) (GitHub Docs、コードオーナーは自分が所有するコードを変更する PR でレビューを依頼される) ※2026-10-25 確認
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -337,14 +346,19 @@ merge し、来週ロールアウトを開始します。
 name: reviewdog
 on: [pull_request]
 
+# 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
 jobs:
   eslint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # github-pr-review のインラインコメントに必要
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/setup@v3  # pnpm v11+ を package.json の packageManager のバージョンで導入
+        with: { node-version-file: false, cache: true, install: false }  # Node は setup-node に任せ、install は次のステップで明示する
       - run: pnpm install --frozen-lockfile
 
       - uses: reviewdog/action-eslint@v1
@@ -352,12 +366,15 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           reporter: github-pr-review  # PR にインラインコメント
           eslint_flags: 'src/**/*.{ts,tsx}'
-          fail_on_error: true
+          fail_level: error
 
   textlint:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: tsuyoshicho/action-textlint@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -369,7 +386,10 @@ jobs:
 **Danger.js の設定**（より柔軟な PR チェック）:
 ```ts
 // dangerfile.ts
-import { danger, warn, fail, message } from 'danger';
+import { danger, warn, fail, message, schedule } from 'danger';
+
+// 新規作成されたファイル（テストや changeset は通常こちら）も含めて判定する
+const changedFiles = [...danger.git.created_files, ...danger.git.modified_files];
 
 // PR description が空ならエラー
 if (!danger.github.pr.body || danger.github.pr.body.length < 30) {
@@ -383,34 +403,59 @@ if (totalChanges > 600) {
 }
 
 // テストが追加されていない feature PR は warn
-const hasSourceChanges = danger.git.modified_files.some((f) => f.startsWith('src/') && !f.includes('.test.'));
-const hasTestChanges = danger.git.modified_files.some((f) => f.includes('.test.'));
+const hasSourceChanges = changedFiles.some((f) => f.startsWith('src/') && !f.includes('.test.'));
+const hasTestChanges = changedFiles.some((f) => f.includes('.test.'));
 if (hasSourceChanges && !hasTestChanges) {
   warn('ソースファイルが変更されていますがテストが更新されていません。');
 }
 
-// package.json の変更があれば必ず lockfile も更新されていること
-if (danger.git.modified_files.includes('package.json') && !danger.git.modified_files.includes('pnpm-lock.yaml')) {
-  fail('package.json が変更されていますが pnpm-lock.yaml が更新されていません。`pnpm install` を実行してください。');
-}
+// 依存定義が変わったのに lockfile が更新されていなければ止める（scripts だけの変更は対象外）
+schedule(async () => {
+  if (!changedFiles.includes('package.json')) return;
+  const pkgDiff = await danger.git.JSONDiffForFile('package.json');
+  const depKeys = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+  if (depKeys.some((key) => key in pkgDiff) && !changedFiles.includes('pnpm-lock.yaml')) {
+    fail('package.json の依存定義が変更されていますが pnpm-lock.yaml が更新されていません。`pnpm install` を実行してください。');
+  }
+});
 
 // .env.example の変更時はリリースノートに記載が必要
-if (danger.git.modified_files.includes('.env.example')) {
+if (changedFiles.includes('.env.example')) {
   message('🔔 環境変数が変更されました。リリースノートとデプロイ手順を確認してください。');
 }
 
 // CHANGELOG / RELEASE NOTES が更新されているか
-if (hasSourceChanges && !danger.git.modified_files.some((f) => f.includes('changeset'))) {
+if (hasSourceChanges && !changedFiles.some((f) => f.startsWith('.changeset/'))) {
   warn('機能変更には changeset の追加が必要です。`pnpm changeset` を実行してください。');
 }
 ```
 
 ```yaml
-# .github/workflows/danger.yml
-- uses: danger/danger-js@v12
-  env:
-    DANGER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+# .github/workflows/danger.yml（danger を devDependencies に入れて実行する）
+name: Danger
+on: pull_request
+
+jobs:
+  danger:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write  # PR へのコメント
+      statuses: write       # コミットステータスの更新
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      # 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
+      - uses: pnpm/setup@v3  # pnpm v11+ を package.json の packageManager のバージョンで導入
+        with: { node-version-file: false, cache: true, install: false }  # Node は setup-node に任せ、install は次のステップで明示する
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm danger ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
+
+fork からの PR では `GITHUB_TOKEN` が読み取り専用になり、コメントを投稿できない。
 
 **よく自動化される指摘**:
 
@@ -437,18 +482,35 @@ if (hasSourceChanges && !danger.git.modified_files.some((f) => f.includes('chang
 **自動修正を PR コメントで終わらせず、コミットまで自動化する**（Biome の例）:
 ```yaml
 # .github/workflows/auto-fix.yml
-- name: Biome check with safe fixes
-  run: npx @biomejs/biome check --write .
+name: Auto Fix
+on: pull_request
 
-- name: Commit if changed
-  run: |
-    git config user.name "github-actions[bot]"
-    git diff --quiet || (
-      git add -A &&
-      git commit -m "chore: auto-fix format and lint" &&
-      git push
-    )
+jobs:
+  autofix:
+    # fork からの PR には GITHUB_TOKEN で push できないので、同じリポジトリの PR に限る
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # PR ブランチへの push に必要
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.head_ref }}  # 既定の merge commit（detached HEAD）ではなく PR ブランチを checkout する
+
+      - name: Biome check with safe fixes
+        run: npx @biomejs/biome check --write .
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git diff --quiet || (
+            git add -A &&
+            git commit -m "chore: auto-fix format and lint" &&
+            git push
+          )
 ```
+`GITHUB_TOKEN` で push した commit では、`pull_request`（synchronize）の run が承認待ちで作られ、書き込み権限を持つユーザーが承認するまで CI が走らない。自動修正の commit でも CI を自動で走らせたい場合は、GitHub App のインストールトークンで push する。
 AI 支援ツール（CodeRabbit 等）による修正は完全自動適用にせず、手動承認チェックボックスを挟むと安全。
 
 > "指摘を書くのをやめて、直すのを機械にやらせる。"
@@ -465,13 +527,17 @@ AI agent が生成した PR だからといって人間の PR よりレビュー
 
 **出典**:
 - [reviewdog](https://github.com/reviewdog/reviewdog) (reviewdog)
+- [reviewdog/action-eslint](https://github.com/reviewdog/action-eslint) (reviewdog、`fail_on_error` は非推奨で `fail_level` を使う) ※2026-10-25 確認
 - [Danger.js](https://danger.systems/js/) (Danger)
+- [Danger.js: Dependencies](https://danger.systems/js/tutorials/dependencies.html) (Danger、`schedule` + `danger.git.JSONDiffForFile('package.json')` で依存定義の差分を見る) ※2026-10-25 確認
+- [GITHUB_TOKEN](https://docs.github.com/en/actions/concepts/security/github_token) (GitHub Docs、「events triggered by the `GITHUB_TOKEN` will not create a new workflow run」と、`pull_request` の opened / synchronize / reopened は承認待ちの run になる例外) ※2026-10-25 確認
+- [pnpm/setup](https://github.com/pnpm/setup) (pnpm、pnpm v11+ 向けのセットアップ action) ※2026-10-25 確認
 - [AI agent が作ったコードを公開する前に、PR 経路へ security gate を差し込む](https://qiita.com/heftykoo/items/2ad35a96389a8d9897a4) (Qiita heftykoo、AI agent PR 向け3段階ゲート) ※2026-06-30に実際にfetch成功
 - [レビュー指摘を200件分類したら、7割は自動修正で消えるものだった](https://zenn.dev/kenimo49/articles/code-review-200-fixes-autofix-8-in-10) (Zenn、200件分類の実測データと Biome 自動修正コミット化パターン) ※2026-08-15に実際にfetch成功
 
 **バージョン**: reviewdog v0.20+, Danger.js v12+
 **確信度**: 高
-**最終更新**: 2026-08-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -485,22 +551,32 @@ AI agent が生成した PR だからといって人間の PR よりレビュー
 - Vercel 自身の AI SDK / Chat SDK プロジェクトで実運用されている
 
 **コード例**:
-```jsonc
-// konsistent.json: ファイルパターンごとの規約を宣言
+```json
 {
-  "rules": [
+  "version": "v1",
+  "conventions": [
     {
-      "pattern": "src/tools/*.ts",
-      "mustExport": ["execute", "inputSchema"]
+      "name": "tools",
+      "paths": "src/tools/*.ts",
+      "must": {
+        "exportValues": ["execute", "inputSchema"]
+      }
     }
   ]
 }
 ```
 
+プロジェクトルートの `konsistent.json` に置き、`pnpm konsistent`（`konsistent check`）で検査する。型の export は `must.exportTypes`、パスの一部を `{name}` で受けて `${name}` で参照する書き方もある。設定ファイル自体の妥当性は `konsistent validate` で確かめる。
+
 **出典引用**:
 > "`konsistent` is a CLI linter for TypeScript codebases that enforces structural conventions, giving agents and humans the consistent context they need to implement features correctly."
 > ([Enforce consistent code for agents and humans with konsistent](https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent), セクション "Announcement") ※2026-07-01に実際にfetch成功
 
-**バージョン**: konsistent（Vercel OSS CLI、2026-07-01 公開）
+**出典**:
+- [Enforce consistent code for agents and humans with konsistent](https://vercel.com/changelog/enforce-consistent-code-for-agents-and-humans-with-konsistent) (Vercel Changelog) ※2026-07-01に実際にfetch成功
+- [vercel-labs/konsistent](https://github.com/vercel-labs/konsistent) (Vercel Labs、`konsistent.json` の `version` / `conventions[].paths` / `must.exportValues` / `must.exportTypes`) ※2026-10-25 確認
+- [konsistent: Path patterns](https://github.com/vercel-labs/konsistent/blob/main/docs/reference/path-patterns.md) (Vercel Labs、glob とプレースホルダ) ※2026-10-25 確認
+
+**バージョン**: konsistent 1.0.0-beta（Vercel Labs の実験的プロジェクト、2026-07-01 公開）
 **確信度**: 高
-**最終更新**: 2026-07-01
+**最終更新**: 2026-10-25

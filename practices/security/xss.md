@@ -11,7 +11,7 @@ React は標準で文字列を自動エスケープするが、それを迂回�
 
 **根拠**:
 - React の JSX 内 `{expression}` は標準でテキストとしてエスケープされ XSS が起きない
-- `dangerouslySetInnerHTML` はエスケープを完全にバイパスするため、攻撃者の `<script>` がそのまま実行される
+- `dangerouslySetInnerHTML` はエスケープを完全にバイパスするため、攻撃者の HTML がそのまま DOM に入る。SSR の HTML に含まれた `<script>` はそのまま実行され、クライアント側で挿入された場合も（`<script>` は実行されないが）`<img onerror>` などのイベントハンドラ属性で任意のスクリプトが実行される
 - DOMPurify は 250+ の攻撃ベクトルを既知パターンとして弾く、業界標準のサニタイザー
 - 自前の正規表現でサニタイズすると必ず迂回される（`<scr<script>ipt>` 等）
 - AI チャット UI などで LLM の出力を `innerHTML` に直接代入すると XSS になる（OWASP LLM05: Improper Output Handling）。LLM の出力もユーザー入力と同等の「信頼できないソース」として扱う
@@ -74,7 +74,7 @@ export async function savePost(formData: FormData) {
 
 **バージョン**: DOMPurify 3+
 **確信度**: 高
-**最終更新**: 2026-06-12
+**最終更新**: 2026-10-25
 
 ---
 
@@ -84,7 +84,7 @@ export async function savePost(formData: FormData) {
 URL のスキームを必ず allow list で検証する。
 
 **根拠**:
-- React は `href` を文字列としてエスケープするが、**スキーム自体は検証しない**
+- React は `href` を文字列としてエスケープするが、スキームの検証はアプリの allow list の代わりにならない（React 19 の `javascript:` URL ブロックについては下記の OWASP の記述を参照）
 - `javascript:` `data:` `vbscript:` 等はクリックでスクリプト実行に直結する
 - OWASP は「React 19 は `src` / `href` の `javascript:` URL をブロックするが、アプリ固有の URL 検証の代わりにはならない」と明記している。ブロックの有無はバージョン・属性・文脈に依存するため、バージョンに頼らず allow list 検証を必ず行う
 - URL parser を使うのが最も確実。スキームと host を分離して検証する
@@ -120,7 +120,7 @@ function ProfileLink({ url }: { url: string }) {
 **`src` 属性も同様**:
 ```tsx
 // Bad: ユーザー入力画像 URL
-<img src={userImageUrl} />  // <img src="javascript:..."> は古い IE でしか動かないが、data: URL で SVG XSS が可能
+<img src={userImageUrl} />  // <img> 経由の画像（SVG・data: URL を含む）ではスクリプトは実行されないが、任意のホストへのリクエスト（閲覧者の IP・Referer の送信、GET による CSRF）や想定外の画像表示につながる
 
 // Good: 信頼できる CDN ドメインのみ許可
 function isSafeImageUrl(url: string): boolean {
@@ -152,7 +152,8 @@ export default {
 **SVG ファイルの注意**:
 - ユーザーがアップロードした SVG を `<img>` で表示する → SVG 内の `<script>` は実行されない（safe）
 - 同 SVG を `dangerouslySetInnerHTML` で **インライン埋め込み** すると `<script>` が実行される → XSS
-- SVG は常に `<img src>` または `<object>` で外部読み込みとして扱う
+- `<object>` / `<embed>` / `<iframe>` で読み込む、または SVG の URL を直接開かせると、SVG が文書として読み込まれてスクリプトが実行される。アプリと同じオリジンから配信していれば stored XSS になる
+- ユーザーの SVG は `<img src>`（または CSS の `background-image`）でだけ表示する。文書として開かせる必要がある場合は、アプリと別のオリジン（できれば別の登録可能ドメイン）から配信し、レスポンスに `Content-Disposition: attachment` か `Content-Security-Policy: sandbox` を付ける
 
 **サーバーサイドでの URL 検査（SSRF 対策）**:
 
@@ -171,16 +172,27 @@ function validateExternalUrl(userInput: string): URL {
 }
 
 // OWASP 推奨: ホストを allowlist と照合し、リクエストは自前で組み立て直す
-const ALLOWED_UPSTREAM_HOSTS = new Set(['api.partner.example.com']);
+const ALLOWED_UPSTREAM_ORIGINS = new Map([
+  ['api.partner.example.com', 'https://api.partner.example.com'],
+]);
 
 function buildAllowedUpstreamRequest(userInput: string): URL {
   const parsed = new URL(userInput);
-  if (!ALLOWED_UPSTREAM_HOSTS.has(parsed.host)) {
-    throw new Error('host not in allowlist');
-  }
-  // ユーザー入力の URL をそのまま fetch せず、host のみ再利用して自前で組み立てる
-  return new URL(`${parsed.pathname}${parsed.search}`, `https://${parsed.host}`);
+  const origin = ALLOWED_UPSTREAM_ORIGINS.get(parsed.host);
+  if (!origin) throw new Error('host not in allowlist');
+
+  // 固定オリジンの URL に pathname / search を代入する。new URL(`${pathname}`, base) で組み立てると、
+  // `//attacker.example/x`（`/\attacker.example/x` も同じ）がプロトコル相対 URL として解釈され別ホストに化ける
+  const upstream = new URL(origin);
+  upstream.pathname = parsed.pathname;
+  upstream.search = parsed.search;
+  if (upstream.origin !== origin) throw new Error('upstream origin mismatch');
+  return upstream;
 }
+
+// Bad: https://api.partner.example.com//attacker.example/collect が allowlist を通ったあと
+// https://attacker.example/collect に化ける
+// new URL(`${parsed.pathname}${parsed.search}`, `https://${parsed.host}`);
 ```
 
 **出典**:
@@ -188,6 +200,7 @@ function buildAllowedUpstreamRequest(userInput: string): URL {
 - [React Docs: javascript: URL warning](https://react.dev/reference/react-dom/components/common#applying-css-styles) (React 公式)
 - [Cross Site Scripting Prevention Cheat Sheet — commit "Qualify React URL protection by version and context"](https://github.com/OWASP/CheatSheetSeries/commit/2691c6bb814dc4b2261334049929a9031207e368) (OWASP、React 19 のブロック挙動の限定記述への修正。旧記述「警告のみで動く」を訂正) ※2026-10-05に実際にfetch成功
 - [MDN: URL constructor](https://developer.mozilla.org/en-US/docs/Web/API/URL/URL) (MDN Web Docs)
+- [MDN: SVG as an image](https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image) (MDN Web Docs、画像として使う SVG では JavaScript が無効になり、`<iframe>` / `<object>` / `<embed>` や直接表示ではその制限がかからない) ※2026-10-25 確認
 - [SSRF 対策では URL を `new URL()` で正規化してから検査する](https://qiita.com/mori-dev@github/items/53a9d7598bb102af69bb) (Qiita、サーバーサイド SSRF への同パターンの適用とバイパス例) ※2026-05-25に実際にfetch成功
 - [OWASP CheatSheetSeries commit: SSRF は allowlist で検証しパーサー不一致を拒否する](https://github.com/OWASP/CheatSheetSeries/commit/e2d422148bebd737e7d85e45347ae85ae5e878ba) (OWASP公式、SSRF Prevention Cheat Sheet への allowlist 照合・パーサー不一致拒否の追記) ※2026-09-14に実際にfetch成功
 
@@ -199,7 +212,7 @@ function buildAllowedUpstreamRequest(userInput: string): URL {
 
 **バージョン**: React 18+（React 19 は `javascript:` URL をブロックするが検証の代替にならない）
 **確信度**: 高
-**最終更新**: 2026-10-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -211,7 +224,7 @@ Server Component から Client にデータを渡す目的で `<script type="app
 **根拠**:
 - `JSON.stringify({ name: '</script><script>alert(1)</script>' })` の出力には `</script>` がそのまま含まれる
 - ブラウザは `</script>` を見つけた時点で `<script>` を終了するため、後続のスクリプトが実行される
-- `<` `>` `&` を Unicode エスケープ（`<` `>` `&`）すると JSON としては有効なまま、HTML としては安全になる
+- `<` `>` `&` を Unicode エスケープ（`\u003c` `\u003e` `\u0026`）すると JSON としては有効なまま、HTML としては安全になる
 - Next.js の `Script` コンポーネントは内部で対策済みだが、自前で書く場合は注意
 
 **コード例**:
@@ -235,8 +248,8 @@ function escapeJsonForHtml(json: string): string {
     .replace(/>/g, '\\u003e')
     .replace(/&/g, '\\u0026')
     .replace(/'/g, '\\u0027')
-    .replace(/ /g, '\\u2028')  // 行区切り
-    .replace(/ /g, '\\u2029'); // 段落区切り
+    .replace(/\u2028/g, '\\u2028')  // 行区切り
+    .replace(/\u2029/g, '\\u2029'); // 段落区切り
 }
 
 function StateScript({ state }: { state: unknown }) {
@@ -271,20 +284,20 @@ const state = JSON.parse(script?.textContent ?? '{}');
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
 ### 4. URL パラメータの reflection は必ずエスケープする
 
-`useSearchParams()` で取得した値をそのまま画面に表示するのは React の自動エスケープで安全だが、
-属性値・スタイル・スクリプト・URL 等に展開する際は別途エスケープが必要。
+`useSearchParams()` で取得した値は、JSX のテキストや通常の属性値（`title` / `alt` / `value` 等）に入れる限り React がエスケープするので安全で、手で HTML エスケープすると二重エスケープになる。
+URL を受ける属性・`style`・スクリプトに展開する場合と、React の外で HTML を組み立てる場合は、コンテキストごとに別の対策が要る。
 React の外（メール本文・OGP・ログビューア・自前テンプレート等）で手動エスケープ関数を書く場合は、**`&` を必ず最初に置換する**。他のエンティティがすべて `&` で始まるため、順序を誤ると `<` → `&lt;` → `&amp;lt;` の二重エスケープが発生する。
 
 **根拠**:
-- JSX 内 `{searchParam}` のテキスト埋め込みは安全（React がエスケープ）
-- ただし `style={{ background: searchParam }}` や `<a href={searchParam}>` は React が検証しない
-- 攻撃者は `?q=" onerror="alert(1)` のようなクエリ文字列で属性ブレイクアウトを試みる
+- JSX 内 `{searchParam}` のテキスト埋め込みと通常の属性値は安全（React がエスケープするので、`?q=" onerror="alert(1)` のような属性ブレイクアウトは JSX では成立しない）
+- コンテキスト別の対策: URL を受ける属性（`href` / `src` / `action` / `formAction`）はスキーム検証（Rule 2）、`style` は値の検証（`url(...)` や任意の CSS を入れない）、React 外のテンプレート（メール本文・OGP・自前 HTML 生成）は手動エスケープ（下記）
+- 属性ブレイクアウトは、React の外で HTML 文字列を組み立てる場合に起きる
 - Reflected XSS は OWASP Top 10 で最も多い XSS 種別
 - （手動エスケープの例外条件）HTML エスケープの対象は `& < > " '` の5文字。すべてのエンティティが `&` で始まるため、`&` を最初に置換しないと `&lt;` が `&amp;lt;` になる二重エスケープが起きる。アンエスケープは逆順で、`&amp;` を最後に戻す
 - （エンティティ選択）シングルクォートは名前付き参照の `&apos;` ではなく数値参照の `&#39;` を使う。`&apos;` は XML / HTML5 で定義されたエンティティで、HTML4 等の古い仕様では未定義のため、レガシーパーサでは復元されない
@@ -295,6 +308,7 @@ React の外（メール本文・OGP・ログビューア・自前テンプレ�
 ```tsx
 'use client';
 import { useSearchParams } from 'next/navigation';
+import { isSafeUrl } from '@/lib/url'; // Rule 2 の isSafeUrl
 
 function SearchPage() {
   const params = useSearchParams();
@@ -324,6 +338,8 @@ function SearchPage() {
 **Server Component での扱い**:
 ```tsx
 // page.tsx
+import type { Metadata } from 'next';
+
 type Props = { searchParams: Promise<{ q?: string }> };
 
 export default async function SearchPage({ searchParams }: Props) {
@@ -398,7 +414,7 @@ function unescapeHtml(text: string): string {
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-10-03
+**最終更新**: 2026-10-25
 
 ---
 
@@ -415,24 +431,21 @@ function unescapeHtml(text: string): string {
 
 **コード例**:
 ```ts
-// Next.js: next.config.ts のヘッダー設定
-export default {
+// next.config.ts（他の静的ヘッダと合わせた一括設定は practices/nextjs/security-headers.md #1）
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
   async headers() {
     return [
       {
-        source: '/(.*)',
-        headers: [
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-          // HSTS は HTTPS 全面適用後に
-          { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-        ],
+        source: '/:path*',
+        headers: [{ key: 'X-Content-Type-Options', value: 'nosniff' }],
       },
     ];
   },
 };
+
+export default nextConfig;
 ```
 
 **API レスポンスでも Content-Type を明示**:
@@ -454,28 +467,17 @@ export async function GET() {
 - 配信時は `Content-Disposition: attachment` を付けて inline 表示を防ぐ
 - ファイル名は uuid 化し、拡張子だけで Content-Type を決めない（中身を検証）
 
-**関連セキュリティヘッダー（最低限のセット）**:
-| ヘッダー | 値 | 効果 |
-|---|---|---|
-| `Content-Security-Policy` | strict CSP | XSS 多層防御（`csp.md` 参照） |
-| `X-Content-Type-Options` | `nosniff` | MIME sniffing 無効化 |
-| `X-Frame-Options` | `DENY` または `SAMEORIGIN` | clickjacking 防御 |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` | HTTPS 強制 |
-| `Referrer-Policy` | `strict-origin-when-cross-origin` | リファラ漏洩防止（モダンブラウザの既定値と同じだが、既定に頼らず**明示的に設定する**） |
-| `Permissions-Policy` | feature を明示的に拒否 | カメラ・位置情報等の権限制御 |
+**関連セキュリティヘッダー**: `X-Frame-Options` / `Referrer-Policy` / `Permissions-Policy` などの静的ヘッダの値と実レスポンスでの検証は `practices/nextjs/security-headers.md` #1、CSP は `csp.md`（配信レイヤの分担は `csp.md` #6）を参照。
 
 **出典**:
 - [MDN: X-Content-Type-Options](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options) (MDN Web Docs)
 - [OWASP: Secure Headers Project](https://owasp.org/www-project-secure-headers/) (OWASP)
 - [Next.js Docs: Security Headers](https://nextjs.org/docs/app/building-your-application/configuring/content-security-policy#applying-the-csp-header) (Next.js 公式)
-- [OWASP HTTP Headers Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md) (OWASP CheatSheetSeries 公式、PR #2501 で明確化された Referrer-Policy 既定動作と明示設定の推奨) ※2026-10-03 fetch
-
-> "Modern browsers default to `strict-origin-when-cross-origin`: same-origin requests include the origin, path, and query string in the `Referer` header; cross-origin requests include only the origin, except HTTPS-to-HTTP requests, which omit the header. Set the header explicitly rather than relying on browser defaults."
-> ([HTTP Headers Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md), セクション "Referrer-Policy" > "Recommendation") ※2026-10-03に実際にfetch成功
+- [OWASP HTTP Headers Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/HTTP_Headers_Cheat_Sheet.md) (OWASP CheatSheetSeries 公式) ※2026-10-03 fetch
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-10-03
+**最終更新**: 2026-10-25
 
 ---
 

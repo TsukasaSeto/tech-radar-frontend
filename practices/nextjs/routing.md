@@ -38,28 +38,39 @@ app/
 
 `generateStaticParams` でビルド時に静的生成するパスを指定する。
 
+**根拠**:
+- `generateStaticParams` が返したパラメータごとに、ビルド時にページが生成される。返さなかったパスはリクエスト時に生成される
+- `params` は Promise で渡されるので `await` して読む（v16 で同期アクセスは削除された）
+- 生成対象外のパスを 404 にしたい場合、Cache Components 無効時は `export const dynamicParams = false` を使える。Cache Components 有効時は `dynamicParams` を export するとビルドが失敗するので、データが見つからないときにページ側で `notFound()` を呼ぶ
+
 **コード例**:
 ```tsx
+// app/blog/[slug]/page.tsx
+import { notFound } from 'next/navigation';
+
 export async function generateStaticParams() {
   const posts = await fetchAllPosts();
   return posts.map(post => ({ slug: post.slug }));
 }
 
+// Cache Components 無効時のみ: 生成対象外のパスを 404 にする（有効時はビルドエラーになるので書かない）
 export const dynamicParams = false;
 
-export default async function BlogPost({ params }: { params: { slug: string } }) {
-  const post = await fetchPost(params.slug);
-  if (!post) notFound();
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await fetchPost(slug);
+  if (!post) notFound(); // Cache Components 有効時は、生成対象外のパスもここで 404 にする
   return <article>{post.content}</article>;
 }
 ```
 
 **出典**:
 - [Next.js Docs: generateStaticParams](https://nextjs.org/docs/app/api-reference/functions/generate-static-params) (Next.js公式)
+- [Next.js Docs: Migrating to Cache Components — `dynamicParams` is not supported](https://nextjs.org/docs/app/guides/migrating-to-cache-components#dynamicparams-is-not-supported) (Next.js 公式、Cache Components 有効時に `dynamicParams` を export するとビルドが失敗し、代わりに `notFound()` を使う) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 15+（`params` は Promise。v14 以前は同期オブジェクト、v16 で同期アクセスは削除）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -160,25 +171,27 @@ app/
 
 ### 6. Intercepting Routes のマッチング規則（`(.)` / `(..)` / `(...)`）を正しく使う
 
-Intercepting Routes はフォルダの相対的な深さに基づいたマッチング記法を持つ。モーダルや先読みプレビューなどの高度なUIパターンを正確に実装するために記法を理解する。
+Intercepting Routes は、ルートセグメントの相対的な位置に基づいたマッチング記法を持つ。基準はファイルシステムのフォルダの深さではなくルートセグメントで、Parallel Routes の `@slot` フォルダはセグメントに数えない。モーダルや先読みプレビューなどの高度なUIパターンを正確に実装するために記法を理解する。
 
 **根拠**:
 - 記法を誤るとルートがインターセプトされず、単純なページ遷移になってしまう
 - クライアントナビゲーションとURLの直接アクセスで異なる表示を提供できる（URLシェア可能なモーダル等）
-- ハードリフレッシュ（フルSSR）では、クライアントナビゲーション時のスロット状態を引き継げないため、各スロットについて現在のURLに一致するルートを個別に解決し直す。一致するルートを持たないスロットがあると、Next.js は 404 にフォールバックする。`default.tsx` はこの「一致なし」時に描画するフォールバックであり、`@modal` のようなオプショナルなスロットに限らず**全てのスロットに用意しないと、ハードリフレッシュだけで 404 になる**
+- ハードリフレッシュ（フルSSR）では、クライアントナビゲーション時のスロット状態を引き継げないため、各スロットについて現在のURLに一致するルートを個別に解決し直す。`default.tsx` はこの「一致なし」時に描画するフォールバックであり、`@modal` のようなオプショナルなスロットに限らず**全てのスロットに用意する**
+- v16 では、`default.js` がないスロットがあるとビルドが失敗する。v15 以前はビルドは通り、一致するルートを持たないスロットがあるとハードリフレッシュ時だけ 404 になっていた
 
 **コード例**:
 ```
-# マッチング規法
+# マッチング規則（基準はルートセグメント。@slot フォルダは数えない）
 # (.)  — 同じ階層のセグメントと一致
-# (..) — 一つ上の階層と一致
+# (..) — 一つ上の階層のセグメントと一致
 # (...) — app ルートからと一致
 
 app/
 ├── feed/
 │   └── page.tsx                      # /feed
 ├── @modal/
-│   └── (.)photos/[id]/page.tsx       # /feed からナビゲート時にインターセプト
+│   └── (.)photos/[id]/page.tsx       # /feed などからの遷移で /photos/[id] をインターセプト
+│                                     # （@modal はセグメントに数えないので、app 直下の photos と同じ階層として (.) を使う）
 ├── photos/
 │   └── [id]/page.tsx                 # URL直接アクセス時はフルページ表示
 └── layout.tsx                        # @modal スロットを受け取る
@@ -209,8 +222,8 @@ export default function Default() {
 }
 
 // Bad: 一部のスロットにだけ default.tsx を用意する
-// app/@analytics/ に default.tsx がないと、/dashboard 以外の URL へのハードリフレッシュで
-// @analytics スロットが解決できず、ページ全体が 404 になる
+// v16 では app/@analytics/ に default.tsx がないとビルドが失敗する
+// （v15 以前は、/dashboard 以外の URL へのハードリフレッシュで @analytics スロットが解決できず、ページ全体が 404 になっていた）
 
 // Good: 全スロットに default.tsx を用意する
 // app/@analytics/default.tsx
@@ -224,13 +237,15 @@ export default function DefaultAnalytics() {
 > ([Fix Next.js Parallel Routes 404 on Refresh | App Router Guide](https://dev.to/nainikmehta/fix-nextjs-parallel-routes-404-on-refresh-app-router-guide-11o2), セクション本文) ※2026-09-10に実際にfetch成功
 
 **出典**:
-- [Next.js Docs: Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes) (Next.js公式 / 2024)
+- [Next.js Docs: Intercepting Routes](https://nextjs.org/docs/app/api-reference/file-conventions/intercepting-routes) (Next.js公式、`(..)` はルートセグメント基準で `@slot` フォルダを数えない) ※2026-10-25 確認
+  > "The `(..)` convention is based on *route segments*, not the file-system. For example, it does not consider `@slot` folders in Parallel Routes."
 - [Next.js Docs: Parallel Routes](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes) (Next.js公式 / 2024)
+- [Next.js Docs: How to upgrade to version 16 — Parallel Routes `default.js` requirement](https://nextjs.org/docs/app/guides/upgrading/version-16#parallel-routes-defaultjs-requirement) (Next.js 公式、全スロットに `default.js` が必須でないとビルドが失敗する) ※2026-10-25 確認
 - [Fix Next.js Parallel Routes 404 on Refresh | App Router Guide](https://dev.to/nainikmehta/fix-nextjs-parallel-routes-404-on-refresh-app-router-guide-11o2) (dev.to、ハードリフレッシュで一部スロットのみ 404 になる具体的な再現条件と `default.js` による修正例) ※2026-09-10 fetch
 
-**バージョン**: Next.js 15+
+**バージョン**: Next.js 15+（`default.js` が全スロットで必須になりビルドが失敗するのは 16+）
 **確信度**: 高
-**最終更新**: 2026-09-10
+**最終更新**: 2026-10-25
 
 ---
 
@@ -239,27 +254,35 @@ export default function DefaultAnalytics() {
 App Router の SEO 対策は3つのファイルで構成する。
 `generateMetadata` でページごとのメタデータ（title / description / OG / canonical）を動的に生成し、
 `app/sitemap.ts` で全 URL を登録し、`app/robots.ts` でクローラーアクセスを制御する。
-`'use client'` が必要なページは metadata を export できないため、親の layout.tsx（Server Component）に `generateMetadata` を置く。
+`metadata` / `generateMetadata` は Server Component でしか export できない。`'use client'` が必要な画面は、page.tsx を Server Component のまま保ち、クライアント部分を別ファイルの Client Component に切り出す。
 
 **根拠**:
 - App Router は静的 `<head>` タグよりも `generateMetadata` が推奨（ページごとに動的に設定できる）
 - `sitemap.ts` / `robots.ts` はルートに置くだけで Next.js が自動的に `/sitemap.xml` / `/robots.txt` として配信
-- `'use client'` のページでは metadata export が不可のため、layout.tsx への委譲パターンが必要（Zenn SSG記事で実証）
+- `metadata` と `generateMetadata` は Server Component でのみサポートされる（公式）。公式は page.tsx を Server Component のまま保ち、Client Component を別ファイルに分ける方法を示している。親の layout.tsx に metadata を置く方法もあるが、その layout 配下のすべてのページに効く
+- `params` は Promise で渡されるので `await` して読む（v16 で同期アクセスは削除された）
 
 **コード例**:
 ```tsx
 // app/blog/[slug]/page.tsx — 動的メタデータ
-export async function generateMetadata({ params }: { params: { slug: string } }) {
-  const post = await fetchPost(params.slug);
+import type { Metadata } from 'next';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const post = await fetchPost(slug);
   return {
     title: post.title,
     description: post.excerpt,
     openGraph: {
       title: post.title,
       description: post.excerpt,
-      url: `https://example.com/blog/${params.slug}`,
+      url: `https://example.com/blog/${slug}`,
     },
-    alternates: { canonical: `https://example.com/blog/${params.slug}` },
+    alternates: { canonical: `https://example.com/blog/${slug}` },
   };
 }
 
@@ -286,19 +309,35 @@ export default function robots(): MetadataRoute.Robots {
   };
 }
 
-// 'use client' ページは layout.tsx に metadata を委譲
-// app/dashboard/layout.tsx（Server Component）
-export const metadata = { title: 'Dashboard', description: '...' };
-// app/dashboard/page.tsx
-'use client'; // ここに metadata export は書けない
+// 'use client' が必要な画面: page.tsx は Server Component のまま metadata を export し、
+// クライアント部分を別ファイルに切り出す
+// app/dashboard/page.tsx（Server Component）
+import type { Metadata } from 'next';
+import { DashboardClient } from './dashboard-client';
+
+export const metadata: Metadata = { title: 'Dashboard', description: '...' };
+
+export default function Page() {
+  return <DashboardClient />;
+}
+
+// app/dashboard/dashboard-client.tsx
+'use client'; // このファイルには metadata を書けない
+export function DashboardClient() {
+  // hooks やイベントハンドラーを使う部分
+  return null;
+}
 ```
 
 **出典**:
 - [Next.js App RouterでSSG+SEOページを100枚量産する設計パターン](https://zenn.dev/keisuke58/articles/nextjs-ssg-seo-100pages) (Zenn / 2026-05) ※2026-05-06に実際にfetch成功
+- [Next.js Docs: generateMetadata](https://nextjs.org/docs/app/api-reference/functions/generate-metadata) (Next.js 公式、Server Component 限定である点と、page を Server Component のまま Client Component を分ける方法) ※2026-10-25 確認
+  > "The `metadata` object and `generateMetadata` function exports are **only supported in Server Components**."
+- [Next.js Docs: sitemap.xml](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/sitemap) (Next.js 公式) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
-**確信度**: 高
-**最終更新**: 2026-05-06
+**バージョン**: Next.js 15+（`params` は Promise。v14 以前は同期オブジェクト）
+**確信度**: 高（Metadata API の仕様は公式ドキュメントで確認）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -313,74 +352,93 @@ export const metadata = { title: 'Dashboard', description: '...' };
 
 ---
 
-### 8. `layout.tsx` の3つの責務（ナビゲーション宣言・Provider配置・共通ロジック）を明確に分離する
+### 8. `layout.tsx` は共有 UI と Provider の配置に限定し、認証・認可のガードは置かない
 
-`layout.tsx` が担う責務を「ナビゲーション種別の宣言」「Provider 配置」「共通ロジック（認証ガード・リダイレクト等）」の3つとして意識し、1ファイルに責務が混在しすぎないよう整理する。
+`layout.tsx` の役割は、配下のルートで共有する UI（ヘッダー・サイドバーなど）と、配下で使う Context / Provider の配置に限る。
+認証・認可のチェックは `page.tsx` の冒頭と DAL（最後の砦）で行い、Proxy は Cookie の有無を見る楽観的チェックにとどめる。
+layout はクライアント遷移のたびに再レンダリングされないため、layout に書いたチェックはルートを移るたびには実行されない。layout は子のルートセグメントや parallel route のレンダリングを止めることもできないので、layout のガードでは子ページも Server Action も守れない。
 
 **根拠**:
-- `layout.tsx` はファイル数を増やすためではなく、「ナビゲーション形式が変わる」または「新しい共通ロジックが必要」な場合にのみ追加する
-- 3つの責務を意識することで、認証ガードの位置・Provider のスコープ・ネストされたヘッダー表示などの設計判断が明確になる
-- `layout.tsx` はクライアント遷移のたびに再実行されず、ブラウザに保持される。ゲートとなる layout の `redirect()` 先を**同じ layout の配下**に置くと、遷移先でも layout が再評価されず、リダイレクトが繰り返されて `_rsc` リクエストが連続発行される無限ループになる（ページ単体のテストでは検出しづらい）
-- Expo Router でも同様の設計が適用でき、クロスプラットフォームでのレイアウト設計知識が共通化できる
-
-**3つの責務**:
-1. **ナビゲーション種別の宣言**: Stack / Tabs / Drawer / Slot のどれを使うかを明示
-2. **Provider 配置**: 配下の画面で使う Context や状態を提供
-3. **共通ロジック**: 認証ガード、リダイレクト、ログ送信などの横断的関心事
+- 公式の Authentication ガイドは、layout は遷移時に再レンダリングされず、ルートが変わるたびにはセッションが確認されないため、layout でのチェックに注意するよう求めている。チェックはデータソースの近く（DAL）か、条件付きで描画するコンポーネントで行う
+- layout が子を隠したり差し替えたりしても、子のルートセグメントと parallel route のスロットはルーターが描画するので、実行も RSC Payload への出力も止まらない
+- Server Action は layout とは別の POST エンドポイントとして呼ばれるので、layout のガードを通らない。Action 内でも認証・認可が必要（`server-actions.md` #5）
+- `layout.tsx` はファイル数を増やすためではなく、「共有 UI が変わる」または「Provider のスコープを分けたい」場合にだけ追加する
+- 既存コードで layout に `redirect()` のゲートを置いている場合、redirect 先を同じ layout の配下に置くと、遷移先でも layout が再評価されず、リダイレクトが繰り返されて `_rsc` リクエストが連続発行される無限ループになる（ページ単体のテストでは検出しづらい）。ゲートは page と DAL に移す
+- 優先順位 A（`README.md`）と `practices/architecture/data-access-layer.md` #4 の「layout では認可しない」に合わせる
 
 **コード例**:
 ```
 app/
-├── layout.tsx              # 責務①: ルートレイアウト + 責務②: 全体Provider
+├── layout.tsx              # ルートレイアウト + 全体の Provider
 ├── (auth)/
-│   ├── layout.tsx          # 責務③: 認証チェック + リダイレクト / 責務①: headerShown=false Stack
+│   ├── layout.tsx          # 認証フロー用の共有 UI（ロゴだけのヘッダーなど）
 │   └── login/page.tsx
 └── (app)/
-    ├── layout.tsx          # 責務③: 認証必須ガード / 責務①: Tabs ナビゲーション
-    └── dashboard/page.tsx
+    ├── layout.tsx          # サイドバー付きの共有 UI（認証・認可は置かない）
+    └── dashboard/page.tsx  # page 冒頭で verifySession()、個別データの認可は DAL
 ```
 
 ```tsx
-// app/(app)/layout.tsx — 責務が明確
-import { redirect } from 'next/navigation';
-import { getSession } from '@/lib/auth';
+// Good: app/(app)/layout.tsx — 共有 UI と Provider だけを置く
+import { Sidebar } from '@/components/Sidebar';
+import { ThemeProvider } from '@/components/ThemeProvider';
 
-export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  // 責務③: 認証ガード（共通ロジック）
-  const session = await getSession();
-  if (!session) {
-    redirect('/login');
-  }
-
-  // 責務②: 認証済みユーザー向けのProvider
+export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <UserProvider user={session.user}>
-      {/* 責務①: 認証済みページのナビゲーション構造 */}
+    <ThemeProvider>
       <div className="flex">
         <Sidebar />
         <main>{children}</main>
       </div>
-    </UserProvider>
+    </ThemeProvider>
   );
 }
-
-// 注意: redirect 先（例: MFA 登録ページ）はゲートのある layout の配下に置かず、
-// route group（例: app/(mfa-enrollment)/app/account/mfa/page.tsx）で layout の外に出す。
-// URL は変わらず、layout だけが分離される。
-
-// アンチパターン: layout.tsx を「ファイル整理のため」だけに追加しない
-// ナビゲーション変更・Provider追加・共通ロジックの追加がなければ不要
 ```
 
+```tsx
+// Good: app/(app)/dashboard/page.tsx — 認証は page 冒頭、個別データの認可は DAL
+import { redirect } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { getMyDashboard } from '@/app/_lib/dal/dashboard';
+import { Dashboard } from '@/components/Dashboard';
+
+export default async function DashboardPage() {
+  const session = await verifySession(); // page 冒頭の粗いガード
+  if (!session) redirect('/login');
+
+  const dashboard = await getMyDashboard(); // DAL の中でも verifySession() で認可する
+  return <Dashboard data={dashboard} />;
+}
+```
+
+```tsx
+// Bad: layout で認証ガードする
+// クライアント遷移では再実行されず、子ページのレンダリングや Server Action の呼び出しも止められない
+import { redirect } from 'next/navigation';
+import { getSession } from '@/lib/auth';
+
+export default async function AppLayout({ children }: { children: React.ReactNode }) {
+  const session = await getSession();
+  if (!session) redirect('/login');
+  return <main>{children}</main>;
+}
+```
+
+**アンチパターン**:
+- layout.tsx を「ファイル整理のため」だけに追加する（共有 UI と Provider に変化がなければ不要）
+- layout で `return null` や redirect をして配下を守れたと考える（子のセグメント・スロット・Server Action は別に実行される）
+
 **出典**:
-- [Expo Router / Next.js App Router のレイアウト設計を責務で整理する](https://zenn.dev/kaji_kaji/articles/file-based-routing-layout-design) (Zenn kaji_kaji / 2026-05-07) ※2026-05-07に実際にfetch成功
+- [Next.js Docs: Authentication — Layouts and auth checks](https://nextjs.org/docs/app/guides/authentication#layouts-and-auth-checks) (Next.js 公式、layout は遷移時に再レンダリングされず、子セグメントの描画も止めない) ※2026-10-25 確認
+  > "Due to Partial Rendering, be cautious when doing checks in Layouts as these don't re-render on navigation, meaning the user session won't be checked on every route change."
+- [Expo Router / Next.js App Router のレイアウト設計を責務で整理する](https://zenn.dev/kaji_kaji/articles/file-based-routing-layout-design) (Zenn kaji_kaji / 2026-05-07、layout を追加する条件の整理) ※2026-05-07に実際にfetch成功
 - [Next.js App Router：layout で redirect する先をその layout の配下に置くと、クライアント遷移で無限ループする](https://qiita.com/20051215kaito/items/3ea9e7765fe60d98f244) (Qiita 20051215kaito、layout ゲートの redirect 先を route group で layout 外へ出す。単一記事) ※2026-10-15 fetch
   > "App Router は、共通の layout をクライアント遷移のたびに作り直しません。"
   > (セクション "原因")
 
 **バージョン**: Next.js 14+, App Router
-**確信度**: 高
-**最終更新**: 2026-10-15
+**確信度**: 高（layout でガードしない理由は公式ドキュメントで確認。`_rsc` の無限ループは単一記事の報告）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -391,47 +449,67 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 SEO クローラー・BFF・監視ツールが HTTP ステータスコードに依存している場合に影響が出る。
 
 **根拠**:
-- ストリーミングレスポンスは HTTP ヘッダーを最初のチャンク送信時に確定させる仕様（HTTP/1.1 標準）
+- 公式の `loading.js` リファレンスによると、ストリーミングするレスポンスは 200 で始まり、ストリームを開始した時点でレスポンスヘッダーが送られてステータスコードが確定する。`loading.tsx` のフォールバックが描画された時点、または `<Suspense>` 配下の Server Component が suspend した時点でストリームが始まる
+- それより前に `notFound()` / `forbidden()` / `unauthorized()` を呼べば、404 / 403 / 401 のステータスが保たれる
 - Next.js は `loading.tsx` の存在をもって Suspense 境界を自動挿入し、ローディング UI のチャンクを先行送信する
 - 親ディレクトリの `loading.tsx` も子ルートを Suspense でラップするため、直接配置した覚えがなくても発生する
+- ストリーム中に 404 ページを返した場合、Next.js は `<meta name="robots" content="noindex">` を付けるので検索結果には載らない。ただしステータスは 200 のままなので、ステータスコードで判定する監視・分析・BFF には 404 として伝わらない
 
 **コード例**:
 ```tsx
 // Bad: loading.tsx が存在するセグメントで notFound() を呼ぶと 200 が返る
 // app/blog/[slug]/loading.tsx が存在する状態で:
-export default async function BlogPost({ params }: { params: { slug: string } }) {
-  const post = await fetchPost(params.slug);
+import { notFound } from 'next/navigation';
+
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await fetchPost(slug);
   if (!post) notFound(); // ← HTTP は 200 のまま（ヘッダー送信済み）
   return <article>{post.content}</article>;
 }
+```
 
-// Good パターン1: loading.tsx を削除し Suspense 境界を手動制御する
-// app/blog/[slug]/loading.tsx を削除 → notFound() が正しく 404 を返す
+```tsx
+// Good: loading.tsx を置かず、存在確認（notFound）を Suspense 境界の外で先に済ませる
+// app/blog/[slug]/page.tsx（このセグメントと親に loading.tsx がない状態）
+import { Suspense } from 'react';
+import { notFound } from 'next/navigation';
 
-// Good パターン2: middleware でリソース存在確認を先行させる
-// middleware.ts:
-export async function middleware(request: NextRequest) {
-  const slug = request.nextUrl.pathname.split('/').pop()!;
-  const exists = await checkPostExists(slug);
-  if (!exists) return NextResponse.rewrite(new URL('/not-found', request.url));
-  return NextResponse.next();
+export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await fetchPost(slug);
+  if (!post) notFound(); // ストリーミング開始前なので 404 になる
+
+  return (
+    <article>
+      <h1>{post.title}</h1>
+      <Suspense fallback={<CommentsSkeleton />}>
+        <Comments postId={post.id} /> {/* 遅い部分だけを Suspense でストリーミングする */}
+      </Suspense>
+    </article>
+  );
 }
 ```
 
 **アンチパターン**:
 - `loading.tsx` を使いつつ同セグメントで `notFound()` によるエラーハンドリングをしている（HTTP ステータスが 200 になる）
 - 親ディレクトリに `loading.tsx` があることに気づかず `notFound()` が効いていると思い込む
+- 404 判定のために Proxy で毎リクエスト DB から本文を取得する（公式は Proxy で slug を確認して not-found へ rewrite する方法も挙げているが、Proxy は全リクエストで走るため、本文は取得せず軽量な確認に限る。`middleware.md` #1）
 
 **出典引用**:
 > "ストリーミング時は200が返る。`redirect` や `notFound` によるエラーはストリームのコンテンツ内で伝達される。レスポンスヘッダーはすでに送信されているため、ステータスコードを更新することはできない。"
 > ([Next.js: loading.tsx があると notFound() が 200 を返すことがある（仕様です）](https://zenn.dev/av_shiritai/articles/66f9bcaa7df414), セクション "原因") ※2026-06-12に実際にfetch成功
 
+> "Starting the stream sends the response headers and fixes the status code."
+> ([Next.js Docs: loading.js](https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes), セクション "Status codes") ※2026-10-25 確認
+
 **出典**:
 - [Next.js: loading.tsx があると notFound() が 200 を返すことがある（仕様です）](https://zenn.dev/av_shiritai/articles/66f9bcaa7df414) (Zenn、streaming + notFound() の挙動解説と3つの対策) ※2026-06-12に実際にfetch成功
+- [Next.js Docs: loading.js — Status codes](https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes) (Next.js 公式、ストリーム開始でステータスが確定する点と、開始前に notFound() を呼べば 404 が保たれる点) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+ (App Router)
-**確信度**: 高
-**最終更新**: 2026-06-12
+**バージョン**: Next.js 15+ (App Router)（コード例の `params` は Promise。v14 以前は同期オブジェクト）
+**確信度**: 高（公式ドキュメントで確認）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -445,7 +523,7 @@ Next.js 16.4 以降は `create-next-app` が両フラグを既定で有効化す
 **根拠**:
 - サーバー駆動アプリのナビゲーションが「遅く感じる」根本原因は、クリック後のネットワーク往復とサーバー処理の 2 つ。`<Suspense>`（ストリーム）か `"use cache"`（キャッシュ）でサーバー処理ブロックを排除し、シェルプリフェッチでネットワーク往復を隠蔽することで両方を解消する
 - 旧来の per-link プリフェッチは同一ルートに 20 個のリンクがあれば 20 リクエストを発行していた。`partialPrefetching` は同じルートを 1 リクエスト（シェル）で済ませ、キャッシュされたシェルをすべてのリンクで再利用する
-- `export const instant = false` を page.tsx / layout.tsx に書くことで、特定ルートをサーバーバウンド（クリック後にサーバー完了を待つ従来動作）に戻せる。ブログ記事など「ローディング UI を見せたくない」ルートに用いる
+- `export const instant = false` は、そのセグメント（page / layout / parallel route のスロット）をインスタントナビゲーションの検証から外し、サーバーでのブロッキングを許可する設定。ルートを動的にするわけではなく（プリレンダーできるルートは静的シェルを出す）、既存の `<Suspense>` やローディング UI を消すわけでもない。Cache Components へ段階的に移行する間、まだ対応していないルートに付けておく使い方が公式の想定（codemod `cache-components-instant-false` で一括付与できる）。`new Date()` などの同期 IO によるビルドエラーは `instant = false` でも解消しない
 - `instant()` Playwright テストヘルパーでナビゲーション後に「何が即座に表示されるか」を Assertion できる。CI でインスタントナビゲーションのリグレッションを防止できる
 
 **コード例**:
@@ -460,18 +538,29 @@ export default nextConfig;
 ```
 
 ```tsx
-// Good: Suspense でストリーム → ナビゲーションが即座（シェル表示 → データ流入）
-export default async function ProductPage({ params }) {
+// Good: params の Promise を Suspense の内側に渡して await する（シェル表示 → データ流入）
+// app/products/[slug]/page.tsx
+import { Suspense } from 'react';
+
+export default function ProductPage({ params }: { params: Promise<{ slug: string }> }) {
   return (
     <Suspense fallback={<ProductSkeleton />}>
-      <ProductDetails slug={params.slug} />
+      <ProductDetails params={params} />
     </Suspense>
   );
 }
 
-// Good: 特定ルートをブロック（ローディング UI なしでサーバー完了を待つ）
+async function ProductDetails({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const product = await getProduct(slug);
+  return <h1>{product.name}</h1>;
+}
+```
+
+```tsx
+// 移行中: まだ対応していないルートを検証から外し、サーバーでのブロッキングを許可する
 // app/blog/[slug]/page.tsx
-export const instant = false; // このルートはサーバーバウンドで動作
+export const instant = false; // ルートを動的にはしない。Suspense やローディング UI もそのまま
 ```
 
 ```ts
@@ -492,7 +581,8 @@ test('product title is immediately visible', async ({ page }) => {
 
 **アンチパターン**:
 - `cacheComponents: true` だけ有効化して `partialPrefetching` を忘れる（プリフェッチの最適化が効かない）
-- ローディング UI を絶対に見せたくないルートで `export const instant = false` を書き忘れ、スケルトンが意図せず表示される
+- `export const instant = false` を「ローディング UI を消す設定」と誤解して付ける（検証から外れるだけで、Suspense のフォールバックは表示される）
+- `instant = false` を付けたまま放置し、ルートごとの移行（`use cache` / `<Suspense>` での対応）を終えない
 - `instant()` テストを書かずにインスタント性をリリース後に壊す
 
 **出典引用**:
@@ -505,10 +595,12 @@ test('product title is immediately visible', async ({ page }) => {
 **出典**:
 - [Next.js 16.3: Instant Navigations](https://nextjs.org/blog/next-16-3-instant-navigations) (Next.js 公式ブログ)
 - [Improving navigation experience in v0 with Next.js 16.4](https://nextjs.org/blog/improving-navigation-experience-in-v0-with-nextjs-16-4) (Next.js 公式ブログ、16.4 で両フラグが `create-next-app` の既定になった点) ※2026-10-17 fetch
+- [Next.js Docs: Migrating to Cache Components — Opting out of validation](https://nextjs.org/docs/app/guides/migrating-to-cache-components#opting-out-of-validation) (Next.js 公式、`instant = false` の意味と段階移行の手順) ※2026-10-25 確認
+  > "`instant = false` marks a segment as *allowed to block*. It does not force the route to be dynamic, so a genuinely prerenderable route still ships a static shell."
 
 **バージョン**: Next.js 16.3 Preview+（`cacheComponents: true` + `partialPrefetching: true` 必須。16.4+ は `create-next-app` の既定）
-**確信度**: 高（Next.js 公式ブログ）
-**最終更新**: 2026-10-17
+**確信度**: 高（Next.js 公式ブログ・公式ドキュメント）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -629,7 +721,7 @@ Partial Prefetching 環境では `prefetch={true}` が動的ルート（`/produc
 **根拠**:
 - v0 では全カードに richer prefetch を入れた結果、`/templates/[id]` へのプリフェッチリクエストが **2.9 倍** に増えた。意図ベースに切り替えて抑制した
 - 件数が少なく固定のリンク群は、ビューポート進入時プリフェッチのままで問題ない（グリッド・長いリストだけが対象）
-- 共有可能な公開データは `'use cache: remote'` + `cacheTag` + `cacheLife`、ユーザー固有データは `'use cache: private'`（ブラウザ内保持）と分ける。失効は、公開データは `revalidateTag()`、ユーザーが更新する private データの即時反映は `updateTag()` と使い分ける
+- v0 は、共有可能な公開データを `'use cache: remote'` + `cacheTag` + `cacheLife`、ユーザー固有データを `'use cache: private'`（ブラウザ内保持）に分けた。失効は、公開データは `revalidateTag()`、ユーザーが更新するデータの即時反映は `updateTag()` と使い分ける。ユーザー固有データの扱いは、まず検証済みの userId を引数に渡す `'use cache'` を検討し、`'use cache: private'` はそれが成り立たない場合に選ぶ（選び方は `caching.md` #8）
 - 効果は Runtime Cache 費用・リクエスト数・Active CPU・プリフェッチのデータ転送量の 4 指標で PR ごとに検証する。v0 の事例では Runtime Cache 費用が 4.3 倍（約 $3.44/日増）、リクエスト処理コストが 14.4% 減だった。全体の日次コストは 2.9% 減だが、公式ブログは同期間にトラフィック等も変動したため「悪化しなかったことの確認」として扱うと明記しており、削減効果の根拠にはしない
 
 **コード例**:
@@ -639,7 +731,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 
 // Good: 意図を検知してから richer prefetch に昇格する（大きなグリッド向け）
-export function TemplateCard({ href }: { href: string }) {
+export function TemplateCard({ href, children }: { href: string; children: React.ReactNode }) {
   const [intent, setIntent] = useState(false);
   return (
     <Link
@@ -648,7 +740,9 @@ export function TemplateCard({ href }: { href: string }) {
       onMouseEnter={() => setIntent(true)}
       onFocus={() => setIntent(true)}
       onTouchStart={() => setIntent(true)}
-    />
+    >
+      {children} {/* カードのタイトルなど、リンクのアクセシブルな名前になる内容 */}
+    </Link>
   );
 }
 
@@ -658,7 +752,7 @@ export function TemplateCard({ href }: { href: string }) {
 
 **アンチパターン**:
 - 大きなグリッドの全リンクに `prefetch={true}` を付け、プリフェッチ量とキャッシュ費用の増加を計測しない
-- ユーザー固有コンテンツを共有キャッシュ（`'use cache: remote'`）に載せる（`scope` 等をキャッシュキーに含めた `'use cache: private'` を使う）
+- ユーザー固有コンテンツを、ユーザーを区別しないキーで `'use cache'` / `'use cache: remote'` に載せる（検証済みの userId を引数に渡すか、`'use cache: private'` を使う。`caching.md` #8）
 
 **出典引用**:
 > "The agent changed the richer prefetch to wait for user intent, starting on hover, focus, or touch rather than when the card entered the viewport."
@@ -666,6 +760,6 @@ export function TemplateCard({ href }: { href: string }) {
 
 **バージョン**: Next.js 16.4+（`cacheComponents: true` + `partialPrefetching: true`）
 **確信度**: 高（Next.js 公式ブログ）
-**最終更新**: 2026-10-16
+**最終更新**: 2026-10-25
 
 ---

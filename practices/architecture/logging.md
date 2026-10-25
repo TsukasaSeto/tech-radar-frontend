@@ -27,8 +27,8 @@
 具体的な書き方は [`observability/logging.md`](../observability/logging.md)、エラー特化の経路は [`observability/error-tracking.md`](../observability/error-tracking.md)、分散トレーシングは [`observability/tracing.md`](../observability/tracing.md) を参照。
 
 **バージョン**: 全フロントエンド共通
-**確信度**: 高
-**最終更新**: 2026-05-16
+**確信度**: 中（出典なし）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -45,8 +45,8 @@
 実装パターン（`beforeSend` / `beforeBreadcrumb` での自動マスク、Pino `redact` 設定）は [`observability/logging.md`](../observability/logging.md) Rule #1 および [`observability/error-tracking.md`](../observability/error-tracking.md) Rule #3 に集約。
 
 **バージョン**: Pino 9+, @sentry/nextjs 8+
-**確信度**: 高
-**最終更新**: 2026-05-16
+**確信度**: 中（出典なし）
+**最終更新**: 2026-10-25
 
 ---
 

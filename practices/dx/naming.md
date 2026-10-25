@@ -36,7 +36,7 @@ import { UserAvatar, type UserAvatarProps } from '@/components/UserAvatar';
 **避けるべき**:
 ```tsx
 // Bad: 小文字始まり
-function userAvatar() { ... }  // ← React が HTML 要素として解釈
+function userAvatar() { ... }  // ← <userAvatar /> と書くと React は HTML 要素（タグ名）として扱う
 
 // Bad: index.tsx だらけ（ファイル検索でヒットしない）
 // components/UserAvatar/index.tsx
@@ -84,7 +84,7 @@ components/UserAvatar/
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -355,40 +355,43 @@ type CartProps = {
 
 **`async` イベントハンドラー**:
 ```tsx
-// Good: async ハンドラーは即時 awaitable な値を返さない
+// Good: async ハンドラーが返す Promise を React は待たない。例外はハンドラー内で捕まえて state に反映する
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   try {
     await api.save(data);
   } catch (err) {
-    setError(err.message);
+    setError(err instanceof Error ? err.message : '保存に失敗しました');
   }
 };
 
-// async-await を JSX 内で書かない（戻り値が unfulfilled promise になる）
+// JSX にインラインの async 関数を並べると例外処理が散らばるので、handle* に切り出して渡す
 <form onSubmit={handleSubmit}>...</form>
 ```
 
 **チームでの徹底**:
-ESLint rule で強制可能:
+`@typescript-eslint/naming-convention` で、関数型の props に `handle*` を付けることは禁止できる:
 ```js
-// .eslintrc.js
-'naming-convention': ['error', {
-  selector: 'parameter',
-  filter: { regex: '^(handle|on)[A-Z].*$', match: false },
-  format: ['camelCase'],
+// eslint.config.js の rules（types オプションは型情報を使うので typed linting が前提）
+'@typescript-eslint/naming-convention': ['error', {
+  selector: 'typeProperty',
+  types: ['function'],
+  format: null,
+  custom: { regex: '^handle[A-Z]', match: false },
 }]
 ```
 
-ただし naming-convention は厳しすぎると開発体験を損なうので、PR レビューで指摘する程度の運用が現実的。
+内部関数を `handle*` にする側は、props の分割代入と区別できないため lint では強制しにくい。naming-convention は厳しすぎると開発体験を損なうこともあり、PR レビューで指摘する程度の運用が現実的。
 
 **出典**:
 - [React Docs: Responding to Events](https://react.dev/learn/responding-to-events#naming-event-handler-props) (React 公式)
 - [Airbnb React Style Guide: Naming](https://github.com/airbnb/javascript/tree/master/react#naming) (Airbnb)
+- [typescript-eslint: naming-convention](https://typescript-eslint.io/rules/naming-convention/) (typescript-eslint、`typeProperty` セレクタと `types` オプションは型情報が必要) ※2026-10-25 確認
+- catch 節の `unknown` の絞り込みは [`typescript/strict-mode.md`](../typescript/strict-mode.md) #6 を参照
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -409,7 +412,7 @@ ESLint rule で強制可能:
 type User = { name: string; email: string };
 type UserId = string;
 interface ApiResponse<T> { data: T; error: null }
-enum Status { Active, Inactive, Banned }
+enum UserStatus { ACTIVE, INACTIVE, BANNED }  // メンバーは UPPER_CASE（下の ESLint 設定と一致）
 
 // Good: 関数 / 変数 = camelCase
 const currentUser = await fetchUser(id);
@@ -446,7 +449,8 @@ const Role = {
 type Role = typeof Role[keyof typeof Role];
 
 // 理由:
-// - Tree-shake friendly（enum はランタイムオブジェクトを生成、as const は型のみ）
+// - Tree-shake friendly（as const は型アサーションなので出力から消え、残るのは普通のオブジェクト。
+//   enum は IIFE で値を組み立てるコードを生成し、未使用でもバンドラーが削除しにくい）
 // - 文字列リテラル型として扱える
 // - JSON にそのまま乗る
 // - TypeScript 5.0+ では enum も改善されているが、as const のほうがコード生成が軽量
@@ -470,7 +474,7 @@ function foo() {
 
 **型エイリアス vs Interface**:
 ```ts
-// type を基本とし、宣言マージが必要なら interface（typescript/utility-types.md Rule 1 参照）
+// type を基本とし、宣言マージが必要なら interface（typescript/type-design.md #1 参照）
 type ButtonProps = { ... };       // 推奨デフォルト
 interface Window { customProp: string; }  // declaration merging
 ```
@@ -496,7 +500,7 @@ interface Window { customProp: string; }  // declaration merging
   {
     selector: 'variable',
     modifiers: ['const', 'global'],
-    format: ['UPPER_CASE', 'camelCase'],  // 両方許容
+    format: ['UPPER_CASE', 'camelCase', 'PascalCase'],  // PascalCase は as const の enum-like オブジェクト用
   },
 ]
 ```
@@ -513,4 +517,4 @@ interface Window { customProp: string; }  // declaration merging
 
 **バージョン**: TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

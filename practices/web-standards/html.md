@@ -124,42 +124,53 @@
 
 ### 3. `<head>` のメタタグを適切に設定する
 
-`charset`・`viewport`・OGP などの必須メタタグを設定し、
-Next.js の `metadata` API を使って管理する。
+`viewport`・OGP などのメタタグを Next.js の `metadata` API で管理する。
+`charset` と `viewport` の meta は Next.js が自動で出力するので、自分では書かない。
 
 **根拠**:
-- `viewport` の設定がないとモバイルで正しく表示されない
+- `viewport` の設定がないとモバイルで正しく表示されない（Next.js は `<meta name="viewport" content="width=device-width, initial-scale=1">` を既定で出力する。変える場合は `viewport` export / `generateViewport` を使う）
 - OGP タグがないと SNS シェア時にプレビューが表示されない
-- `charset` の未設定は文字化けの原因になる
+- `charset` の未設定は文字化けの原因になる（Next.js は `<meta charset="utf-8">` を常に出力するので、`Metadata` に `charset` というフィールドはない）
+- layout と page の metadata は浅くマージされる。page が `openGraph` を返すと、layout の `openGraph`（`images` など）は丸ごと置き換わるので、共通部分は変数にしてスプレッドする
 
 **コード例**:
 ```tsx
-// app/layout.tsx - Next.js の Metadata API
+// app/shared-metadata.ts
 import type { Metadata } from 'next';
 
+// openGraph は浅いマージで丸ごと上書きされるので、共通部分を変数にして各セグメントでスプレッドする
+export const openGraphBase = {
+  type: 'website',
+  locale: 'ja_JP',
+  siteName: 'サイト名',
+  images: [
+    {
+      url: 'https://example.com/og-image.jpg',
+      width: 1200,
+      height: 630,
+      alt: 'OGP画像の説明',
+    },
+  ],
+} satisfies Metadata['openGraph'];
+```
+
+```tsx
+// app/layout.tsx - Next.js の Metadata API
+import type { Metadata } from 'next';
+import { openGraphBase } from './shared-metadata';
+
 export const metadata: Metadata = {
-  // 基本
+  // 基本（charset と viewport は Next.js が自動で出力する）
   title: {
     template: '%s | サイト名',
     default: 'サイト名',
   },
   description: 'サイトの説明文',
-  charset: 'utf-8',  // Next.js が自動設定
 
   // OGP
   openGraph: {
-    type: 'website',
-    locale: 'ja_JP',
+    ...openGraphBase,
     url: 'https://example.com',
-    siteName: 'サイト名',
-    images: [
-      {
-        url: 'https://example.com/og-image.jpg',
-        width: 1200,
-        height: 630,
-        alt: 'OGP画像の説明',
-      },
-    ],
   },
 
   // Twitter Card
@@ -174,15 +185,26 @@ export const metadata: Metadata = {
     follow: true,
   },
 };
+```
 
-// 個別ページで上書き
-// app/blog/[slug]/page.tsx
+```tsx
+// app/blog/[slug]/page.tsx - 個別ページで上書き
+import type { Metadata } from 'next';
+import { openGraphBase } from '../../shared-metadata';
+import { fetchPost } from '@/lib/posts';
+
+type Props = {
+  params: Promise<{ slug: string }>;
+};
+
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
-  const post = await fetchPost(params.slug);
+  const { slug } = await params;
+  const post = await fetchPost(slug);
   return {
     title: post.title,
     description: post.excerpt,
-    openGraph: { title: post.title, description: post.excerpt },
+    // openGraphBase をスプレッドしないと、layout の images などが消える
+    openGraph: { ...openGraphBase, title: post.title, description: post.excerpt },
   };
 }
 ```
@@ -190,10 +212,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 **出典**:
 - [Next.js Docs: Metadata](https://nextjs.org/docs/app/building-your-application/optimizing/metadata) (Next.js公式)
 - [The Open Graph protocol](https://ogp.me/) (OGP公式)
+- [Next.js Docs: generateMetadata](https://nextjs.org/docs/app/api-reference/functions/generate-metadata) (Next.js 公式、charset / viewport の既定出力、浅いマージで `openGraph` が丸ごと置き換わること、`params` の await) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 15+（v16 基準。v14 以前は `params` が同期オブジェクトで、`params.slug` のように直接読む）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -214,9 +237,9 @@ HTMLネイティブの `<dialog>` 要素と `showModal()` メソッドを使う�
   <h2 id="dialog-title">削除の確認</h2>
   <p>このアイテムを削除してもよろしいですか？</p>
   <div class="dialog-actions">
-    <!-- type="submit" は form[method="dialog"] と連動して dialog を閉じる -->
+    <!-- form[method="dialog"] 内の submit ボタンは dialog を閉じ、value が dialog.returnValue に入る -->
     <form method="dialog">
-      <button type="button" id="cancel-btn">キャンセル</button>
+      <button type="submit" value="cancel">キャンセル</button>
       <button type="submit" value="confirm">削除する</button>
     </form>
   </div>
@@ -258,7 +281,7 @@ function ConfirmDialog({ open, onClose, ...rest }: Props) {
 
 **バージョン**: Chrome 37+, Firefox 98+, Safari 15.4+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -297,12 +320,15 @@ function ConfirmDialog({ open, onClose, ...rest }: Props) {
 ```
 
 ```tsx
-// React での使用例（型定義は現時点で手動拡張が必要な場合あり）
+// React での使用例（popover 属性は @types/react、showPopover / hidePopover は TypeScript の lib.dom に定義済み）
+'use client';
+import { useEffect, useRef } from 'react';
+
 function NotificationToast({ message }: { message: string }) {
   const popoverRef = useRef<HTMLDivElement>(null);
 
-  const show = () => (popoverRef.current as any)?.showPopover();
-  const hide = () => (popoverRef.current as any)?.hidePopover();
+  const show = () => popoverRef.current?.showPopover();
+  const hide = () => popoverRef.current?.hidePopover();
 
   useEffect(() => {
     show();
@@ -313,7 +339,6 @@ function NotificationToast({ message }: { message: string }) {
   return (
     <div
       ref={popoverRef}
-      // @ts-expect-error -- popover is not yet in React's JSX types
       popover="manual"
       className="fixed bottom-4 right-4 rounded-lg bg-gray-800 px-4 py-2 text-white"
     >
@@ -329,7 +354,7 @@ function NotificationToast({ message }: { message: string }) {
 
 **バージョン**: Chrome 114+, Firefox 125+, Safari 17+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -675,7 +700,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="ja">
       <head>
-        {/* 同一オリジンの重要画像（LCP 対象） */}
+        {/* 同一オリジンの重要画像（LCP 対象）。計測で画像の取得がボトルネックと確認できた場合のみ */}
         <link
           rel="preload"
           as="image"
@@ -721,8 +746,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **使い分け基準**:
 | 用途 | リソースヒント | 適用条件 |
 |------|---------------|----------|
-| LCP 画像 | `preload` + `fetchpriority="high"` | 計測で LCP ボトルネックを確認 |
-| Web フォント | `preload as="font" crossorigin` | woff2、`font-display: optional` 推奨 |
+| LCP 画像 | `preload` + `fetchpriority="high"` | 計測で画像の取得が LCP のボトルネックと確認できた場合のみ（`practices/performance/core-web-vitals.md` #1） |
+| Web フォント | `preload as="font" crossorigin` | woff2。`font-display` の選び方は `practices/performance/font-loading.md` #1 を参照 |
 | 重要なサードパーティドメイン | `preconnect` | 1ドメイン1回、4-6 個まで |
 | 古ブラウザ用フォールバック | `dns-prefetch` | `preconnect` の補助 |
 | 次ページ予測取得 | `prefetch` | アイドル時、UX 重視のページ遷移 |
@@ -735,25 +760,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 **バージョン**: HTML Living Standard / すべてのモダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
-### 12. 画像のデフォルトを `loading="lazy"` + `decoding="async"` にし、LCP 画像のみ例外扱いにする
+### 12. 初期ビューポート外の画像を `loading="lazy"` + `decoding="async"` にし、LCP 画像は優先して読み込む
 
-ファーストビュー外の画像には `loading="lazy"` と `decoding="async"` を付与してメインスレッド・ネットワーク帯域を節約する。
-LCP 候補となるヒーロー画像のみ `loading="eager"` + `fetchpriority="high"` を明示する。
+初期ビューポート外の画像には `loading="lazy"` と `decoding="async"` を付与してネットワーク帯域を節約する。
+LCP 候補となるヒーロー画像は lazy にせず `loading="eager"` にする。`fetchpriority="high"` や preload は、計測で画像の取得がボトルネックだと確認できた場合に限って足す（LCP 画像の扱いの正本は `practices/performance/core-web-vitals.md` #1）。
+初期ビューポート内の LCP 候補以外の画像も lazy にしない（plain な `<img>` は既定が eager。`next/image` は既定が lazy なので `loading="eager"` を付ける）。
 
 **根拠**:
 - `loading="lazy"` はビューポート近くまでスクロールされるまで画像取得を遅延する（Chrome 77+, Firefox 75+, Safari 15.4+）
-- `decoding="async"` は画像デコードをメインスレッドから外し、レンダリングブロックを避ける
+- `decoding="async"` は、画像のデコード完了を待たずにほかのコンテンツの表示を更新してよいというブラウザへのヒント（デコード処理がメインスレッドから外れることを保証するものではない）
 - ファーストビュー画像に `loading="lazy"` を付けると LCP が遅延するため除外が必要
-- Next.js の `<Image>` コンポーネントは `priority` 属性で内部的にこれらを切り替える
+- Next.js の `<Image>` は既定で `loading="lazy"`。Next.js 16 で `priority` は非推奨になったので、LCP 画像には `loading="eager"` を付ける。`fetchPriority="high"` / `preload` を足すかどうかは `practices/performance/core-web-vitals.md` #1 の条件に従う（`preload` と `loading` / `fetchPriority` は併用しない）。v15 以前は `priority` を使う
 
 **コード例**:
 ```tsx
 // Plain HTML / JSX
-// Good: ファーストビュー外はデフォルト lazy
+// Good: 初期ビューポート外の画像は lazy
 <img
   src="/photo.jpg"
   alt="商品写真"
@@ -763,7 +789,8 @@ LCP 候補となるヒーロー画像のみ `loading="eager"` + `fetchpriority="
   decoding="async"
 />
 
-// Good: LCP 候補（ファーストビュー上部の主要画像）は eager + 高優先度
+// Good: LCP 候補（ファーストビュー上部の主要画像）は eager。
+// fetchPriority="high" は計測で画像の取得がボトルネックと確認できた場合に足す（core-web-vitals.md #1）
 <img
   src="/hero.webp"
   alt="ヒーロー画像"
@@ -771,16 +798,15 @@ LCP 候補となるヒーロー画像のみ `loading="eager"` + `fetchpriority="
   height={800}
   loading="eager"
   decoding="sync"
-  fetchPriority="high"
 />
 
 // Next.js Image での同等表現
 import Image from 'next/image';
 
-// LCP 候補
-<Image src="/hero.webp" alt="..." width={1600} height={800} priority />
+// LCP 候補（Next.js 16+。v15 以前は priority を付ける）
+<Image src="/hero.webp" alt="..." width={1600} height={800} loading="eager" />
 
-// それ以外（デフォルトで lazy + async）
+// 初期ビューポート外（next/image の既定は loading="lazy"）
 <Image src="/thumbnail.jpg" alt="..." width={400} height={300} />
 
 // Bad: ファーストビュー画像が lazy で LCP が遅延
@@ -795,7 +821,7 @@ import Image from 'next/image';
 2. 視覚的に大きい（画面の 20% 以上を占める）
 3. ページの主題を表現している
 
-該当する画像は通常 1 枚（多くて 2-3 枚）。残りはすべて lazy で良い。
+該当する画像は通常 1 枚（多くて 2-3 枚）。初期ビューポートの外にある画像は lazy にし、初期ビューポート内の LCP 候補以外の画像は既定（eager）のままにする（lazy にすると表示が遅れる）。
 
 **ブラウザ互換**:
 - `loading="lazy"`: Chrome 77+, Firefox 75+, Safari 15.4+ — 非対応ブラウザでは無視される（フォールバック不要）
@@ -807,9 +833,10 @@ import Image from 'next/image';
 - [MDN: HTMLImageElement.decoding](https://developer.mozilla.org/en-US/docs/Web/API/HTMLImageElement/decoding) (MDN Web Docs)
 - [web.dev: Browser-level image lazy-loading](https://web.dev/articles/browser-level-image-lazy-loading) (web.dev)
 - [web.dev: Optimizing Largest Contentful Paint](https://web.dev/articles/optimize-lcp) (web.dev)
+- [Next.js Docs: Image Component](https://nextjs.org/docs/app/api-reference/components/image) (Next.js 公式、v16 での `priority` 非推奨と `preload` / `loading` / `fetchPriority` の使い分け、`loading` の既定値) ※2026-10-25 確認
 
-**バージョン**: HTML Living Standard / `fetchpriority` は Chrome 101+, Safari 17.2+
+**バージョン**: HTML Living Standard / `fetchpriority` は Chrome 101+, Safari 17.2+ / Next.js 16+（`priority` は v15 以前）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---

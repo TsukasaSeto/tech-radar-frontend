@@ -18,20 +18,24 @@ ECMAScript Internationalization API（`Intl.*`）を活用して、日時・数�
 
 **コード例**:
 ```ts
-const date = new Date('2026-05-16T18:30:00Z');
+// 出力例は Node.js 24（ICU 78）での結果。ICU / CLDR のバージョンで細部が変わることがある
+const date = new Date('2026-05-16T18:30:00Z');  // JST では 2026-05-17 03:30
 
-// プリセット
-new Intl.DateTimeFormat('ja-JP', { dateStyle: 'long' }).format(date);
-// → "2026年5月17日"（タイムゾーン UTC→JST）
+// プリセット（timeZone を省くと実行環境のタイムゾーンで表示され、環境によって日付が変わる）
+new Intl.DateTimeFormat('ja-JP', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).format(date);
+// → "2026年5月17日"
 
-new Intl.DateTimeFormat('en-US', { dateStyle: 'long' }).format(date);
-// → "May 16, 2026"
+new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).format(date);
+// → "May 17, 2026"
 
-new Intl.DateTimeFormat('de-DE', { dateStyle: 'long' }).format(date);
-// → "16. Mai 2026"
+new Intl.DateTimeFormat('de-DE', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).format(date);
+// → "17. Mai 2026"
 
-new Intl.DateTimeFormat('ar-EG', { dateStyle: 'long' }).format(date);
-// → "١٦ مايو ٢٠٢٦"
+new Intl.DateTimeFormat('ar-EG', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).format(date);
+// → "١٧ مايو ٢٠٢٦"
+
+new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(date);
+// → "May 16, 2026"（同じ時刻でも UTC では 16 日）
 
 // カスタム
 new Intl.DateTimeFormat('ja-JP', {
@@ -45,19 +49,21 @@ new Intl.DateTimeFormat('ja-JP', {
 // → "2026/05/17 03:30"
 
 // 範囲
-const start = new Date('2026-05-16');
+const start = new Date('2026-05-16');  // UTC の 0 時
 const end = new Date('2026-05-18');
-new Intl.DateTimeFormat('ja-JP', { dateStyle: 'long' }).formatRange(start, end);
-// → "2026年5月16日～18日"
+new Intl.DateTimeFormat('ja-JP', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).formatRange(start, end);
+// → "2026/05/16～2026/05/18"
+new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'Asia/Tokyo' }).formatRange(start, end);
+// → "May 16 – 18, 2026"
 ```
 
-**`dateStyle` / `timeStyle` の値**:
+**`dateStyle` / `timeStyle` の値**（`2026-05-16T18:30:00Z` を `timeZone: 'Asia/Tokyo'` で表示。Node.js 24 での出力）:
 | 値 | ja-JP 例 | en-US 例 |
 |---|---|---|
-| `full` | "2026年5月17日土曜日" | "Saturday, May 17, 2026" |
+| `full` | "2026年5月17日日曜日" | "Sunday, May 17, 2026" |
 | `long` | "2026年5月17日" | "May 17, 2026" |
 | `medium` | "2026/05/17" | "May 17, 2026" |
-| `short` | "2026/5/17" | "5/17/26" |
+| `short` | "2026/05/17" | "5/17/26" |
 
 **注意点**:
 - `Date` オブジェクトは UTC 内部表現。`Intl.DateTimeFormat` は **クライアントのローカルタイムゾーン** で表示する
@@ -103,8 +109,8 @@ dayjs(date).format('YYYY年MM月DD日');
 
 **`Temporal` API 併用時の注意（`iso8601` vs `gregory`）**:
 `Temporal.PlainYearMonth` / `Temporal.PlainMonthDay` はデフォルトで暦（calendar）が `iso8601`（年0が存在する天文学的年数、時代区分なし）だが、
-`Intl.DateTimeFormat` は実用上のグレゴリオ暦 `gregory`（BCE/CE）を前提にしており、この2つの暦は年月・月日型では相互変換できない。
-`Intl.DateTimeFormat` に渡す前に `calendar: 'gregory'` を指定して明示的に再構築する。
+`Intl.DateTimeFormat` の既定の暦はロケールで決まり（`ja` / `en` なら `gregory`（BCE/CE）、`th-TH` なら `buddhist`）、年月・月日型は formatter と暦が一致しないと整形できない。
+formatter の暦に合わせて、渡す前に `calendar` を指定して明示的に再構築する（下の例は `gregory` のロケール）。
 
 ```javascript
 const pym = Temporal.PlainYearMonth.from('2026-07');
@@ -123,14 +129,16 @@ new Intl.DateTimeFormat('ja').format(pymGregory); // '2026/7'
 - [ECMA-402: DateTimeFormat](https://tc39.es/ecma402/#datetimeformat-objects) (TC39)
 - [Unicode CLDR](https://cldr.unicode.org/) (Unicode)
 - [ECMAScriptにおけるグレゴリオ暦: `iso8601`と`gregory`](https://zenn.dev/fabon/articles/c4b2efbb0c526b) (Zenn、Temporal と Intl の暦不整合の実例) ※2026-07-05に実際にfetch成功
+- [TC39 Finished Proposals](https://github.com/tc39/proposals/blob/main/finished-proposals.md) (TC39 公式、Temporal が Stage 4 で 2027 年版に収録予定) ※2026-10-25 確認
+- [web-features: temporal](https://github.com/web-platform-dx/web-features/blob/main/features/temporal.yml) (W3C WebDX CG、Chrome 144 / Firefox 139 が対応し Safari は未対応で Baseline 未到達) ※2026-10-25 確認
 
 **出典引用**:
 > "暦が`iso8601`のときにISO 8601の週番号を返しますが、それ以他の暦では`undefined`になります。"
 > ([ECMAScriptにおけるグレゴリオ暦: `iso8601`と`gregory`](https://zenn.dev/fabon/articles/c4b2efbb0c526b), セクション "Temporal") ※2026-07-05に実際にfetch成功
 
-**バージョン**: 全モダンブラウザ、Temporal は Stage 3+ / モダンブラウザ実装済み
+**バージョン**: 全モダンブラウザ。Temporal は TC39 Stage 4（ES2027 に収録予定）で、Chrome / Edge 144+・Firefox 139+ が実装済み、Safari は未対応（Baseline 未到達。2026-10 時点）
 **確信度**: 高
-**最終更新**: 2026-07-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -296,9 +304,10 @@ new Intl.RelativeTimeFormat('en-US', { style: 'narrow' }).format(-1, 'day'); // 
 
 **単位の選び方（時刻差から自動決定）**:
 ```ts
-function formatRelative(date: Date, locale: string): string {
+// lib/format-relative.ts
+export function formatRelative(date: Date, locale: string, now: number = Date.now()): string {
   const rtf = new Intl.RelativeTimeFormat(locale, { numeric: 'auto' });
-  const diff = (date.getTime() - Date.now()) / 1000;  // 秒
+  const diff = (date.getTime() - now) / 1000;  // 秒
   const absDiff = Math.abs(diff);
 
   if (absDiff < 60) return rtf.format(Math.round(diff), 'second');
@@ -316,39 +325,60 @@ formatRelative(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), 'ja-JP'); // → 
 ```
 
 **React コンポーネントとしての実装**:
+
+相対時刻は「今」に依存するので、サーバーとクライアントで値が変わる。初回描画から `Date.now()` で相対時刻を出すと hydration mismatch になるため、マウントするまでは `fallback`（サーバーで整形した絶対時刻）を表示し、マウント後に相対表示へ切り替える。
+
 ```tsx
+// components/RelativeTime.tsx
 'use client';
 import { useEffect, useState } from 'react';
 import { useLocale } from 'next-intl';
+import { formatRelative } from '@/lib/format-relative';  // 上の formatRelative
 
-function RelativeTime({ date }: { date: Date }) {
+export function RelativeTime({ date, fallback }: { date: Date; fallback: string }) {
   const locale = useLocale();
-  const [, refresh] = useState(0);
+  // null の間（SSR と hydration 直後）は fallback を出し、サーバーと同じ HTML にする
+  const [now, setNow] = useState<number | null>(null);
 
-  // 1 分ごとに再計算（タイムリーな更新）
   useEffect(() => {
-    const id = setInterval(() => refresh((n) => n + 1), 60000);
+    setNow(Date.now());
+    // 1 分ごとに再計算（タイムリーな更新）
+    const id = setInterval(() => setNow(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
 
-  return <time dateTime={date.toISOString()}>{formatRelative(date, locale)}</time>;
+  return (
+    <time dateTime={date.toISOString()}>
+      {now === null ? fallback : formatRelative(date, locale, now)}
+    </time>
+  );
 }
 ```
 
-**SSR で固定タイムスタンプを返す**:
+**SSR では絶対時刻を渡す**:
 ```tsx
 // Server Component
-import { getTranslations } from 'next-intl/server';
+import { getFormatter } from 'next-intl/server';
+import { RelativeTime } from '@/components/RelativeTime';
 
-export default async function CommentList({ comments }) {
-  // SSR では絶対時刻、クライアントで相対時刻に置き換える
+type Comment = { id: string; body: string; createdAt: string };
+
+export default async function CommentList({ comments }: { comments: Comment[] }) {
+  // 絶対時刻はサーバーで整形する（timeZone は next-intl の request config の値が使われる）
+  const format = await getFormatter();
   return (
     <ul>
-      {comments.map((c) => (
-        <li key={c.id}>
-          <RelativeTime date={new Date(c.createdAt)} fallback={c.createdAt} />
-        </li>
-      ))}
+      {comments.map((c) => {
+        const date = new Date(c.createdAt);
+        return (
+          <li key={c.id}>
+            <RelativeTime
+              date={date}
+              fallback={format.dateTime(date, { dateStyle: 'medium', timeStyle: 'short' })}
+            />
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -360,7 +390,7 @@ export default async function CommentList({ comments }) {
 
 **バージョン**: Chrome 71+, Firefox 65+, Safari 14+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -386,7 +416,7 @@ items.sort();
 // Good: ドイツ語ルールで sort
 const collator = new Intl.Collator('de-DE');
 items.sort(collator.compare);
-// → ['Äpfel', 'Apfel', 'Banane', 'Birne']（Ä と A が並列扱い）
+// → ['Apfel', 'Äpfel', 'Banane', 'Birne']（Ä を A と同じ位置で比べ、アクセントの差は後で区別する）
 
 // 日本語
 const japaneseItems = ['さくら', 'カキ', 'りんご', 'みかん'];
@@ -441,6 +471,8 @@ function containsLocaleAware(haystack: string, needle: string, locale: string): 
 }
 
 containsLocaleAware('café', 'cafe', 'fr-FR');  // → true
+// 簡易実装の限界: needle と同じ文字数の部分文字列だけを比べるので、
+// 'Straße' と 'Strasse' のように長さが違う組（compare では 0 になる）は取りこぼす
 ```
 
 **サーバー側との一致**:
@@ -456,4 +488,4 @@ containsLocaleAware('café', 'cafe', 'fr-FR');  // → true
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

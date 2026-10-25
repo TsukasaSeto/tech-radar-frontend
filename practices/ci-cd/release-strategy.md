@@ -28,7 +28,9 @@
 
 **Changesets 設定**:
 ```bash
-pnpm add -D @changesets/cli
+# @changesets/cli 3.x は Node ^22.11 / ^24 / >=26、pnpm 10 以上が前提
+# config.json で指定する changelog 生成器（@changesets/changelog-github）も一緒に入れる。入れないと changeset version が module not found で落ちる
+pnpm add -D @changesets/cli @changesets/changelog-github
 pnpm changeset init
 ```
 
@@ -73,33 +75,45 @@ on:
   push:
     branches: [main]
 
+# 実行中の release は止めない。待機できる run は最新の 1 件だけで、間の run は置き換えられる
+# （Changesets は最新の main の状態を処理するので問題ない。`practices/ci-cd/github-actions.md` #2）
 concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: read
 
 jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write        # バージョン更新コミット・タグ・GitHub Release
+      pull-requests: write   # "Version Packages" PR
+      id-token: write        # npm Trusted Publishing（OIDC）。NPM_TOKEN は不要
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24     # Trusted Publishing は npm CLI 11.5.1+ / Node 22.14.0+ が前提
+          registry-url: 'https://registry.npmjs.org'
+      # 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
+      # リリースのビルドでは依存キャッシュを使わない（npm 公式の Trusted Publishing の例と同じ方針）
+      - uses: pnpm/setup@v3
+        with: { node-version-file: false, install: false }
       - run: pnpm install --frozen-lockfile
 
       - name: Create Release PR or Publish
-        uses: changesets/action@v1
+        id: changesets
+        uses: changesets/action@v2
         with:
           # 未消化の changeset があれば "Version Packages" PR を作る
           # 全 changeset 消化済み + version bump がある場合は publish + tag 作成
-          version: pnpm changeset version
-          publish: pnpm release  # = changeset publish + 必要なら npm publish
-          commit: 'chore: release packages'
-          title: 'chore: release packages'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # v2 で入力名が変わった（v1 の version / publish / commit / title は使えない）
+          version-script: pnpm changeset version
+          publish-script: pnpm release  # = changeset publish + 必要なら npm publish
+          commit-message: 'chore: release packages'
+          pr-title: 'chore: release packages'
+          # GitHub トークンは既定で github.token。別のトークンは env ではなく github-token 入力で渡す
 ```
 
 **semantic-release（単一パッケージ）**:
@@ -136,13 +150,15 @@ pnpm add -D semantic-release @semantic-release/git @semantic-release/changelog
 - [release-please](https://github.com/googleapis/release-please) (Google)
 - [Conventional Commits](https://www.conventionalcommits.org/) (Conventional Commits)
 - [Changesets と npm Trusted Publishing を利用して npm パッケージ公開フローを作った](https://zenn.dev/su3_hokkaido/articles/2026-10-24_publish_npm_package) (Zenn、Changesets + OIDC 公開の `permissions` 構成と初回手動公開の制約。Qiita に同一著者のクロスポストあり) ※2026-10-24 fetch
+- [npm Docs: Trusted publishing](https://docs.npmjs.com/trusted-publishers) (npm 公式、npm CLI 11.5.1+ / Node 22.14.0+、`id-token: write`、リリースビルドではキャッシュを使わない例) ※2026-10-25 確認
+- [changesets/action README（v2）](https://github.com/changesets/action/blob/v2/README.md) (Changesets 公式、v2 は Changesets v3 対応。入力名 `version-script` / `publish-script` / `commit-message` / `pr-title`、必要な `permissions`) ※2026-10-25 確認
 
 > "これがあるとジョブが OIDC トークンを取得でき、npm へのログインがトークンなしで済みます。"
 > ([Changesets と npm Trusted Publishing を利用して npm パッケージ公開フローを作った](https://zenn.dev/su3_hokkaido/articles/2026-10-24_publish_npm_package), セクション "4. リリース用のワークフローを書く") ※2026-10-24に実際にfetch成功
 
-**バージョン**: パターン（npm Trusted Publishing 部分は OIDC 対応の npm CLI が前提）
+**バージョン**: Changesets v3（@changesets/cli 3.x）/ changesets/action v2（v1 は Changesets v2 向け）/ npm Trusted Publishing は npm CLI 11.5.1+
 **確信度**: 高
-**最終更新**: 2026-10-24
+**最終更新**: 2026-10-25
 
 ---
 
@@ -157,19 +173,28 @@ Vercel の rolling release、Cloudflare の gradual rollout、または Feature 
 - Feature Flag なら code レベルで切り替えられ、re-deploy なしで rollback できる
 - 「カナリア = 炭鉱のカナリア（先に異常を検知する）」が語源
 
-**Vercel での gradual rollout**:
-```bash
-# 新バージョンをデプロイ（まだトラフィック 0%）
-vercel deploy
+**Vercel での gradual rollout（Rolling Releases）**:
 
-# 新しい deployment を取得してエイリアス（カスタムドメイン）に部分的に割り当て
-vercel alias set <new-deployment-url> example.com --percent 10
+Vercel の段階配信は Rolling Releases で行う（Pro / Enterprise。Pro は 1 プロジェクトまで）。`vercel alias set` に `--percent` オプションはなく、未知のオプションは使用法エラー（終了コード 2）になる。Rolling Releases を有効にすると、本番への promote（Git push での自動 promote、`vercel promote`、ダッシュボードの Promote）が最初のステージから始まる。クライアントとサーバーの版がずれないよう、Skew Protection の併用が推奨されている。
+
+```bash
+# Bad: vercel alias set <new-deployment-url> example.com --percent 10（存在しないオプション）
+
+# Good: Rolling Releases を設定する（10% → 50% → 100% を手動承認で進める。最後の 100% は自動で追加される）
+vercel rolling-release configure --enable --advancement-type=manual-approval --stage=10 --stage=50
+
+# 本番向けにビルドだけして（ドメインは割り当てない）、CI から明示的に開始する
+DEPLOYMENT_URL=$(vercel deploy --prod --skip-domain)
+vercel rolling-release start --dpl="$DEPLOYMENT_URL" --yes
 # → 10% のリクエストが新バージョンに
 
-# 観測後、徐々に増やす
-vercel alias set <new-deployment-url> example.com --percent 50
-vercel alias set <new-deployment-url> example.com --percent 100
+# 観測後、次のステージへ進める（currentStageIndex は今のステージの番号）
+vercel rolling-release approve --dpl="$DEPLOYMENT_URL" --currentStageIndex=0
+# 問題があれば中止する（プロジェクトは Instant Rollback と同じロールバック状態になる）
+vercel rolling-release abort --dpl="$DEPLOYMENT_URL"
 ```
+
+CI から開始・完了するときは `vercel rolling-release start` / `complete` を使い、`vercel promote` は使わない（進行中の rolling release に promote すると 100% まで一気に完了する）。
 
 **Feature Flag による段階展開**:
 ```tsx
@@ -186,27 +211,32 @@ export default async function HomePage() {
 }
 ```
 
-**GrowthBook での運用例**:
-```ts
-// lib/feature-flags.ts
-import { GrowthBook } from '@growthbook/growthbook';
+**GrowthBook での運用例**（サーバー側）:
 
-const gb = new GrowthBook({
+サーバーでは 1 つのクライアントを全リクエストで共有するため、ユーザーの属性をクライアントに持たせてはいけない。`GrowthBook` の単一インスタンスに `setAttributes` で属性を差し替える書き方は、並行するリクエストが同じ状態を共有し、非同期処理を挟むと他のユーザーの属性で評価されうる。マルチユーザー向けの `GrowthBookClient` を使い、評価のたびにユーザーのコンテキストを渡す（または `createScopedInstance` でリクエストごとのインスタンスを作る）。
+
+```ts
+// lib/feature-flags.ts（サーバー側で使う）
+import { GrowthBookClient } from '@growthbook/growthbook';
+
+const gbClient = new GrowthBookClient({
   apiHost: 'https://cdn.growthbook.io',
-  clientKey: process.env.NEXT_PUBLIC_GROWTHBOOK_KEY,
-  enableDevMode: process.env.NODE_ENV !== 'production',
+  clientKey: process.env.GROWTHBOOK_CLIENT_KEY,
 });
 
-await gb.init();
+// 起動時に 1 回だけ初期化し、各リクエストは完了を待つだけにする
+const ready = gbClient.init({ timeout: 3000 });
 
-export function isFeatureEnabled(name: string, attributes: Record<string, unknown> = {}): boolean {
-  gb.setAttributes(attributes);
-  return gb.isOn(name);
+// Bad: 共有インスタンスに gb.setAttributes(attributes) してから gb.isOn(name) する
+// Good: 共有クライアントには状態を持たせず、評価ごとにユーザーのコンテキストを渡す
+export async function isFeatureEnabled(name: string, attributes: Record<string, unknown> = {}): Promise<boolean> {
+  await ready;
+  return gbClient.isOn(name, { attributes });
 }
 
 // 使用
-const newCheckoutEnabled = isFeatureEnabled('new-checkout', {
-  userId: user.id,
+const newCheckoutEnabled = await isFeatureEnabled('new-checkout', {
+  id: user.id,
   plan: user.plan,
   country: user.country,
 });
@@ -221,19 +251,10 @@ const newCheckoutEnabled = isFeatureEnabled('new-checkout', {
 | Conversion rate | base から低下 5% 以上 | rollback |
 | Crash rate | base + 0.05% 以上 | 即時 rollback |
 
-**自動 rollback の閾値設定**（Vercel）:
-```yaml
-# vercel.json
-{
-  "git": {
-    "deploymentEnabled": {
-      "main": true
-    }
-  }
-}
-```
-
-Vercel Analytics の閾値で自動 rollback は現時点（2026）では UI ベース。LaunchDarkly や Optimizely は API ベースで完全自動化が可能。
+**指標に基づく中止・ロールバック**（Vercel）:
+- Rolling Releases の進行中は、Observability タブでカナリアと現行版の指標（Speed Insights 等）を比べられる。中止は Rolling Releases ページの Abort、`vercel rolling-release abort`、または Instant Rollback で行う
+- 外部の監視基盤の指標で判断する場合は、カナリアと現行版を区別できるよう Vercel のデプロイ ID を監視側に伝播させる
+- LaunchDarkly や Optimizely は API ベースで完全自動化が可能
 
 **カナリアと A/B テストの違い**:
 - **カナリア**: 全ユーザーに展開する前の安全装置（パフォーマンス・エラー観測）
@@ -242,38 +263,55 @@ Vercel Analytics の閾値で自動 rollback は現時点（2026）では UI ベ
 両者は併用可能だが目的が違うので変数も分ける。
 
 **CloudFront Functions + KeyValueStore でのカナリア（Vercel を使わない静的配信構成）**:
-S3 + CloudFront で静的アセットを配信する構成では、Vercel の `alias set --percent` は使えない。同等のことを CloudFront Function（`viewer-request`）+ KeyValueStore（KVS）で実現できる。S3 側を slot1/slot2 の2オリジンに分け、KVS の `active_origin`（本番スロット）・`canary_weight`（カナリア比率 0-100）をエッジ側から低レイテンシで参照してルーティングする。AWS 標準の「CloudFront Continuous Deployment」機能を使わない理由は、それが Distribution 本体の状態を直接書き換えるため、CloudFormation 管理下では IaC ドリフトを起こすから。クライアントの IP ハッシュで振り分けを決定的にし、同一クライアントがセッション中に新旧バージョンを行き来しないようにする。キャッシュ汚染を避けるため、Function が付与した `x-canary-slot` レスポンスヘッダーをキャッシュポリシーのキャッシュキーに含め、スロットごとにキャッシュを分離する:
+S3 + CloudFront で静的アセットを配信する構成では、Vercel の Rolling Releases は使えない。同等のことを CloudFront Function（`viewer-request`）+ KeyValueStore（KVS）で実現できる。S3 側を slot1/slot2 の2オリジンに分け、KVS の `active_origin`（本番スロット）・`canary_weight`（カナリア比率 0-100）をエッジ側から低レイテンシで参照してルーティングする。AWS 標準の「CloudFront Continuous Deployment」機能を使わない理由は、それが Distribution 本体の状態を直接書き換えるため、CloudFormation 管理下では IaC ドリフトを起こすから。クライアントの IP ハッシュで振り分けを決定的にし、同一クライアントがセッション中に新旧バージョンを行き来しないようにする。キャッシュ汚染を避けるため、Function が付与した `x-canary-slot` リクエストヘッダーをキャッシュポリシーのキャッシュキーに含め、スロットごとにキャッシュを分離する。
+
+障害時のフォールバック先を固定のスロット（例: 常に `slot1`）にすると、昇格後（`active_origin` が `slot2`）は KVS 障害のたびに全ユーザーが旧版やカナリア版に流れる。フォールバックは「検証済みの本番スロット」に向ける。KVS 自体を読めないときは Function でオリジンを選ばず、キャッシュビヘイビアの既定オリジンに任せ、既定オリジンは昇格のたびに IaC で本番スロットに揃える（IaC に反映するまでの間は旧スロットに戻りうるので、旧スロットの成果物は次の昇格まで消さない）。`canary_weight` だけ読めないときはカナリアを止める。ハッシュ関数は Function 内に実装する（CloudFront Functions の JavaScript runtime 2.0 は `Math.imul` 等の ES6 の Math メソッドに対応している）:
 ```javascript
-// CloudFront Function（viewer-request）
+// CloudFront Function（viewer-request、JavaScript runtime 2.0）
 import cf from 'cloudfront';
 
-async function handler(event) {
-  try {
-    const kvsHandle = cf.kvs();
-    const activeOrigin = await kvsHandle.get('active_origin');
-    const canaryWeight = await kvsHandle.get('canary_weight');
-
-    if (canaryWeight > 0) {
-      const canaryOrigin = activeOrigin === 'slot1' ? 'slot2' : 'slot1';
-      const hash = simpleHash(event.viewer.ip);
-      if (hash % 100 < canaryWeight) {
-        event.request.headers['x-canary-slot'] = { value: canaryOrigin };
-        cf.selectRequestOriginById(canaryOrigin);
-        return event.request;
-      }
-    }
-
-    event.request.headers['x-canary-slot'] = { value: activeOrigin };
-    cf.selectRequestOriginById(activeOrigin);
-  } catch (e) {
-    // KVS障害時は安全側のデフォルトスロットにフォールバック
-    event.request.headers['x-canary-slot'] = { value: 'slot1' };
-    cf.selectRequestOriginById('slot1');
+// FNV-1a（32bit）でクライアント IP を 0-99 のバケットに割り当てる（同じ IP は常に同じバケット）
+function bucketOf(value) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return event.request;
+  return hash % 100;
+}
+
+async function handler(event) {
+  const request = event.request;
+  const kvsHandle = cf.kvs();
+
+  let activeOrigin;
+  try {
+    activeOrigin = await kvsHandle.get('active_origin');
+  } catch (e) {
+    // Bad: 固定の 'slot1' を選ぶ（昇格後は本番スロットではない）
+    // Good: オリジンを選ばず、IaC で本番スロットに揃えたキャッシュビヘイビアの既定オリジンに任せる
+    return request;
+  }
+
+  let canaryWeight = 0;
+  try {
+    // KVS の値は文字列なので数値に変換する
+    canaryWeight = Number(await kvsHandle.get('canary_weight')) || 0;
+  } catch (e) {
+    canaryWeight = 0; // 比率を読めなければカナリアを止め、本番スロットだけに流す
+  }
+
+  let slot = activeOrigin;
+  if (canaryWeight > 0 && bucketOf(event.viewer.ip) < canaryWeight) {
+    slot = activeOrigin === 'slot1' ? 'slot2' : 'slot1';
+  }
+
+  request.headers['x-canary-slot'] = { value: slot };
+  cf.selectRequestOriginById(slot);
+  return request;
 }
 ```
-KVS の更新は `aws cloudfront-keyvaluestore put-key --if-match "${etag}"` で ETag による楽観ロックを効かせ、GitHub Actions を「カナリアへデプロイ（`canary_weight` を10に設定）」「本番昇格（承認ゲート付き、`active_origin` を切替＆`canary_weight` を0に戻す）」「ロールバック（承認却下時に `if: failure()` で `canary_weight` のみ0に戻し、`active_origin` は変更しない）」の3ジョブに分ける。
+KVS の更新は `aws cloudfront-keyvaluestore put-key --if-match "${etag}"` で ETag による楽観ロックを効かせ、GitHub Actions を「カナリアへデプロイ（`canary_weight` を10に設定）」「本番昇格（承認ゲート付き、`active_origin` を切替＆`canary_weight` を0に戻し、キャッシュビヘイビアの既定オリジンも IaC で新しい本番スロットに揃える）」「ロールバック（承認却下時に `if: failure()` で `canary_weight` のみ0に戻し、`active_origin` は変更しない）」の3ジョブに分ける。
 
 **出典**:
 - [Vercel: Atomic Deployments](https://vercel.com/docs/deployments/atomic-deployments) (Vercel)
@@ -281,14 +319,19 @@ KVS の更新は `aws cloudfront-keyvaluestore put-key --if-match "${etag}"` で
 - [LaunchDarkly: Progressive Delivery](https://launchdarkly.com/blog/progressive-delivery-a-history-condensed/) (LaunchDarkly)
 - [Google SRE Book: Canarying Releases](https://sre.google/workbook/canarying-releases/) (Google)
 - [CloudFront Functions × KeyValueStoreで実現するCloudFront + S3のカナリアリリース](https://techblog.zozo.com/entry/cloudfront-functions-kvs-canary-release) (ZOZO TECH BLOG、S3 + CloudFront 静的配信構成でのIPハッシュ決定的ルーティングとキャッシュキー分離の実装) ※2026-08-18に実際にfetch成功
+- [Vercel Docs: Rolling Releases](https://vercel.com/docs/rolling-releases) (Vercel 公式、対象プラン・promote で開始する挙動・CI では start / complete を使う・中止方法・Skew Protection の推奨) ※2026-10-25 確認
+- [Vercel CLI: vercel rolling-release](https://vercel.com/docs/cli/rolling-release) (Vercel 公式、`configure` / `start` / `approve` / `abort` / `complete`) ※2026-10-25 確認
+- [Vercel CLI: Global Options](https://vercel.com/docs/cli/global-options) (Vercel 公式、未知のオプションは終了コード 2 の使用法エラー) ※2026-10-25 確認
+- [GrowthBook Docs: Node.js SDK](https://docs.growthbook.io/lib/node) (GrowthBook 公式、マルチユーザー向けの `GrowthBookClient` と評価ごとのユーザーコンテキスト・`createScopedInstance`) ※2026-10-25 確認
+- [CloudFront Functions: JavaScript runtime 2.0 features](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/functions-javascript-runtime-20.html) (AWS 公式、対応する言語機能と `Math.imul` 等) ※2026-10-25 確認
 
 **出典引用**:
 > "CloudFront KeyValueStore（以下、KVS）は、CloudFront Functionsから低レイテンシで参照できるkey-value形式のデータストアです。値の更新はDistributionのデプロイなしに、通常数秒でエッジに反映されます。"
 > ([CloudFront Functions × KeyValueStoreで実現するCloudFront + S3のカナリアリリース](https://techblog.zozo.com/entry/cloudfront-functions-kvs-canary-release), セクション "CloudFront Functions + KeyValueStoreの採用理由") ※2026-08-18に実際にfetch成功
 
-**バージョン**: パターン
+**バージョン**: パターン（Vercel Rolling Releases は Pro / Enterprise、CloudFront Functions は JavaScript runtime 2.0）
 **確信度**: 高
-**最終更新**: 2026-08-18
+**最終更新**: 2026-10-25
 
 ---
 
@@ -308,16 +351,28 @@ KVS の更新は `aws cloudfront-keyvaluestore put-key --if-match "${etag}"` で
 # 過去デプロイの一覧
 vercel ls
 
-# 過去のデプロイを production に promote
+# 過去の本番デプロイに戻す（Instant Rollback。Hobby は直前の本番デプロイにだけ戻せる）
+vercel rollback <deployment-id-or-url>
+
+# 過去の本番デプロイを promote しても戻せる
+# ただし Preview 向けのデプロイを promote すると本番向けの新しいデプロイが作られ、ビルド不要の即時切り替えにならない
 vercel promote <deployment-url>
 
-# UI からは Deployments タブで [Promote to Production] ボタン
+# ロールバック後は本番ドメインの自動割り当てが止まり、main への push は本番に出なくなる
+# 修正版ができたら promote してロールバック状態を解除する
+vercel promote <fixed-deployment-url>
+
+# UI からは Production Deployment タイルの [Instant Rollback]、解除は [Undo Rollback]
 ```
 
 **特徴**:
-- 既にビルド済みの artifact を再利用、ビルド不要で 30 秒以内に切り替え
+- 対象は過去に本番ドメインへ割り当てられたデプロイ。ビルド済みの成果物を再利用するため、ビルド不要で 30 秒以内に切り替わる
 - DNS は変更しない（atomic deployment）
-- データベース schema 変更がない限り完全に安全
+- 「完全に安全」ではない。戻した版が今の環境と両立するかを先に確認する
+  - 環境変数: ロールバックは当時のビルドに戻るだけで、プロジェクト設定で変えた環境変数は反映されない（ローテーション後の秘密情報も旧版には入らない）
+  - DB スキーマ・データ形式: 旧版のコードが新しいスキーマやデータを読めるか（後述の expand-contract）
+  - API 契約・外部サービス: バックエンド API・CMS・外部 API が旧版のリクエスト形式を今も受け付けるか
+  - その他の設定: cron ジョブの定義は戻した版のものになる。カスタムエイリアスは、戻す前の本番デプロイに付いていたものしか含まれない
 - 実運用規模での検証例: 6,000万ユーザー・50万件の動的ページを配信する Speechify は Vercel の Instant Rollback を採用し、2〜3日おき（時に日2回）のデプロイ頻度でも「悪いリリースをユーザーに気づかれる前に戻せる」前提でリリースできている
 
 **GitHub Actions による rollback workflow**:
@@ -328,41 +383,52 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: 'Commit SHA to rollback to'
+        description: 'Commit SHA of the production deployment to roll back to'
         required: true
+
+permissions: {}
 
 jobs:
   rollback:
     runs-on: ubuntu-latest
-    environment: production  # 承認フロー必須
+    environment: production  # 承認フロー必須。VERCEL_TOKEN はこの environment の secret に置く
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}         # CLI は環境変数から読む（--token で引数に出さない）
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}          # CI ではこの 2 つを設定すると vercel link が不要になる
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.target_sha }}
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - run: npm install -g vercel@65.2.0   # CLI のバージョンは固定し、Renovate 等で更新する
 
-      - name: Find Vercel deployment
+      - name: Find production deployment
         id: find
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
         run: |
-          DEPLOYMENT=$(curl -s -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
-            "https://api.vercel.com/v6/deployments?meta-githubCommitSha=${{ inputs.target_sha }}&limit=1" \
-            | jq -r '.deployments[0].url')
-          echo "url=$DEPLOYMENT" >> $GITHUB_OUTPUT
+          # Bad: curl -s で検索条件に target を付けない（HTTP エラーでも成功扱い、preview を拾うと promote が再ビルドになる）
+          # Good: -fsS で HTTP エラーを失敗にし、本番・READY・ロールバック可能なデプロイに絞る。見つからなければ jq -e で失敗させる
+          # 個人アカウントのプロジェクトなら teamId は付けない
+          DEPLOYMENT_ID=$(curl -fsS -H "Authorization: Bearer ${VERCEL_TOKEN}" \
+            "https://api.vercel.com/v7/deployments?projectId=${VERCEL_PROJECT_ID}&teamId=${VERCEL_ORG_ID}&target=production&state=READY&rollbackCandidate=true&sha=${TARGET_SHA}&limit=1" \
+            | jq -er '.deployments[0].uid')
+          echo "id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
 
-      - name: Promote to production
+      - name: Roll back
+        env:
+          DEPLOYMENT_ID: ${{ steps.find.outputs.id }}
         run: |
-          curl -X POST \
-            -H "Authorization: Bearer ${{ secrets.VERCEL_TOKEN }}" \
-            "https://api.vercel.com/v9/projects/${{ secrets.VERCEL_PROJECT_ID }}/promote/${{ steps.find.outputs.url }}"
+          # 切り替えの完了を待ち、失敗すれば非ゼロ終了でジョブを止める（後続の通知に進まない）
+          vercel rollback "$DEPLOYMENT_ID" --timeout=5m
+          vercel rollback status
 
       - name: Notify Slack
-        uses: slackapi/slack-github-action@v1
+        uses: slackapi/slack-github-action@v4   # 実運用では SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
         with:
+          webhook: ${{ secrets.SLACK_INCIDENT_WEBHOOK }}
+          webhook-type: incoming-webhook
           payload: |
-            {
-              "text": "🚨 Production rolled back to ${{ inputs.target_sha }} by ${{ github.actor }}"
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_INCIDENT_WEBHOOK }}
+            text: "🚨 Production rolled back to ${{ inputs.target_sha }} by ${{ github.actor }} (auto-assignment of production domains is now off until the next promote)"
 ```
 
 **Git revert + redeploy**:
@@ -392,10 +458,11 @@ Git revert は「rollback の事実が履歴に残る」点で監査追跡しや
 ## Steps (5-minute target)
 1. Verify the issue in [Sentry](https://sentry.io/...)
 2. Open [Vercel Dashboard](https://vercel.com/...)
-3. Find the last known-good deployment
-4. Click [Promote to Production]
+3. Find the last known-good production deployment
+4. Click [Instant Rollback] (or run the rollback workflow)
 5. Notify #incidents in Slack
-6. Open a post-mortem ticket within 24h
+6. After the fix is deployed, promote it to undo the rollback (re-enables auto-assignment of production domains)
+7. Open a post-mortem ticket within 24h
 
 ## Escalation
 - On-call: PagerDuty
@@ -411,13 +478,16 @@ Git revert は「rollback の事実が履歴に残る」点で監査追跡しや
 **判断軸**:
 | 状況 | 手段 |
 |---|---|
-| Frontend のみのバグ、DB 変更なし | Vercel Promote |
+| Frontend のみのバグ、DB・API・環境変数の変更なし | Vercel Instant Rollback（`vercel rollback`） |
 | バックエンド連携の問題 | 後方互換 deploy + feature flag off |
 | Schema 変更のロールバック | DB 復旧手順を別途実施 |
-| 機密漏洩・セキュリティ | 即時 promote + secret rotation |
+| 機密漏洩・セキュリティ | 即時 rollback + secret rotation（ローテーション後の値は新しいデプロイで反映する） |
 
 **出典**:
 - [Vercel: Instant Rollback](https://vercel.com/docs/deployments/managing-deployments#instant-rollback) (Vercel)
+- [Vercel Docs: Performing an Instant Rollback on a Deployment](https://vercel.com/docs/instant-rollback) (Vercel 公式、対象デプロイ・環境変数が更新されない・cron とカスタムエイリアス・自動割り当ての停止と Undo) ※2026-10-25 確認
+- [Vercel CLI: vercel rollback](https://vercel.com/docs/cli/rollback) / [vercel promote](https://vercel.com/docs/cli/promote) (Vercel 公式、`--timeout`・`status`・Preview 向けデプロイを promote すると新しい本番デプロイになる) ※2026-10-25 確認
+- [Vercel REST API: List deployments](https://vercel.com/docs/rest-api/reference/endpoints/deployments/list-deployments) (Vercel 公式、`GET /v7/deployments` の `projectId` / `target` / `state` / `rollbackCandidate` / `sha`) ※2026-10-25 確認
 - [Google SRE Book: Postmortem Culture](https://sre.google/sre-book/postmortem-culture/) (Google)
 - [Atlassian: Incident management](https://www.atlassian.com/incident-management) (Atlassian)
 - [How Speechify serves 500,000 dynamic pages to 60 million users on Vercel](https://vercel.com/blog/how-speechify-serves-50000-dynamic-pages-to-60-million-users-on-vercel) (Vercel 公式ブログ、Instant Rollback の大規模実運用における効果を示す事例) ※2026-07-16 fetch
@@ -426,9 +496,9 @@ Git revert は「rollback の事実が履歴に残る」点で監査追跡しや
 > "Vercel's instant rollbacks mean you fix it before anyone notices."
 > ([How Speechify serves 500,000 dynamic pages to 60 million users on Vercel](https://vercel.com/blog/how-speechify-serves-50000-dynamic-pages-to-60-million-users-on-vercel), セクション "Instant Rollbacks") ※2026-07-16に実際にfetch成功
 
-**バージョン**: パターン
+**バージョン**: パターン（Vercel CLI の例は 65.x）
 **確信度**: 高
-**最終更新**: 2026-07-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -502,22 +572,25 @@ export default async function ChangelogPage() {
 
 **GitHub Release との連携**:
 ```yaml
-# release が作成されたら自動で GitHub Release を作成
-- uses: changesets/action@v1
+# release が作成されたら自動で GitHub Release を作成（v2 の入力名。既定で true）
+- name: Create Release PR or Publish
+  id: changesets          # 後続の steps.changesets.outputs.published で参照するため必須
+  uses: changesets/action@v2
   with:
-    publish: pnpm release
-    createGithubReleases: true
+    publish-script: pnpm release
+    create-github-releases: true
 ```
 
 **Slack / Discord 通知**:
 ```yaml
 - name: Notify Slack on release
+  # Bad: changesets/action のステップに id がないと steps.changesets は空で、通知は一度も送られない
   if: steps.changesets.outputs.published == 'true'
-  uses: slackapi/slack-github-action@v1
+  uses: slackapi/slack-github-action@v4   # 実運用では SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
   with:
+    webhook: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
+    webhook-type: incoming-webhook
     payload-file-path: ./release-notes.json
-  env:
-    SLACK_WEBHOOK_URL: ${{ secrets.SLACK_RELEASE_WEBHOOK }}
 ```
 
 **ユーザー向けと内部向けの分離**:
@@ -552,7 +625,8 @@ export default async function ChangelogPage() {
 - [Changesets: Changelog format](https://github.com/changesets/changesets/blob/main/docs/intro-to-using-changesets.md) (Changesets)
 - [Keep a Changelog](https://keepachangelog.com/) (Olivier Lacan)
 - [Conventional Commits](https://www.conventionalcommits.org/) (Conventional Commits)
+- [Slack: Sending data with an incoming webhook](https://docs.slack.dev/tools/slack-github-action/sending-data-slack-incoming-webhook/) (Slack 公式、v4 の `webhook` / `webhook-type` / `payload` / `payload-file-path`) ※2026-10-25 確認
 
-**バージョン**: パターン
+**バージョン**: パターン（changesets/action v2 / slackapi/slack-github-action v4）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

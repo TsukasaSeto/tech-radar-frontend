@@ -89,7 +89,8 @@ export async function GET(request: Request) {
     log.info({ count: users.length }, 'Users fetched');
     return Response.json(users);
   } catch (error) {
-    log.error({ error }, 'Failed to fetch users');
+    // 既定のシリアライザは `err` キーにだけ効く。`{ error }` と書くとスタックトレースが `{}` になる
+    log.error({ err: error }, 'Failed to fetch users');
     return Response.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
@@ -98,21 +99,23 @@ export async function GET(request: Request) {
 **出典**:
 - [Pino Docs: Redaction](https://getpino.io/#/docs/redaction) (Pino公式)
 - [Pino Docs: Child Logger](https://getpino.io/#/docs/child-loggers) (Pino公式)
+- [Pino Docs: API（`serializers` / `errorKey`）](https://getpino.io/#/docs/api) (Pino公式、既定のシリアライザは `{ err: pino.stdSerializers.err }`、`errorKey` の既定は `'err'`) ※2026-10-25 確認
 
 **バージョン**: Pino 9+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. ログレベルをデータの重要度と緊急度で設計する
 
-`debug` / `info` / `warn` / `error` の使い分けを明確にし、
-本番ではアラートが必要なレベルのみを出力する。
+`debug` / `info` / `warn` / `error` の使い分けを明確にする。
+出力するレベルとアラートを発火させる条件は分けて決める。本番の出力は `info` 以上（#1 の `level: 'info'`）とし、業務イベントの `info` も残す。アラートは `error` と、`warn` の件数がしきい値を超えた場合に限る。
 
 **根拠**:
 - ログレベルを間違えるとアラートが誤作動（warn の乱用）したり、問題の発見が遅れる（error の使い不足）
 - 本番環境で `debug` ログを出力するとコストと I/O が無駄になる
+- 出力レベルをアラート対象のレベルまで絞ると、事後調査に必要な `info` の業務イベントが本番に残らない
 - ログ集計ツールでレベルフィルタリングを使うためにレベルの一貫性が重要
 
 **コード例**:
@@ -128,14 +131,14 @@ logger.info({ userId, orderId }, 'Order created successfully');
 logger.info({ userId }, 'User logged in');
 logger.info({ count: items.length }, 'Items loaded');
 
-// warn: 異常だが回復可能。注意が必要だがアラート不要
+// warn: 異常だが回復可能。1 件ごとのアラートは不要（件数がしきい値を超えたらアラート）
 logger.warn({ retryCount: 2, url }, 'API request retried');
 logger.warn({ userId, planId }, 'User on deprecated plan');
 logger.warn({ cacheHitRate: 0.3 }, 'Low cache hit rate');
 
 // error: 回復不能なエラー。アラート必要
-logger.error({ error, userId, operation: 'payment' }, 'Payment processing failed');
-logger.error({ error, requestId }, 'Unhandled exception in route handler');
+logger.error({ err: error, userId, operation: 'payment' }, 'Payment processing failed');
+logger.error({ err: error, requestId }, 'Unhandled exception in route handler');
 
 // Bad: error レベルを乱用する
 logger.error('User not found');  // これは warn か info が適切
@@ -147,7 +150,7 @@ logger.error('Validation failed');  // 予期されるエラーは warn
 
 **バージョン**: Pino 9+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -299,40 +302,47 @@ export async function POST(request: Request) {
 | シグナル | 答える問い | サンプリング方針 |
 |----------|-----------|----------------|
 | **エラー** | 「今何が壊れたか？」— 例外を Issue として記録・重複排除 | 全件（デフォルト） |
-| **トレース** | 「リクエストは設計通り流れたか？時間はどこへ？」— 横断ウォーターフォール | 10〜20%でサンプリング可 |
-| **ログ** | 「この分岐点でシステム状態は何だったか？」— コードが選んだ理由を記録 | **サンプリング禁止**（全件保存） |
-| **メトリクス** | 「これはトレンドとして変化しているか？」— カウンタ/分布を集約 | `before_send_metric` でフィルタ |
+| **トレース** | 「リクエストは設計通り流れたか？時間はどこへ？」— 横断ウォーターフォール | 本番は 0.05〜0.1 を基本に、重要フローだけ上げる（[`error-tracking.md`](./error-tracking.md) #2） |
+| **ログ** | 「この分岐点でシステム状態は何だったか？」— コードが選んだ理由を記録 | 監査ログ・決定ログは全件保持。運用ログ（`debug`、高頻度の `info`）はレベルとサンプリングで間引いてよい |
+| **メトリクス** | 「これはトレンドとして変化しているか？」— カウンタ/分布を集約 | `beforeSendMetric` でフィルタ・除外 |
 
 **根拠**:
-- ログは「1件の問題リクエスト」を探す唯一のシグナルであるため、サンプリングすると必要な証拠が消える
+- 決定点のログ（なぜその結果になったか）と監査ログは「1件の問題リクエスト」を探す手がかりなので、サンプリングすると必要な証拠が消える
+- 一方で、運用テレメトリとしての大量のログはサンプリングとカーディナリティの管理が要る（[`architecture/logging.md`](../architecture/logging.md) #1）。全件保持する対象は決定ログ・監査ログに絞る
 - スパン属性は「1リクエストのコンテキスト」、メトリクスは「全リクエストの集計傾向」という役割を明確に分担する
 - 全シグナルに同一の `trace_id` を付与することで「メトリクスのスパイク → 影響トレース → 決定ログ」へドリルダウンできる
 - オートインストルメンテーションで全スパンの 80% が自動取得されるため、カスタムスパンは「意味のある分岐点」にのみ配置する
 
 **コード例**:
 ```typescript
-// スパン属性: リクエスト固有のコンテキスト（1リクエストの文脈）
-span.setAttribute("ranking_version", rankingVersion);
+import * as Sentry from "@sentry/nextjs";
+import { trace } from "@opentelemetry/api";
 
-// ログ: 決定点での状態（全件保存・サンプリング禁止）
-logger.info("recommendations lookup", {
+// スパン属性: リクエスト固有のコンテキスト（1リクエストの文脈）
+trace.getActiveSpan()?.setAttribute("ranking_version", rankingVersion);
+
+// ログ: 決定点での状態（決定ログなので全件保持する）
+// Sentry.logger は (message, attributes) の順。#1 の Pino は (object, message) の順なので混同しない
+Sentry.logger.info("recommendations lookup", {
   user_id: userId,
   outcome,         // なぜこの結果になったかを記録
 });
 
-// メトリクス: 集計傾向（before_send_metric でフィルタ可能）
+// メトリクス: 集計傾向（beforeSendMetric でフィルタ可能）
 Sentry.metrics.count("recommendations.served", 1, {
-  tags: { outcome },
+  attributes: { outcome },
 });
 ```
 
 **アンチパターン**:
-- ログをサンプリングして「まれなリクエスト」の証拠を失う
+- 決定ログ・監査ログまでサンプリングして「まれなリクエスト」の証拠を失う
 - スパン（リクエスト固有）とメトリクス（全体傾向）を混同して計装が重複する
 - 各シグナルに `trace_id` を付与せず、シグナル間のドリルダウンができない
 
 **出典**:
 - [Errors, traces, logs, metrics: when to reach for what](https://blog.sentry.io/errors-traces-logs-metrics-when-to-reach-for-what/) (Sentry Blog) ※2026-06-05に実際にfetch成功
+- [Sentry Docs: Metrics（Next.js）](https://docs.sentry.io/platforms/javascript/guides/nextjs/metrics/) (Sentry公式、`attributes` と `beforeSendMetric`、SDK 10.25.0+) ※2026-10-25 確認
+- [Sentry Docs: Logs（Next.js）](https://docs.sentry.io/platforms/javascript/guides/nextjs/logs/) (Sentry公式、`Sentry.logger.info(message, attributes)`) ※2026-10-25 確認
 
 **出典引用**:
 > "Each signal exists because it answers a different question, and feeds a different workflow once it lands."
@@ -341,9 +351,9 @@ Sentry.metrics.count("recommendations.served", 1, {
 > "Logs are the opposite: you keep all of them, because the entire point is to find the one rare request that went sideways."
 > ([同上], セクション "Logs answer what was true at a decision point") ※2026-06-05に実際にfetch成功
 
-**バージョン**: Sentry SDK 8+、OpenTelemetry（言語非依存）
-**確信度**: 高（Sentry 公式ブログ由来）
-**最終更新**: 2026-06-05
+**バージョン**: @sentry/nextjs 10.25+（`Sentry.metrics` の `attributes` 形式。[`metrics.md`](./metrics.md) #6 と同じ）、OpenTelemetry（言語非依存）
+**確信度**: 中（シグナルの使い分けは Sentry Blog の 1 記事。API は Sentry 公式 docs で確認）
+**最終更新**: 2026-10-25
 
 ---
 

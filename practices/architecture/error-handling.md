@@ -65,9 +65,11 @@ export default function DashboardError({
 
 // app/users/[id]/page.tsx
 import { notFound } from 'next/navigation';
+import { getUser } from '@/app/_lib/dal/user'; // DAL 経由で取得する（data-access-layer.md #1）
 
-export default async function UserPage({ params }: { params: { id: string } }) {
-  const user = await db.user.findUnique({ where: { id: params.id } });
+export default async function UserPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params; // Next.js 15 以降の params は Promise（v16 で同期アクセスは削除）
+  const user = await getUser(id);
   if (!user) notFound();
   return <UserProfile user={user} />;
 }
@@ -80,10 +82,11 @@ export default function UserNotFound() {
 
 **出典**:
 - [Next.js Docs: Error Handling](https://nextjs.org/docs/app/building-your-application/routing/error-handling) (Next.js公式)
+- [Next.js Docs: How to upgrade to version 16 — Async Request APIs](https://nextjs.org/docs/app/guides/upgrading/version-16#async-request-apis-breaking-change) (Next.js公式、v16 で `params` の同期アクセスが削除された) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（コード例の `await params` は 15+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -94,7 +97,7 @@ Server Actions や API 呼び出しで特に有効。
 
 **根拠**:
 - 例外は型システムに現れないため、エラーケースの処理が見えなくなる
-- Result 型にすることでエラーケースを TypeScript が強制的に処理させられる
+- Result 型と `never` による網羅性チェックを組み合わせると、エラーケースの処理漏れを TypeScript が検出できる（Result 型にするだけでは、呼び出し側が `ok` を確かめずに使うことは防げない）
 - `try/catch` ブロックの乱用を防ぎ、エラー処理の一貫性が保てる
 
 **コード例**:
@@ -116,11 +119,12 @@ export function err<E>(error: E): Result<never, E> {
 'use server';
 
 import { ok, err, Result } from '@/shared/types/result';
+import { logger } from '@/shared/lib/logger';
 
 type LoginError =
   | { type: 'invalid_credentials' }
   | { type: 'account_locked'; until: Date }
-  | { type: 'network_error'; message: string };
+  | { type: 'unexpected' }; // 内部例外の詳細はクライアントに返さない
 
 export async function login(
   email: string,
@@ -139,7 +143,9 @@ export async function login(
 
     return ok({ userId: user.id });
   } catch (e) {
-    return err({ type: 'network_error', message: String(e) });
+    // DB 接続情報などを含みうる例外の詳細はサーバーログにだけ残す（#5 の情報漏洩防止）
+    logger.error({ err: e }, 'login failed');
+    return err({ type: 'unexpected' });
   }
 }
 
@@ -153,9 +159,13 @@ if (!result.ok) {
     case 'account_locked':
       showError(`アカウントは ${result.error.until.toLocaleString()} までロックされています`);
       break;
-    case 'network_error':
+    case 'unexpected':
       showError('通信エラーが発生しました');
       break;
+    default: {
+      const unhandled: never = result.error;
+      throw new Error(`Unhandled login error: ${JSON.stringify(unhandled)}`);
+    }
   }
 } else {
   redirectToDashboard(result.value.userId);
@@ -194,7 +204,8 @@ digraph error_strategy {
 | Server Action / API レスポンス | **Result 型** | 呼び出し元が UI 分岐したい・型で網羅性確認 |
 | ユーザー入力のバリデーション失敗 | **Result 型**（zod の `safeParse`） | 全エラーを集約してフォームに表示 |
 | 検索結果が見つからない（404 相当の業務ロジック） | **Result 型** または `null`/`Option` | 「失敗」ではなく「正常な結果の 1 つ」 |
-| 認証・認可失敗 | **Result 型** | UI で異なる扱いが必要（ログインモーダル等） |
+| 認証・認可失敗（DAL・page） | **Throw**（`unauthorized()` / `forbidden()` / `redirect()`） | DAL は最後の砦として処理を止める（[`data-access-layer.md`](./data-access-layer.md) #2） |
+| 認証・認可失敗（UI から呼ぶ Server Action が分岐用に返す場合） | **Result 型** | UI で異なる扱いが必要（ログインモーダル等）。DAL が throw した場合はそのまま伝播させる |
 | ネットワーク・DB 接続失敗 | **Throw** → グローバルハンドラ | 局所で扱えず、全体で対処 |
 | プログラミングエラー（assertion 失敗・型保証違反） | **Throw** | バグ。クラッシュさせて Sentry で観測 |
 | サードパーティ SDK の例外伝播 | **Throw** → Result 変換層 | 境界で `tryCatch` して Result 化 |
@@ -266,7 +277,7 @@ useQuery({
 
 **バージョン**: TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -345,6 +356,10 @@ export default function DashboardPage() {
 **コード例**:
 ```tsx
 // shared/components/AppErrorBoundary.tsx
+// 関数 props（FallbackComponent / onError / onReset）を扱うので Client Component にする。
+// これで Server Component の layout などからも <AppErrorBoundary> として使える
+'use client';
+
 import { ErrorBoundary, FallbackProps } from 'react-error-boundary';
 import * as Sentry from '@sentry/nextjs';
 
@@ -405,72 +420,55 @@ export function AppErrorBoundary({ children }: { children: React.ReactNode }) {
 
 **バージョン**: react-error-boundary 4+, React 18+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
-### 5. 非同期処理のエラーは必ず型付きで分類し、ユーザー向けメッセージに変換する
+### 5. 非同期処理のエラーは API 層で分類した結果から、ユーザー向けの安全なメッセージに変換して表示する
 
-API呼び出し・データ取得処理のエラーをそのままユーザーに表示せず、
-エラー種別（ネットワーク・認証・バリデーション・サーバー）に応じた
-ユーザーフレンドリーなメッセージに変換して表示する。
+API 呼び出し・データ取得のエラーをそのままユーザーに表示しない。
+HTTP ステータスやネットワークエラーの分類は API 層（[`api-client/error-handling.md`](../api-client/error-handling.md) #1 の `ApiError`・#2 のネットワークエラーの区別）で行い、
+UI 層では分類済みのエラーを、ユーザーが次に取る行動（再試行・ログイン・入力修正）が分かるメッセージに変換するだけにする。
 
 **根拠**:
 - `error.message` をそのまま表示するとスタックトレースや内部情報が漏洩する
-- エラー種別の分類により、ユーザーが次に何をすべきか（再試行・ログイン・入力修正）を明示できる
-- 型付き分類によって処理漏れを TypeScript が検出できる
+- 分類を UI 層で実装し直すと、API 層の分類（リトライ判定など）と食い違う。分類は 1 か所に置き、UI 層は変換だけを持つ
+- 変換を 1 つの関数にまとめると、画面ごとに文言がばらつかない
 
 **コード例**:
 ```ts
-// shared/lib/api-error.ts
-export type ApiErrorType =
-  | 'UNAUTHORIZED'    // 401: 再ログインが必要
-  | 'FORBIDDEN'       // 403: 権限なし
-  | 'NOT_FOUND'       // 404: リソース不在
-  | 'VALIDATION'      // 422: 入力値エラー
-  | 'SERVER_ERROR'    // 5xx: サーバー側の問題
-  | 'NETWORK_ERROR';  // fetch失敗: ネットワーク問題
+// shared/lib/to-user-message.ts
+import { ApiError } from '@/lib/api-error'; // 分類は API 層（api-client/error-handling.md #1）
 
-export class AppError extends Error {
-  constructor(
-    public readonly type: ApiErrorType,
-    public readonly userMessage: string,
-    public readonly cause?: unknown
-  ) {
-    super(userMessage);
-  }
-}
+const MESSAGES_BY_STATUS: Partial<Record<number, string>> = {
+  401: 'ログインが必要です。再度サインインしてください。',
+  403: 'この操作を行う権限がありません。',
+  404: 'お探しのページまたはデータが見つかりません。',
+  422: '入力内容を確認してください。',
+  429: 'しばらく待ってから再試行してください。',
+};
 
-export function classifyHttpError(status: number, body?: unknown): AppError {
-  switch (true) {
-    case status === 401:
-      return new AppError('UNAUTHORIZED', 'ログインが必要です。再度サインインしてください。');
-    case status === 403:
-      return new AppError('FORBIDDEN', 'この操作を行う権限がありません。');
-    case status === 404:
-      return new AppError('NOT_FOUND', 'お探しのページまたはデータが見つかりません。');
-    case status >= 500:
-      return new AppError('SERVER_ERROR', 'サーバーエラーが発生しました。しばらく経ってから再試行してください。');
-    default:
-      return new AppError('SERVER_ERROR', '予期しないエラーが発生しました。');
+export function toUserMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.isServerError) {
+      return 'サーバーエラーが発生しました。しばらく経ってから再試行してください。';
+    }
+    return MESSAGES_BY_STATUS[error.status] ?? '予期しないエラーが発生しました。';
   }
+  // ApiError にならなかったもの（fetch の reject など）は詳細を見せず、接続の確認を促す
+  return '通信に失敗しました。接続を確認して再試行してください。';
 }
 
 // 使用例
-async function fetchUser(id: string) {
-  try {
-    const res = await fetch(`/api/users/${id}`);
-    if (!res.ok) throw classifyHttpError(res.status);
-    return await res.json();
-  } catch (e) {
-    if (e instanceof AppError) throw e;
-    throw new AppError('NETWORK_ERROR', 'ネットワーク接続を確認してください。', e);
-  }
+try {
+  await updateProfile(input);
+} catch (e) {
+  setError(toUserMessage(e));
 }
 
 // Bad: エラーをそのまま表示
 catch (e) {
-  setError(e.message); // "TypeError: Failed to fetch" などが表示される
+  setError(String(e)); // "TypeError: Failed to fetch" などの内部情報が表示される
 }
 ```
 
@@ -480,7 +478,7 @@ catch (e) {
 
 **バージョン**: TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

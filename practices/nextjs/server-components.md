@@ -10,17 +10,17 @@ Next.js App Router では全コンポーネントがデフォルトで Server Co
 
 **根拠**:
 - Server Components はバンドルサイズに含まれない（JS がゼロ）
-- データベースや内部 API に直接アクセスできる（認証情報を漏らさない）
+- サーバーでデータを取得できる（認証情報をクライアントに渡さない）。取得はコンポーネントから DB を直接呼ばず、DAL 経由にする（`../architecture/data-access-layer.md` #1）
 - クライアントに送信するデータ量を減らせる
 
 **コード例**:
 ```tsx
 // Server Component（デフォルト）: 'use client' なし
 // app/users/page.tsx
-import { db } from '@/lib/db';
+import { getUsers } from '@/app/_lib/dal/user'; // 認可と DTO 変換は DAL の中で行う
 
 export default async function UsersPage() {
-  const users = await db.user.findMany();
+  const users = await getUsers();
   return (
     <ul>
       {users.map(user => (
@@ -31,7 +31,9 @@ export default async function UsersPage() {
 }
 
 // Client Component: インタラクティビティが必要
+// components/SearchInput.tsx
 'use client';
+import { useState } from 'react';
 
 export function SearchInput({ onSearch }: { onSearch: (q: string) => void }) {
   const [query, setQuery] = useState('');
@@ -50,23 +52,26 @@ export function SearchInput({ onSearch }: { onSearch: (q: string) => void }) {
 
 **バージョン**: Next.js 13+, React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. `'use client'` 境界はリーフコンポーネントの近くに置く
 
-`'use client'` を付けると、そのコンポーネント以下の子コンポーネントも
-全てクライアントコンポーネントになる。できるだけツリーの末端（リーフ）に置く。
+`'use client'` を付けると、そのモジュールと、そこから import されるモジュール（推移的な依存）がすべてクライアントコードになる。境界はレンダーツリーではなくモジュールの依存関係で決まる。できるだけツリーの末端（リーフ）のモジュールに置く。
+`children` や props として渡した Server Component は、Client Component の中に表示されてもサーバーで実行されたままになる（#4）。
 
 **根拠**:
-- `'use client'` が上位にあると、不必要に多くのコンポーネントがクライアントバンドルに含まれる
+- `'use client'` のモジュールが import するコンポーネントやユーティリティは、`'use client'` がなくてもクライアントで評価され、クライアントバンドルに含まれる。上位のモジュールに置くほど、不必要に多くのコードがバンドルに入る
+- 親子の描画関係は実行環境を決めない。Client Component が `children` として受け取った Server Component は、Client Component のモジュールから import されていないのでサーバーのまま（React 公式）
 - Server Component の恩恵（DBアクセス、バンドルサイズ削減）を最大化できる
 
 **コード例**:
 ```tsx
 // Good: Client Component を末端に限定
 // app/page.tsx (Server Component)
+import { Counter } from '@/components/Counter';
+
 export default async function Page() {
   const data = await fetchHeavyData();
   return (
@@ -79,24 +84,31 @@ export default async function Page() {
 
 // components/Counter.tsx
 'use client';
+import { useState } from 'react';
+
 export function Counter() {
   const [count, setCount] = useState(0);
   return <button onClick={() => setCount(c => c + 1)}>{count}</button>;
 }
+
+// Bad: ページのモジュールに 'use client' を付ける
+// → このページが import する StaticContent なども含めてすべてクライアントコードになる
 ```
 
 **出典**:
 - [Next.js Docs: Moving Client Components Down the Tree](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#moving-client-components-down-the-tree) (Next.js公式)
+- [React Docs: 'use client'](https://react.dev/reference/rsc/use-client) (React 公式、境界はモジュールの依存ツリーで決まり、children で渡したコンポーネントはサーバーのまま) ※2026-10-25 確認
+  > "Recall that `'use client'` defines the boundary between server and client code on the _module dependency tree_, not the render tree."
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. Server Components から Client Components に props を渡す際はシリアライズ可能な値のみ
 
-Server Components から Client Components への props は JSON シリアライズ可能な値に限る。関数は Server Actions 経由か Client Component 内で定義する。
+Server Components から Client Components への props は、React がシリアライズできる値に限る（JSON より広く、`Date` / `Map` / `Set` / `BigInt` / `Promise` なども渡せる）。関数は Server Actions 経由か Client Component 内で定義する。
 
 **根拠**:
 - Server と Client の境界を越えるデータは React によってシリアライズされる
@@ -105,55 +117,68 @@ Server Components から Client Components への props は JSON シリアライ
 
 **コード例**:
 ```tsx
-// Good: Server Actions を使う
+// Good: Server Actions を使う（インライン定義でも公開エンドポイントなので、認証・検証は省かない。server-actions.md #5）
+import { redirect } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { saveNote } from '@/app/_lib/dal/note.mutations';
+
 export default async function Page() {
   async function handleAction(formData: FormData) {
     'use server';
-    await saveData(formData);
+    const session = await verifySession();
+    if (!session) redirect('/login');
+    const note = String(formData.get('note') ?? '').trim();
+    if (note) await saveNote(session.userId, note);
   }
-  return <form action={handleAction}><button>Submit</button></form>;
+  return (
+    <form action={handleAction}>
+      <input name="note" />
+      <button>Submit</button>
+    </form>
+  );
 }
 ```
 
-**非シリアライズ値カタログ（よくある落とし穴）**:
+**境界を越えられる値・越えられない値（React 公式の一覧）**:
 
-React の Server/Client 境界では以下の値が **silent に破壊** されるか **明示的にエラー** になる。
-ビルドは通っても実行時に壊れるケースが多いため、props 設計時にチェックする。
+Server Component から Client Component に渡す props の対応型は、React 公式ドキュメントの一覧で決まる。
+対応していない値はエラーになるので、props 設計時にチェックする。
 
-| 値 | 境界越え時の挙動 | 対処 |
+| 値 | 境界を越えられるか | 対処 |
 |---|---|---|
-| `Date` | プレーン object に変換、`.getTime()` 等が消える | Client 側で `new Date(isoString)` に再変換 / `toISOString()` で送る |
-| `Map` / `Set` | プレーン object / array に変換、メソッド消失 | `Array.from(map.entries())` で送り Client で再構築 |
-| `Function`（任意の関数） | **エラー** | Server Action（`'use server'`）として渡す or Client 側で定義 |
-| `Class instance`（Prisma 等） | プロトタイプ消失、メソッド呼び出し不可 | プレーン object に変換（`{ ...instance }` や DTO 化） |
-| `RegExp` | プレーン object に変換、`.test()` 不可 | 文字列で送り Client 側で `new RegExp()` |
-| `Symbol`（非 well-known） | **エラー** | 文字列・列挙型に置き換え |
-| `BigInt` | **エラー**（JSON.stringify 不可） | 文字列化して送信、Client で `BigInt()` |
-| `Error` インスタンス | プレーン object 化、stack/cause が部分的に欠落 | Result 型でエラーを構造化（`architecture/error-handling.md` Rule 2 参照） |
-| `Promise` | Server で await される（React 19+）/ 未解決時 Suspense | `use()` フックで Client から扱うパターンを採用 |
-| 循環参照 | **エラー** | DTO 化で循環を切る |
+| プリミティブ（string / number / bigint / boolean / undefined / null） | 越えられる | — |
+| `Date` | 越えられる（`Date` のまま届く） | — |
+| `Map` / `Set` / Array / TypedArray / ArrayBuffer | 越えられる（中身も対応型であること） | — |
+| プレーンオブジェクト（オブジェクトリテラルで作ったもの） | 越えられる（プロパティも対応型であること） | — |
+| `Promise` | 越えられる | Client 側で `use()` で解決する |
+| Server Function（`'use server'`） | 越えられる | — |
+| JSX（Server / Client Component の要素） | 越えられる | — |
+| `Symbol` | `Symbol.for` でグローバル登録したものだけ越えられる。`Symbol('x')` はエラー | 文字列・列挙型に置き換え |
+| 関数（Server Function でも Client モジュールの export でもないもの） | エラー | Server Action（`'use server'`）として渡す or Client 側で定義 |
+| クラス、組み込み以外のクラスのインスタンス（Prisma の `Decimal` など）、null プロトタイプのオブジェクト | エラー | DTO（プレーンオブジェクト）に変換する |
+| `RegExp` / `Error` など上記の一覧にない組み込みのインスタンス | 対応型に含まれない | 文字列で送る / Result 型でエラーを構造化（`architecture/error-handling.md` Rule 2 参照） |
 
 **検出方法**:
 1. **TypeScript 型レベル**: `serializeable` 型ヘルパーや [`Serializable<T>`](https://github.com/sindresorhus/type-fest) ユーティリティで境界 props の型を制約する
 2. **ランタイム検出**: Next.js は dev mode で `Only plain objects, and a few built-ins, can be passed to Client Components from Server Components` という警告を出す。CI で Build ログを grep して落とす運用
 3. **境界コンポーネントの命名規約**: Client Component の props 型を `XxxClientProps` のように命名し、レビューで重点チェック
-4. **設計レベル**: Server Component の戻り値を **DTO（Data Transfer Object）** として明示的に定義し、Server 側で `toDTO()` 変換を挟む
+4. **設計レベル**: Server Component の戻り値を **DTO（Data Transfer Object）** として明示的に定義し、Server 側で `toDTO()` 変換を挟む。DTO 化の目的は、機密フィールド（仕入れ値・内部メモなど）を Client に渡さないことと、Prisma の `Decimal` などクラスのインスタンスをプレーンな値に変換すること（`Date` や `Set` は変換しなくても渡せる）
 
 **コード例（DTO パターン）**:
 ```tsx
-// Bad: Prisma の戻り値（class instance）をそのまま渡す
+// Bad: Prisma の戻り値をそのまま渡す
 async function ProductPage({ id }: { id: string }) {
   const product = await prisma.product.findUnique({ where: { id } });
-  return <ProductDetail product={product!} />; // Date / Decimal で問題発生
+  return <ProductDetail product={product!} />; // Decimal（クラスのインスタンス）でエラーになり、仕入れ値などの内部フィールドも渡ってしまう
 }
 
 // Good: Server 側で DTO に変換してから渡す
 type ProductDTO = {
   id: string;
   name: string;
-  priceJpy: number;          // Prisma Decimal → number
-  publishedAt: string;        // Date → ISO string
-  tags: string[];             // Set → Array
+  priceJpy: number;          // Prisma Decimal（クラスのインスタンス）→ number
+  publishedAt: Date;          // Date はそのまま渡せる
+  // costPriceJpy などの内部フィールドは含めない
 };
 
 function toProductDTO(p: Product): ProductDTO {
@@ -161,8 +186,7 @@ function toProductDTO(p: Product): ProductDTO {
     id: p.id,
     name: p.name,
     priceJpy: p.priceJpy.toNumber(),
-    publishedAt: p.publishedAt.toISOString(),
-    tags: Array.from(p.tagSet),
+    publishedAt: p.publishedAt,
   };
 }
 
@@ -179,11 +203,12 @@ async function ProductPage({ id }: { id: string }) {
 **出典**:
 - [Next.js Docs: Passing Props from Server to Client Components](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#passing-props-from-server-to-client-components-serialization) (Next.js公式)
 - [React Docs: Server Components - Serialization](https://react.dev/reference/rsc/server-components#serializable-types) (React公式)
+- [React Docs: 'use client' — Serializable types returned by Server Components](https://react.dev/reference/rsc/use-client#serializable-types) (React 公式、Server から Client へ渡せる型と渡せない型の一覧) ※2026-10-25 確認
 - [「Event handlers cannot be passed to Client Component props」は 'use client' を付けても直らない](https://qiita.com/kai_kou/items/31edab0b35b2ce93f1e1) (Qiita、'use client' を付けても直らない理由と2つの修正方法の実機検証) ※2026-08-19 fetch
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16 / 2026-08-19
+**最終更新**: 2026-10-25
 
 ---
 
@@ -192,9 +217,9 @@ async function ProductPage({ id }: { id: string }) {
 Server/Client 境界は「どこでデータを取得し、どこでインタラクションを処理するか」を明確に分割する設計上の境界線として扱う。境界をまたぐ際のパターンを統一することで、予期しないクライアントバンドル肥大化や、サーバー専用コードの漏洩を防ぐ。
 
 **根拠**:
-- `'use client'` はモジュールグラフの「切断点」であり、その配下のすべてがクライアントバンドルに含まれる
-- Server Component は `'use client'` のコンポーネントを直接インポートできるが、逆は不可
-- Server Component を `children` や `props` 経由で Client Component に渡す「サーバーコンポーネントの合成」パターンを活用する
+- `'use client'` はモジュールの依存グラフの境界であり、そのモジュールが import するモジュールはすべてクライアントバンドルに含まれる
+- Client Component のモジュールから import したコンポーネントは、`'use client'` がなくてもクライアントで評価される（Server Component としては動かない）。サーバー専用のモジュール（`server-only` を付けた DAL など）は Client から import するとビルドエラーになる
+- サーバーで実行したいコンポーネントは import せず、`children` や `props` 経由で Client Component に渡す「サーバーコンポーネントの合成」パターンを使う。Context Provider のようにツリーの上位に置かざるを得ない Client Component でも、`children` で Server Component を組み込める
 
 **コード例**:
 ```tsx
@@ -203,6 +228,8 @@ Server/Client 境界は「どこでデータを取得し、どこでインタラ
 
 // components/ClientShell.tsx
 'use client';
+import { useState } from 'react';
+
 export function ClientShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
@@ -227,61 +254,33 @@ export default async function Page() {
 
 // Bad: Client Component 内で Server-only モジュールをインポート
 // 'use client'
-// import { db } from '@/lib/db'; // エラー: サーバー専用コードがクライアントに漏洩
+// import { db } from '@/lib/db'; // サーバー専用コードがクライアントに入る（server-only を付けていればビルドエラーで検出できる）
+
+// Bad: Client Component から Server Component のつもりのコンポーネントを import する
+// 'use client'
+// import { HeavyServerContent } from './HeavyServerContent'; // クライアントで評価され、サーバーでは動かない
 ```
 
 **出典**:
 - [Next.js Docs: Composition Patterns](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns) (Next.js公式 / 2024)
 - [Next.js Docs: Server and Client Components](https://nextjs.org/docs/app/building-your-application/rendering/server-components) (Next.js公式 / 2024)
+- [React Docs: 'use client'](https://react.dev/reference/rsc/use-client) (React 公式、`'use client'` のモジュールの推移的な依存はクライアントで評価され、children で渡したコンポーネントはサーバーのまま) ※2026-10-25 確認
+  > "A component usage is considered a Client Component if it is defined in module with `'use client'` directive or when it is a transitive dependency of a module that contains a `'use client'` directive. Otherwise, it is a Server Component."
 
 **バージョン**: Next.js 15+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 5. Streaming with Suspense でページの初期表示を高速化する
 
 重いデータを取得するコンポーネントを `<Suspense>` でラップし、フォールバックUIを表示しながらコンテンツをストリームする。ページ全体を待たせるのではなく、準備できたコンテンツから順次表示する。
+Suspense でのデータ取得の分け方・LCP 要素の置き場所・コード例は `practices/nextjs/data-fetching.md` #3 を正本とする。
 
 **根拠**:
-- サーバーはHTMLを段階的にストリーミングし、ブラウザは受け取り次第レンダリングできる
-- Time To First Byte（TTFB）を下げ、ユーザーの体感速度を向上させる
-- `loading.tsx` はルート全体にSuspenseを張るショートカットだが、コンポーネント粒度でラップすればより細かい制御が可能
-
-**コード例**:
-```tsx
-// Good: 重いコンポーネントだけを Suspense でラップし、残りは即時表示
-// app/dashboard/page.tsx
-import { Suspense } from 'react';
-
-export default function DashboardPage() {
-  return (
-    <main>
-      <PageHeader />  {/* 即時表示（データフェッチなし）*/}
-      <Suspense fallback={<StatsSkeleton />}>
-        <StatsPanel />  {/* 重いデータ取得 → ストリーミング */}
-      </Suspense>
-      <Suspense fallback={<FeedSkeleton />}>
-        <ActivityFeed />  {/* 別の重いデータ取得 → 並列ストリーミング */}
-      </Suspense>
-    </main>
-  );
-}
-
-// components/StatsPanel.tsx (Server Component)
-export async function StatsPanel() {
-  const stats = await fetchHeavyStats(); // 時間のかかる処理
-  return <div>{/* stats を表示 */}</div>;
-}
-
-// Bad: ページ全体を一つの async Server Component にまとめて全データを待つ
-export default async function DashboardPage() {
-  const [stats, feed] = await Promise.all([fetchHeavyStats(), fetchActivityFeed()]);
-  // 両方の取得が完了するまでユーザーは何も見えない
-  return <div>...</div>;
-}
-```
+- Server Component の観点では、データを取得するコンポーネントを `async` の Server Component として切り出し、その単位で `<Suspense>` を張るのが基本になる（詳細は `data-fetching.md` #3）
+- ストリーミングを開始するとステータスコードが確定するので、`notFound()` などで 404 を返したい場合は境界の外で先に判定する（`routing.md` #9）
 
 **出典**:
 - [Next.js Docs: Streaming with Suspense](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming) (Next.js公式 / 2024)
@@ -289,7 +288,7 @@ export default async function DashboardPage() {
 
 **バージョン**: Next.js 15+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

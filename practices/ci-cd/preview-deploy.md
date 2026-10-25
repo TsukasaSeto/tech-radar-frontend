@@ -8,7 +8,7 @@ PR ごとに固有 URL を割り当て、レビュアー・QA・PdM が実環境
 ### 1. PR ごとに固有のプレビュー URL を自動生成する
 
 Vercel / Netlify / Cloudflare Pages 等の PaaS は PR 単位でプレビュー URL を自動生成する機能を持つ。
-これを採用し、`pr-<num>--example.vercel.app` のような URL でレビューを行う。
+これを採用し、Vercel なら `<project-name>-git-<branch-name>-<scope-slug>.vercel.app` のようなブランチ単位の URL でレビューを行う。
 
 **根拠**:
 - code review 時に「URL を踏むだけで動作確認」できる UX は最強
@@ -18,12 +18,15 @@ Vercel / Netlify / Cloudflare Pages 等の PaaS は PR 単位でプレビュー 
 
 **Vercel での標準動作**:
 - GitHub と連携すれば設定不要で全 PR にプレビュー URL が生成される
-- URL: `<project>-<branch>-<team>.vercel.app`
+- URL: ブランチ単位は `<project-name>-git-<branch-name>-<scope-slug>.vercel.app`（push しても変わらない）、コミット単位は `<project-name>-<unique-hash>-<scope-slug>.vercel.app`
 - PR コメントに自動投稿される
 
 **Netlify / Cloudflare Pages も同様の機能を持つ**。
 
 **自前で同等の挙動を作る場合（GitHub Actions + Vercel CLI）**:
+
+`VERCEL_TOKEN` は長期トークンなので、`practices/ci-cd/github-actions.md` #7 の「OIDC 未対応のデプロイ先」の扱いにする（有効期限を付け、environment の secret に置き、定期的にローテーションする）。CLI には `--token=` の引数ではなく環境変数で渡す（引数はプロセス一覧やログに出うる）。fork からの PR には secrets が渡らずデプロイが失敗するため、このワークフローの対象から外す（fork の PR のプレビューが必要なら Vercel の Git 連携に任せる）。
+
 ```yaml
 # .github/workflows/preview.yml
 name: Preview Deploy
@@ -31,34 +34,42 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+permissions: {}
+
 jobs:
   deploy-preview:
+    # fork からの PR は secrets が渡らないので対象外
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    environment: preview   # VERCEL_TOKEN はこの environment の secret に置く
+    permissions:
+      contents: read
+      pull-requests: write   # Rule #3 の PR コメント投稿に使う
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}          # Bad: --token=${{ secrets.VERCEL_TOKEN }} を引数に書く
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}           # この 2 つがあると vercel link なしでプロジェクトを特定できる
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '20' }
-      - run: npm install -g vercel@latest
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - run: npm install -g vercel@65.2.0   # Bad: vercel@latest（CLI の更新で突然挙動が変わる）。固定して Renovate 等で上げる
 
       - name: Pull Vercel Environment Information
-        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel pull --yes --environment=preview
 
       - name: Build
-        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+        run: vercel build
 
       - name: Deploy
         id: deploy
         run: |
-          URL=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
-          echo "url=$URL" >> $GITHUB_OUTPUT
+          URL=$(vercel deploy --prebuilt)
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
 
-      - name: Comment PR
-        uses: marocchino/sticky-pull-request-comment@v2
-        with:
-          header: preview-url
-          message: |
-            🚀 **Preview deployed**: ${{ steps.deploy.outputs.url }}
-            ✅ Ready for review
+      # PR へのプレビュー URL の投稿は Rule #3 の「Update PR with preview info」ステップをここに続ける
+      # （投稿を 1 つの sticky comment にまとめ、コメントが二重にならないようにする）
 ```
 
 **preview 環境の DB 構成**:
@@ -70,8 +81,13 @@ jobs:
 | **Read-only な production snapshot** | 機微データ除く実データで検証 | △ 高（マスキング工数） |
 
 **Neon の DB branching 例**:
+
+PR を閉じたときにブランチを消すには、`on.pull_request.types` に `closed` を加え、作成と削除をイベントで分ける。`closed` を加えないと削除のステップは一度も動かず、DB ブランチが溜まり続ける。上の `deploy-preview` ジョブも `closed` では動かないよう `if: github.event.action != 'closed'` を足す。
+
 ```yaml
+# on.pull_request.types: [opened, synchronize, reopened, closed]
 - name: Create DB branch for preview
+  if: github.event.action != 'closed'
   run: |
     BRANCH_ID=$(neonctl branches create \
       --project-id $NEON_PROJECT_ID \
@@ -99,10 +115,12 @@ jobs:
 - [Vercel: Preview Deployments](https://vercel.com/docs/deployments/preview-deployments) (Vercel)
 - [Netlify: Deploy Previews](https://docs.netlify.com/site-deploys/deploy-previews/) (Netlify)
 - [Cloudflare Pages: Preview deployments](https://developers.cloudflare.com/pages/configuration/preview-deployments/) (Cloudflare)
+- [Vercel Docs: Generated URLs](https://vercel.com/docs/deployments/generated-urls) (Vercel 公式、ブランチ単位・コミット単位の URL の形式) ※2026-10-25 確認
+- [Vercel CLI: Global Options](https://vercel.com/docs/cli/global-options) (Vercel 公式、CI では `VERCEL_TOKEN` 環境変数を推奨・`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` でリンクを省略) ※2026-10-25 確認
 
-**バージョン**: パターン
+**バージョン**: パターン（Vercel CLI の例は 65.x）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -121,7 +139,7 @@ Chromatic / Percy / Argos / Playwright `toHaveScreenshot()` のいずれかで�
 
 | ツール | 強み | 弱み |
 |---|---|---|
-| **Chromatic** | Storybook と完全統合、無料枠あり、UI 良好 | Storybook 必須 |
+| **Chromatic** | Storybook と完全統合、Playwright / Cypress のテストにも対応、無料枠あり、UI 良好 | SaaS（スクリーンショットを外部サービスに送る） |
 | **Percy** | Browserstack 統合、複数解像度 | やや高価 |
 | **Argos** | Playwright スクリーンショットを直接比較、OSS | UI 専用、複雑なケース弱め |
 | **Playwright `toHaveScreenshot`** | ライブラリ不要、E2E と統合 | 比較レポート UI が貧弱 |
@@ -140,62 +158,39 @@ jobs:
   visual-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }  # main からの差分検出に必要
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
-        with: { node-version: '20', cache: pnpm }
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 0, persist-credentials: false }  # main からの差分検出に必要
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      # 実運用ではサードパーティ action を SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
+      - uses: pnpm/setup@v3
+        with: { node-version-file: false, cache: true, install: false }
       - run: pnpm install --frozen-lockfile
 
       - name: Publish to Chromatic
-        uses: chromaui/action@v11
+        uses: chromaui/action@v18
         with:
           projectToken: ${{ secrets.CHROMATIC_PROJECT_TOKEN }}
           onlyChanged: true  # 変更されたストーリーのみテスト
           exitZeroOnChanges: false  # 視覚差分があれば fail
 ```
 
-**Playwright `toHaveScreenshot()`**:
-```ts
-// e2e/visual.spec.ts
-import { test, expect } from '@playwright/test';
+**Playwright `toHaveScreenshot()` をプレビュー URL に向ける**:
 
-test('home page visual regression', async ({ page }) => {
-  await page.goto('/');
-  await expect(page).toHaveScreenshot('home.png', {
-    fullPage: true,
-    mask: [page.locator('[data-test="timestamp"]')],  // 動的要素をマスク
-    maxDiffPixelRatio: 0.01,  // 1% 以下の差分は OK
-  });
-});
-```
+撮影・比較の書き方（撮影前の待ち方・`fullPage`・動的要素の `mask`・許容差）は `practices/testing/e2e-testing.md` #5 を正本とし、ここではプレビュー URL への接続と CI への組み込みだけを扱う。
 
 ```ts
 // playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
 export default defineConfig({
   use: {
+    // CI ではデプロイ済みのプレビュー URL（Rule #1 の steps.deploy.outputs.url）を PREVIEW_URL で渡す
     baseURL: process.env.PREVIEW_URL ?? 'http://localhost:3000',
   },
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'webkit', use: { browserName: 'webkit' } },
-  ],
-  expect: {
-    toHaveScreenshot: {
-      threshold: 0.2,
-      maxDiffPixelRatio: 0.01,
-    },
-  },
-});
-```
-
-**動的コンテンツのマスキング**:
-```ts
-await expect(page).toHaveScreenshot({
-  mask: [
-    page.locator('[data-test="timestamp"]'),   // 時刻
-    page.locator('[data-test="random-id"]'),    // ランダム ID
-    page.locator('img[src*="gravatar"]'),       // ユーザーアバター
   ],
 });
 ```
@@ -203,7 +198,7 @@ await expect(page).toHaveScreenshot({
 **運用ルール**:
 - PR で差分が出たら **レビュー必須**（自動マージ不可）
 - 意図的な変更なら snapshot を更新（`npx playwright test --update-snapshots`）
-- スナップショットは `git lfs` で管理（リポジトリサイズ膨張を防ぐ）
+- スナップショットを `git lfs` で管理する場合（リポジトリサイズ膨張を防ぐ）は、CI の `actions/checkout` に `lfs: true` を付ける。既定は `lfs: false` で、画像の代わりに LFS のポインタファイルと比較して失敗する
 - 月次で snapshot を一括再生成（OS / フォント差等の細かなノイズを吸収）
 
 **判断軸（どのツールを選ぶか）**:
@@ -216,10 +211,11 @@ await expect(page).toHaveScreenshot({
 - [Chromatic Docs](https://www.chromatic.com/docs/) (Chromatic)
 - [Playwright: Visual comparisons](https://playwright.dev/docs/test-snapshots) (Playwright 公式)
 - [Argos](https://argos-ci.com/) (Argos)
+- [chromaui/action action.yml（v18）](https://github.com/chromaui/action/blob/v18/action.yml) (Chromatic 公式、`playwright` / `cypress` 入力) ※2026-10-25 確認
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -237,9 +233,16 @@ deploy 完了後、プレビュー URL を PR コメントに投稿する。
 **Vercel / Netlify は自動で投稿する**。
 
 **自前実装（GitHub Actions）**:
+
+Rule #1 のワークフローの Deploy ステップ（`id: deploy`）の後に続ける。PR へのプレビュー URL の投稿はこのステップに一本化する（header の違う sticky comment を複数置くとコメントが二重になる）。ジョブには `permissions: pull-requests: write` が要る。
+
 ```yaml
+- name: Record build time
+  id: timestamp
+  run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
 - name: Update PR with preview info
-  uses: marocchino/sticky-pull-request-comment@v2
+  uses: marocchino/sticky-pull-request-comment@v3   # 実運用では SHA でピン留めする（`practices/ci-cd/github-actions.md` #9）
   with:
     header: preview-deployment
     message: |
@@ -267,16 +270,23 @@ deploy 完了後、プレビュー URL を PR コメントに投稿する。
 ```yaml
 - name: Compare with base
   id: diff
+  env:
+    # main の本番 URL（リポジトリ変数）。/api/build-info はアプリ側で用意するエンドポイントの例
+    BASE_URL: ${{ vars.PRODUCTION_URL }}
   run: |
-    BASE_SIZE=$(curl -s "${{ steps.base.outputs.url }}/api/build-info" | jq .bundleSize)
+    BASE_SIZE=$(curl -fsS "${BASE_URL}/api/build-info" | jq -e .bundleSize)
     PR_SIZE=$(stat -c%s .next/static/chunks/*.js | awk '{sum+=$1} END {print sum}')
     DIFF=$((PR_SIZE - BASE_SIZE))
-    echo "diff_bytes=$DIFF" >> $GITHUB_OUTPUT
-    [ $DIFF -gt 50000 ] && echo "warning=true" >> $GITHUB_OUTPUT
+    echo "diff_bytes=$DIFF" >> "$GITHUB_OUTPUT"
+    # Bad: [ $DIFF -gt 50000 ] && echo ...（閾値以下のとき最後のコマンドの終了コードが 1 になり、ステップが失敗する）
+    # Good: if で書く
+    if [ "$DIFF" -gt 50000 ]; then
+      echo "warning=true" >> "$GITHUB_OUTPUT"
+    fi
 
 - name: Comment
   if: steps.diff.outputs.warning == 'true'
-  uses: marocchino/sticky-pull-request-comment@v2
+  uses: marocchino/sticky-pull-request-comment@v3
   with:
     header: bundle-warning
     message: |
@@ -289,19 +299,16 @@ deploy 完了後、プレビュー URL を PR コメントに投稿する。
 ```yaml
 - name: Notify Slack on preview ready
   if: github.event.pull_request.draft == false
-  uses: slackapi/slack-github-action@v1
+  uses: slackapi/slack-github-action@v4   # v4 は webhook / webhook-type を入力で渡す（v1 の env: SLACK_WEBHOOK_URL は使わない）
   with:
+    webhook: ${{ secrets.SLACK_PREVIEW_WEBHOOK }}
+    webhook-type: incoming-webhook
     payload: |
-      {
-        "blocks": [
-          {
-            "type": "section",
-            "text": { "type": "mrkdwn", "text": "*Preview ready*: <${{ steps.deploy.outputs.url }}|PR #${{ github.event.pull_request.number }}>" }
-          }
-        ]
-      }
-  env:
-    SLACK_WEBHOOK_URL: ${{ secrets.SLACK_PREVIEW_WEBHOOK }}
+      blocks:
+        - type: section
+          text:
+            type: mrkdwn
+            text: "*Preview ready*: <${{ steps.deploy.outputs.url }}|PR #${{ github.event.pull_request.number }}>"
 ```
 
 **コメント増殖を避ける**:
@@ -317,10 +324,11 @@ deploy 完了後、プレビュー URL を PR コメントに投稿する。
 **出典**:
 - [sticky-pull-request-comment](https://github.com/marocchino/sticky-pull-request-comment) (marocchino)
 - [Vercel: PR Comments](https://vercel.com/docs/deployments/git/vercel-for-github#deployment-comments) (Vercel)
+- [Slack: Sending data with an incoming webhook](https://docs.slack.dev/tools/slack-github-action/sending-data-slack-incoming-webhook/) (Slack 公式、slack-github-action v4 の `webhook` / `webhook-type` / `payload`) ※2026-10-25 確認
 
-**バージョン**: GitHub Actions
+**バージョン**: GitHub Actions（marocchino/sticky-pull-request-comment v3 / slackapi/slack-github-action v4）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -350,7 +358,7 @@ export default {
 ```
 
 **プレビュー専用 DB（推奨）**:
-```yaml
+```bash
 # Vercel Postgres / Neon / PlanetScale の branch 機能
 DATABASE_URL_PREVIEW="postgresql://preview-branch..."
 
@@ -366,22 +374,8 @@ DATABASE_URL=$DATABASE_URL_PREVIEW
 - **Analytics**: preview では disable
 
 **セキュリティヘッダーも同一に**:
-```ts
-// next.config.ts
-const securityHeaders = [
-  { key: 'X-Content-Type-Options', value: 'nosniff' },
-  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
-  { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
-];
 
-export default {
-  async headers() {
-    return [{ source: '/(.*)', headers: securityHeaders }];
-  },
-};
-```
-
-これにより preview / production の両方で同じヘッダー検証ができる。
+ヘッダーは環境で分岐させず、preview と production で同じ `next.config.ts` の `headers()` を使う。これにより preview / production の両方で同じヘッダー検証ができる。ヘッダーの値と設定方法は `practices/nextjs/security-headers.md` #1（`X-Frame-Options: DENY`、HSTS は `max-age=63072000; includeSubDomains` で `preload` は preload list に登録する場合だけ、など）、CSP は `practices/security/csp.md` #6 を正本とする。
 
 **Robots / Search engine indexing**:
 ```ts
@@ -399,27 +393,44 @@ export default function RootLayout() {
 }
 ```
 
-**Basic 認証（外部から見られたくない場合）**:
-```ts
-// middleware.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+**アクセス制限（外部から見られたくない場合）**:
 
-export function middleware(request: NextRequest) {
+Vercel では Deployment Protection を第一候補にする。Standard Protection（本番ドメイン以外のすべてのデプロイを保護）と Vercel Authentication（チームのメンバーなど権限のある Vercel ユーザーだけが見られる）は全プランで使える。パスワードで共有したい場合は Password Protection（Pro は保護するプロジェクトごとの有料オプション、Enterprise は含まれる。Hobby は不可）を使う。アプリのコードに認証を書かずに済み、Routing Middleware へのリクエストも保護される。
+
+自前の Basic 認証は、Deployment Protection を使えないホスティングや plan の場合の代替にする。書くときはフェイルクローズにする: パスワードが未設定なら通さず、`Authorization` ヘッダーのスキームと形式を検証し、比較は定数時間で行う。
+
+```ts
+// proxy.ts（Next.js 16+。v15 以前は middleware.ts に export function middleware で書く）
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { NextResponse, type NextRequest } from 'next/server';
+
+const sha256 = (value: string) => createHash('sha256').update(value).digest();
+
+function unauthorized() {
+  return new NextResponse('Unauthorized', {
+    status: 401,
+    headers: { 'WWW-Authenticate': 'Basic realm="Preview", charset="UTF-8"' },
+  });
+}
+
+export function proxy(request: NextRequest) {
+  // Vercel 以外のホスティングでは、preview 環境を示す自前の環境変数で判定する
   if (process.env.VERCEL_ENV !== 'preview') return NextResponse.next();
 
-  const auth = request.headers.get('authorization');
-  if (!auth) {
-    return new NextResponse(null, {
-      status: 401,
-      headers: { 'WWW-Authenticate': 'Basic realm="Preview"' },
-    });
+  const password = process.env.PREVIEW_PASSWORD;
+  // Bad: 未設定のまま比較する（"preview" だけを base64 にして送ると split(':') の pass が undefined になり、未設定の PREVIEW_PASSWORD と一致して通る）
+  // Good: 未設定ならフェイルクローズで 503 を返す
+  if (!password) {
+    return new NextResponse('Preview protection is not configured', { status: 503 });
   }
 
-  const [user, pass] = atob(auth.split(' ')[1]).split(':');
-  if (user !== 'preview' || pass !== process.env.PREVIEW_PASSWORD) {
-    return new NextResponse('Unauthorized', { status: 401 });
-  }
+  const [scheme, encoded] = request.headers.get('authorization')?.split(' ') ?? [];
+  if (scheme?.toLowerCase() !== 'basic' || !encoded) return unauthorized();
+
+  // Buffer.from は不正な base64 でも例外を投げない（atob は例外を投げて 500 になる）
+  const credentials = Buffer.from(encoded, 'base64').toString('utf8');
+  // "user:password" 全体を比べるので、パスワードに ":" が含まれても壊れない。ハッシュで長さを揃えて定数時間で比較する
+  if (!timingSafeEqual(sha256(credentials), sha256(`preview:${password}`))) return unauthorized();
 
   return NextResponse.next();
 }
@@ -434,12 +445,13 @@ export function middleware(request: NextRequest) {
 | サードパーティ API | test mode / sandbox | 本番 | 課金・スパム防止 |
 | Analytics / RUM | 無効 or preview env | 本番 | データ汚染防止 |
 | robots.txt | noindex | 通常 | SEO 影響回避 |
-| Basic 認証 | 必要に応じて | なし | 機密保護 |
+| アクセス制限 | Deployment Protection（または Basic 認証） | なし | 機密保護 |
 
 **出典**:
 - [Vercel: Environment Variables](https://vercel.com/docs/environment-variables) (Vercel)
 - [Neon: Database Branching](https://neon.tech/docs/introduction/branching) (Neon)
+- [Vercel Docs: Deployment Protection](https://vercel.com/docs/deployment-protection) (Vercel 公式、保護方式と対象プラン・Standard Protection の範囲・Password Protection の料金) ※2026-10-25 確認
 
-**バージョン**: パターン
+**バージョン**: パターン（`proxy.ts` は Next.js 16+）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

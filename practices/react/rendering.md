@@ -55,7 +55,10 @@ function Parent() {
 
 ---
 
-### 2. `useMemo` / `useCallback` は高コストな計算にのみ使う
+### 2. `useMemo` は高コストな計算のキャッシュに、`useCallback` は `memo` 化した子に渡す関数の参照安定化に使う
+
+`useMemo` は計算結果をキャッシュするためのもので、軽い計算には付けない。
+`useCallback` は計算を省くものではなく、`memo` 化した子コンポーネントや Effect の依存に渡す関数の参照を安定させるために使う（#1 の `Parent` の例）。どちらも、効果がない場所に付けるとコストだけが残る。
 
 **根拠**:
 - メモ化は「記憶する」コストがかかる（メモリ使用量増加）
@@ -71,11 +74,15 @@ const doubled = useMemo(() => count * 2, [count]);
 // Good: メモ化なしで十分
 const doubled = count * 2;
 
-// Good: useMemo が有効なケース
+// Good: useMemo が有効なケース（高コストな計算のキャッシュ）
 const sortedItems = useMemo(
   () => items.slice().sort((a, b) => a.price - b.price),
   [items]
 );
+
+// Bad: memo 化していない子に渡す関数を useCallback で包む（再レンダリングは減らない）
+const handleClick = useCallback(() => setOpen(true), []);
+return <PlainButton onClick={handleClick} />;
 ```
 
 **出典**:
@@ -84,7 +91,7 @@ const sortedItems = useMemo(
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-06-17
+**最終更新**: 2026-10-25
 
 ---
 
@@ -173,43 +180,58 @@ const height = divRef.current!.offsetHeight;
 
 **根拠**:
 - `startTransition` で包まれた更新は「Transition」扱いとなり、入力など緊急更新に割り込まれる
+- 後回しになるのは、Transition 内の state 更新が引き起こすレンダーだけ。`startTransition(() => setResults(searchItems(q)))` と書くと、`searchItems(q)` は引数の評価としてその場で同期実行され、入力をブロックする。重い計算はレンダー側（Transition でレンダーされる子コンポーネント）に置く
+- レンダーは中断できるが、1 回の同期計算そのものは分割されない。単発で数十 ms を超える計算は Web Worker などに移す
 - `useTransition` の `isPending` フラグでローディングインジケーターを表示できる
 - `Suspense` と組み合わせると、Transition中は古いUIを維持しつつ新しいUIを準備できる
 
 **コード例**:
 ```tsx
-import { useState, useTransition } from 'react';
+import { memo, useState, useTransition } from 'react';
 
 function SearchPage() {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Item[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [isPending, startTransition] = useTransition();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     // 入力の更新は緊急 → startTransition の外
     setQuery(e.target.value);
 
-    // 検索結果の更新は非緊急 → startTransition の中
+    // 検索結果のレンダーは非緊急 → startTransition の中では state を更新するだけにする
     startTransition(() => {
-      setResults(searchItems(e.target.value));
+      setSearchQuery(e.target.value);
     });
   };
 
   return (
     <>
       <input value={query} onChange={handleChange} />
-      {isPending ? <Spinner /> : <ResultList items={results} />}
+      <div style={{ opacity: isPending ? 0.5 : 1 }}>
+        <ResultList query={searchQuery} />
+      </div>
     </>
   );
 }
 
-// Bad: 全て同じ優先度で更新するとタイピングがもたつく
+// 重い計算は Transition でレンダーされる子の中で行う
+const ResultList = memo(function ResultList({ query }: { query: string }) {
+  const results = searchItems(query);
+  return <ul>{results.map(r => <li key={r.id}>{r.name}</li>)}</ul>;
+});
+
+// Bad: 重い計算を startTransition の中で呼ぶ（引数の評価として同期実行され、入力をブロックする）
 function SearchPageBad() {
   const [query, setQuery] = useState('');
+  const [results, setResults] = useState<Item[]>([]);
+  const [, startTransition] = useTransition();
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setQuery(e.target.value);
-    setResults(searchItems(e.target.value)); // 重い処理がブロック
+    startTransition(() => {
+      setResults(searchItems(e.target.value)); // searchItems はここで同期実行される
+    });
   };
+  // ...
 }
 ```
 
@@ -219,7 +241,7 @@ function SearchPageBad() {
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -282,7 +304,7 @@ const HeavyResultList = memo(function HeavyResultList({ query }: { query: string
 - React Compiler 1.0 は 2025年10月に stable リリース。実測で**総レンダリング時間 17.2%、平均レンダリング時間 17.2%、最大 12.4%** の削減（既存の手動 memo と共存した状態でも改善）
 - 新規プロジェクトでは `next.config.ts` に `reactCompiler: true` のワンライン設定のみで十分。大規模レガシーコードベースでは `compilationMode: "annotation"` での段階導入が安全
 - 全ファイル一括（`compilationMode: "all"`）は TanStack Table v8・react-hook-form 等の非互換ライブラリが混在する場合に高リスク
-- Oxlint の `react-hooks-js/*` ルール（eslint-plugin-react-hooks v7 経由）でコンパイラ非互換パターンをデプロイ前に静的検出できる
+- eslint-plugin-react-hooks の Compiler 系ルール（`purity` / `refs` / `immutability` / `incompatible-library` など。単一の `react-compiler` ルールではなく個別ルールに分かれている）を Oxlint の JS プラグインとして読み込むと、コンパイラ非互換パターンをデプロイ前に静的検出できる
 - `"use no memo";` ディレクティブで非互換ファイルを明示的にオプトアウトでき、互換性の問題範囲を局所化できる
 - **Interior Mutability 問題**: TanStack Table など「参照は安定しているが内部状態を変更する」ライブラリのオブジェクトを子コンポーネントに props として渡すと、Compiler が参照変化を検出できず再レンダリングをスキップする。修正はオブジェクト自体を渡すのをやめ `table.getHeaderGroups()` のような**派生値（新しい参照が生まれる）を props に渡す**こと。`"use no memo"` はこの問題の根本解決にならない
 
@@ -297,6 +319,7 @@ export const ReactCompilerConfig = {
 
 ```tsx
 // Good: コンパイラ対象ファイルには "use memo"; を冒頭に追加
+// モジュール単位なら import より前のファイル先頭、関数単位なら関数本体の先頭に置く
 "use memo";
 export function ProductCard({ product }: { product: Product }) {
   return <div>{product.name}</div>;
@@ -310,10 +333,17 @@ import { useForm } from 'react-hook-form'; // Compiler 非互換
 ```jsonc
 // .oxlintrc.json — Compiler 非互換パターンを事前検出するデュアルルール
 {
-  "plugins": ["react-hooks"],
+  "plugins": ["react"],
+  // eslint-plugin-react-hooks を JS プラグインとして読み込む（ネイティブのルールと区別するため別名を付ける）
+  "jsPlugins": [
+    { "name": "react-hooks-js", "specifier": "eslint-plugin-react-hooks" }
+  ],
   "rules": {
-    "react-hooks/rules-of-hooks": "error",     // 従来のフックルール
-    "react-hooks-js/react-compiler": "error"   // Compiler 固有の非互換検出
+    "react/rules-of-hooks": "error",                  // 従来のフックルール（Oxlint ネイティブ）
+    "react-hooks-js/purity": "error",                 // 以下は Compiler 系の非互換検出
+    "react-hooks-js/refs": "error",
+    "react-hooks-js/immutability": "error",
+    "react-hooks-js/incompatible-library": "warn"
   }
 }
 ```
@@ -349,6 +379,10 @@ export function Panel({ table }) {
 > ([【React Compiler v1.0】useMemo・useCallback はもう書かなくていい？導入手順と実測結果まで解説](https://qiita.com/yuuue/items/c8a395c17ea3ccd995ec), セクション "これからの useMemo・useCallback との付き合い方") ※2026-06-17に実際にfetch成功
 
 **追加出典**:
+- [React Docs: Incremental Adoption](https://react.dev/learn/react-compiler/incremental-adoption) (React公式、`compilationMode: 'annotation'` での段階導入) ※2026-10-25 確認
+- [React Docs: Directives](https://react.dev/reference/react-compiler/directives) (React公式、`"use memo"` / `"use no memo"` は関数本体の先頭か、import より前のファイル先頭に置く) ※2026-10-25 確認
+- [React Docs: eslint-plugin-react-hooks](https://react.dev/reference/eslint-plugin-react-hooks) (React公式、Compiler 系の個別ルール一覧) ※2026-10-25 確認
+- [Oxlint: JS Plugins](https://oxc.rs/docs/guide/usage/linter/js-plugins.html) (Oxc公式、`jsPlugins` と `{ name, specifier }` の別名指定) ※2026-10-25 確認
 - [React Compiler 1.0 Is Here — And It Changes Everything You Know About Performance](https://medium.com/@Ardhendu_init_/react-compiler-1-0-is-here-and-it-changes-everything-you-know-about-performance-59a0f5554a36) (Medium、v1.0 stable と新規プロジェクト setup) ※2026-06-17 fetch
 - [React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79) (Medium kshahbaghi、Interior Mutability 問題・派生値を渡すパターン・TanStack Table / react-hook-form 事例) ※2026-06-23 fetch
 
@@ -356,7 +390,7 @@ export function Panel({ table }) {
 > ([React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79), セクション "Key Rule") ※2026-06-23に実際にfetch成功
 
 **バージョン**: React 19+, React Compiler 1.0 (stable), Oxlint 0.x
-**確信度**: 高
-**最終更新**: 2026-06-23
+**確信度**: 高（annotation モードでの段階導入は公式で確認）/ 実測値と Interior Mutability の事例は 中（各 1 記事）
+**最終更新**: 2026-10-25
 
 ---

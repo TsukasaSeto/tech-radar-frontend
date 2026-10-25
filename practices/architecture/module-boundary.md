@@ -118,69 +118,31 @@ export type ApiError = {
 ```
 
 **出典**:
-- [TypeScript Docs: Declaration Merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html) (TypeScript公式)
+- [TypeScript Docs: Declaration Merging](https://www.typescriptlang.org/docs/handbook/declaration-merging.html) (TypeScript公式。型をドメインの近くに置く主張そのものの根拠ではない)
 
 **バージョン**: TypeScript 5+
-**確信度**: 高
-**最終更新**: 2026-05-05
+**確信度**: 中（主張を直接支える出典がない）
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. 環境変数はサーバー/クライアントを明示的に分けて管理する
 
-`NEXT_PUBLIC_` プレフィックスの有無でサーバー専用変数とクライアント公開変数を区別し、
-型安全な環境変数アクセスを実装する。
+サーバー専用の変数とクライアント公開の変数をモジュール単位で分け、サーバー側のモジュールには `import 'server-only'` を付ける。
+`NEXT_PUBLIC_` の扱い、Zod / t3-env での検証、サーバー用スキーマの parse を置く場所は [`security/secret-management.md`](../security/secret-management.md) #1 を正本とする。
 
 **根拠**:
-- `NEXT_PUBLIC_` のない変数がクライアントコードに混入するとビルドエラー/機密漏洩になる
-- 型なしの `process.env.XXX` アクセスは未定義時のランタイムエラーを招く
-- Zod などでスキーマ検証することで起動時に設定ミスを検出できる
+- モジュール境界の観点では、環境変数の読み取りもサーバー専用モジュールとクライアントから読めるモジュールの境界に従わせる（詳細は [`security/secret-management.md`](../security/secret-management.md) #1・#2）
 
-**コード例**:
-```ts
-// src/lib/env.ts - Zod で環境変数を型安全に管理
-import { z } from 'zod';
-
-// サーバーサイドのみの変数（クライアントバンドルに含まれない）
-const serverSchema = z.object({
-  DATABASE_URL: z.string().url(),
-  JWT_SECRET: z.string().min(32),
-  SENDGRID_API_KEY: z.string(),
-  NODE_ENV: z.enum(['development', 'test', 'production']),
-});
-
-// クライアントに公開される変数（NEXT_PUBLIC_ プレフィックス必須）
-const clientSchema = z.object({
-  NEXT_PUBLIC_APP_URL: z.string().url(),
-  NEXT_PUBLIC_GA_MEASUREMENT_ID: z.string().optional(),
-});
-
-// サーバー変数（サーバーコンポーネント・Server Actions でのみ使用可）
-export const serverEnv = serverSchema.parse(process.env);
-
-// クライアント変数（サーバー・クライアント両方で使用可）
-export const clientEnv = clientSchema.parse({
-  NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
-  NEXT_PUBLIC_GA_MEASUREMENT_ID: process.env.NEXT_PUBLIC_GA_MEASUREMENT_ID,
-});
-
-// 使用例
-// Server Component / Server Action
-import { serverEnv } from '@/lib/env';
-const db = createDatabaseClient(serverEnv.DATABASE_URL);
-
-// Client Component
-import { clientEnv } from '@/lib/env';
-const appUrl = clientEnv.NEXT_PUBLIC_APP_URL;
-```
+**コード例**: [`security/secret-management.md`](../security/secret-management.md) #1 を参照
 
 **出典**:
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables) (Next.js公式)
 - [t3-env](https://env.t3.gg/) (T3 Stack)
 
-**バージョン**: Next.js 13+, Zod 3+
+**バージョン**: Next.js 13.4+（`server-only`）, Zod 3+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -188,7 +150,8 @@ const appUrl = clientEnv.NEXT_PUBLIC_APP_URL;
 
 `eslint-plugin-import` と `eslint-import-resolver-typescript` を使い、
 レイヤー間の不正な依存方向・循環インポートを CI で自動検出する。
-`no-restricted-imports` ルールと組み合わせることで、feature 間の直接依存も Lint エラーにできる。
+レイヤー単位の禁止（entities → features など）は `no-restricted-imports` で書けるが、「自分以外の feature への依存」はパターン 1 つでは表せないため、feature 間の直接依存は後半の dependency-cruiser を必須の検査として CI で止める。
+設定は ESLint 9 以降と Next.js 16 の既定である flat config（`eslint.config.mjs`）で書く。
 
 **根拠**:
 - コードレビューで依存方向のチェックを人手で行うのはスケールしない
@@ -198,71 +161,77 @@ const appUrl = clientEnv.NEXT_PUBLIC_APP_URL;
 - 循環依存検出（reactive）と依存方向ルール（proactive）の2層で守る。Stable Dependencies Principle（SDP）では不安定度 `I = Fan-Out / (Fan-In + Fan-Out)` を指標とし、依存は常に I が小さい（安定した）モジュールへ向かうべきとされる。utils/types（I≈0）← features（I≈0.5）← pages（I≈1.0）の方向を強制することで、変更が波及しにくい構造になる
 
 **コード例**:
-```jsonc
-// .eslintrc.json
-{
-  "plugins": ["import"],
-  "settings": {
-    "import/resolver": {
-      "typescript": { "alwaysTryTypes": true }
-    }
-  },
-  "rules": {
-    // 循環インポートを禁止
-    "import/no-cycle": ["error", { "maxDepth": 3 }],
-    // デフォルトエクスポートより名前付きエクスポートを推奨
-    "import/prefer-default-export": "off",
-    "import/no-default-export": "off",
-    // インポート順の統一
-    "import/order": [
-      "error",
-      {
-        "groups": ["builtin", "external", "internal", "parent", "sibling", "index"],
-        "pathGroups": [
-          { "pattern": "@/app/**", "group": "internal", "position": "before" },
-          { "pattern": "@/features/**", "group": "internal" },
-          { "pattern": "@/shared/**", "group": "internal", "position": "after" }
-        ],
-        "newlines-between": "always",
-        "alphabetize": { "order": "asc" }
-      }
-    ]
-  },
-  "overrides": [
-    {
-      // entities 層: shared より上位への依存を禁止
-      "files": ["src/entities/**/*.ts", "src/entities/**/*.tsx"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              { "group": ["@/features/*"], "message": "entities から features への依存は禁止です" },
-              { "group": ["@/pages/*"], "message": "entities から pages への依存は禁止です" }
-            ]
-          }
-        ]
-      }
+```js
+// eslint.config.mjs
+import importPlugin from 'eslint-plugin-import';
+import tsParser from '@typescript-eslint/parser';
+
+export default [
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    languageOptions: { parser: tsParser },
+    plugins: { import: importPlugin },
+    settings: {
+      // eslint-import-resolver-typescript が必要
+      'import/resolver': {
+        typescript: { alwaysTryTypes: true },
+      },
     },
-    {
-      // features 層: 他 feature への直接依存を禁止
-      "files": ["src/features/**/*.ts", "src/features/**/*.tsx"],
-      "rules": {
-        "no-restricted-imports": [
-          "error",
-          {
-            "patterns": [
-              { "group": ["@/pages/*"], "message": "features から pages への依存は禁止です" }
-            ]
-          }
-        ]
-      }
-    }
-  ]
-}
+    rules: {
+      // 循環インポートを禁止
+      'import/no-cycle': ['error', { maxDepth: 3 }],
+      // デフォルトエクスポートより名前付きエクスポートを推奨
+      'import/prefer-default-export': 'off',
+      'import/no-default-export': 'off',
+      // インポート順の統一
+      'import/order': [
+        'error',
+        {
+          groups: ['builtin', 'external', 'internal', 'parent', 'sibling', 'index'],
+          pathGroups: [
+            { pattern: '@/app/**', group: 'internal', position: 'before' },
+            { pattern: '@/features/**', group: 'internal' },
+            { pattern: '@/shared/**', group: 'internal', position: 'after' },
+          ],
+          'newlines-between': 'always',
+          alphabetize: { order: 'asc' },
+        },
+      ],
+    },
+  },
+  {
+    // entities 層: shared より上位への依存を禁止
+    files: ['src/entities/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['@/features/*'], message: 'entities から features への依存は禁止です' },
+            { group: ['@/pages/*'], message: 'entities から pages への依存は禁止です' },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // features 層: pages への依存を禁止（feature 間の依存は下の dependency-cruiser で検査する）
+    files: ['src/features/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            { group: ['@/pages/*'], message: 'features から pages への依存は禁止です' },
+          ],
+        },
+      ],
+    },
+  },
+];
 ```
 
-**コード例（dependency-cruiser — feature 間クロス依存を CI で禁止）**:
+**コード例（dependency-cruiser — feature 間クロス依存を CI で禁止。必須の検査として CI で実行する）**:
 ```javascript
 // .dependency-cruiser.cjs
 module.exports = {
@@ -281,7 +250,8 @@ module.exports = {
 ```
 
 **出典**:
-- [eslint-plugin-import](https://github.com/import-js/eslint-plugin-import) (import-js / GitHub)
+- [eslint-plugin-import](https://github.com/import-js/eslint-plugin-import) (import-js / GitHub、flat config での設定例) ※2026-10-25 確認
+- [Next.js Docs: How to upgrade to version 16 — ESLint Flat Config](https://nextjs.org/docs/app/guides/upgrading/version-16#eslint-flat-config) (Next.js公式、v16 で flat config が既定) ※2026-10-25 確認
 - [Feature-Sliced Design: Linting](https://feature-sliced.design/docs/guides/linting) (Feature-Sliced Design公式 / 2023)
 - [アーキテクチャを"規約"ではなく"CI"で守る — 依存方向を機械強制するフロントエンドテンプレートの設計](https://zenn.dev/hacobu/articles/5717458ca99f9b) (Zenn hacobu、dependency-cruiser と check-structure.mjs の2層CI設計) ※2026-06-18 fetch
 - [Stop circular dependencies before they stop you — dependency-cruiser & the Stable Dependencies Principle](https://dev.to/wojciech_kot_b82f5d7cbfc6/stop-circular-dependencies-before-they-stop-you-dependency-cruiser-the-stable-dependencies-34ho) (dev.to、SDP 不安定度公式・2層防御・3ティア設計) ※2026-06-23 fetch
@@ -293,8 +263,8 @@ module.exports = {
 > "Circular dependencies aren't a tooling problem; they are a structural failure. A cycle is simply what happens when dependency arrows point the wrong way for long enough."
 > ([Stop circular dependencies before they stop you](https://dev.to/wojciech_kot_b82f5d7cbfc6/stop-circular-dependencies-before-they-stop-you-dependency-cruiser-the-stable-dependencies-34ho), セクション "Core Principle") ※2026-06-23に実際にfetch成功
 
-**バージョン**: eslint-plugin-import 2.29+, ESLint 8+, dependency-cruiser 16+
+**バージョン**: eslint-plugin-import 2.31+, ESLint 9+（flat config）, dependency-cruiser 16+
 **確信度**: 高
-**最終更新**: 2026-06-23
+**最終更新**: 2026-10-25
 
 ---

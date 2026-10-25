@@ -8,58 +8,67 @@
 Connect-Web を優先する。
 
 **根拠**:
-- Connect-Web は標準 HTTP/1.1 と HTTP/2 の両方で動作し、Envoy 等のプロキシが不要
-- Connect プロトコルは gRPC および gRPC-Web と相互運用可能で既存のサーバーとも接続できる
+- サーバーが Connect プロトコルか gRPC-Web に対応していれば、Envoy 等のプロキシなしでブラウザから直接呼べる（Connect for Node / connect-go は両方に対応）。素の gRPC サーバーには、Envoy などの gRPC-Web への変換層が別途必要
+- `@connectrpc/connect-web` は `createConnectTransport()`（Connect プロトコル）と `createGrpcWebTransport()`（gRPC-Web）を持つので、サーバーの対応プロトコルに合わせて transport を選ぶ
 - `Content-Type: application/connect+proto` または `application/connect+json` でシンプルに通信
 - バンドルサイズが小さく、Fetch API ベースで動作するためポリフィル不要
+- v2 では `protoc-gen-connect-es` が廃止され、サービス定義も `protoc-gen-es` が `*_pb.ts` に生成する。v1 用プラグインを混ぜると生成できないので、パッケージは v2 にそろえる
 
 **コード例**:
 ```bash
-# Buf CLI で proto から TypeScript コードを生成
-npm install --save-dev @bufbuild/buf @bufbuild/protoc-gen-es @connectrpc/protoc-gen-connect-es
+# 生成ツール（v2 は protoc-gen-es だけでよい）
+npm install --save-dev @bufbuild/buf @bufbuild/protoc-gen-es
+# ランタイム
+npm install @connectrpc/connect @connectrpc/connect-web @bufbuild/protobuf
+```
 
+```yaml
 # buf.gen.yaml
 version: v2
 plugins:
   - local: protoc-gen-es
     out: src/gen
     opt: target=ts
-  - local: protoc-gen-connect-es
-    out: src/gen
-    opt: target=ts
+    include_imports: true
 ```
 
 ```ts
-// src/gen/user/v1/user_connect.ts (生成済みファイル)
 // src/lib/connect-client.ts
 import { createClient } from '@connectrpc/connect';
 import { createConnectTransport } from '@connectrpc/connect-web';
-import { UserService } from '@/gen/user/v1/user_connect';
+import { UserService, type User } from '@/gen/user/v1/user_pb'; // v2 はサービスも *_pb.ts に生成される
 
+// サーバーが Connect プロトコルに対応している場合
 const transport = createConnectTransport({
-  baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL!,
+  baseUrl: 'https://api.example.com',
 });
+// サーバーが gRPC-Web にだけ対応している場合は createGrpcWebTransport({ baseUrl }) を使う
 
 export const userClient = createClient(UserService, transport);
 
-// コンポーネントでの使用
-async function fetchUser(id: string): Promise<User> {
+export async function fetchUser(id: string): Promise<User> {
   const response = await userClient.getUser({ id });
-  return response.user!;
+  if (!response.user) throw new Error('user がレスポンスに含まれていません');
+  return response.user;
 }
+```
 
-// Bad: gRPC-Web（プロキシが必要）
+```ts
+// Bad: 素の gRPC サーバーに旧来の gRPC-Web クライアントでつなぐ
 import { grpc } from '@improbable-eng/grpc-web';
 // Envoy/Nginx プロキシの設定が別途必要
 ```
 
 **出典**:
 - [Connect-Web Docs](https://connectrpc.com/docs/web/getting-started) (connectrpc.com公式)
+- [Connect for Web: Generating code](https://connectrpc.com/docs/web/generating-code) (connectrpc.com公式、v2 の依存パッケージと buf.gen.yaml、`*_pb.ts` からの import) ※2026-10-25 確認
+- [Connect for Web: Choosing a protocol](https://connectrpc.com/docs/web/choosing-a-protocol) (connectrpc.com公式、transport の種類とサーバー側の対応要件) ※2026-10-25 確認
+- [connect-es MIGRATING.md](https://github.com/connectrpc/connect-es/blob/main/MIGRATING.md) (Connect 公式リポジトリ、v1 → v2 で `protoc-gen-connect-es` 廃止・`*_connect` → `*_pb`) ※2026-10-25 確認
 - [Buf Docs](https://buf.build/docs/generate/overview) (buf.build公式)
 
-**バージョン**: @connectrpc/connect-web 1.0+, @bufbuild/protobuf 1.0+
+**バージョン**: @connectrpc/connect 2.x, @connectrpc/connect-web 2.x, @bufbuild/protobuf 2.x, @bufbuild/protoc-gen-es 2.x（v1 系は `protoc-gen-connect-es` と `*_connect` からの import を使う）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -129,42 +138,77 @@ const res = await client.createUser({
 
 ---
 
-### 3. ストリーミング RPC はサーバーサイドで処理し、クライアントには SSE か WebSocket を使う
+### 3. ストリーミング RPC は、ブラウザから直接受けるか Route Handler で SSE に変換するかを条件で選ぶ
 
-ブラウザで gRPC サーバーストリーミングを使う場合、Connect の `transport` を正しく設定するか、
-Next.js の Route Handler で変換して SSE として提供する。
+ブラウザで gRPC サーバーストリーミングを受けるときは、次の条件で方式を選ぶ。
+
+- サーバーが Connect プロトコルか gRPC-Web に対応していて、ブラウザから直接到達できる → `@connectrpc/connect-web` の transport でサーバーストリーミングを直接受ける
+- サーバーが素の gRPC にしか対応していない、内部ネットワークにしかない、または認証情報をブラウザに渡したくない → Next.js の Route Handler（Node.js ランタイム）で gRPC を受け、SSE に変換して提供する
 
 **根拠**:
-- HTTP/1.1 ではストリーミング gRPC が動作しないためフォールバックが必要
+- 素の gRPC サーバーにはブラウザから直接つなげず、gRPC-Web への変換層（Envoy など）かサーバー側での中継が要る
+- Connect プロトコルはすべての種類のストリーミング RPC をサポートするが、ブラウザではクライアントストリーミングに制約がある。ブラウザから直接使うのはサーバーストリーミングまでにとどめる
 - Next.js Route Handler で ReadableStream を返すことで SSE として提供できる
-- Connect の `createGrpcWebTransport` は HTTP/1.1 でのストリーミングをサポート
+- SSE に変換する場合は、ブラウザが切断したら上流の RPC も止める。`request.signal` と `ReadableStream` の `cancel()` の両方から AbortController を abort し、その `signal` を RPC の呼び出しオプションに渡す（キャンセルの方針は `practices/api-client/rest.md` #1）。止めないと、上流のストリームが残り続ける
 
 **コード例**:
 ```ts
-// app/api/stream/route.ts - Connect サーバーストリーミングを SSE に変換
+// lib/notification-client.ts - ブラウザから直接受ける場合（サーバーが Connect か gRPC-Web に対応）
 import { createClient } from '@connectrpc/connect';
-import { createGrpcTransport } from '@connectrpc/connect-node';
-import { NotificationService } from '@/gen/notification/v1/notification_connect';
+import { createConnectTransport } from '@connectrpc/connect-web';
+import { NotificationService, type Notification } from '@/gen/notification/v1/notification_pb';
 
+const client = createClient(
+  NotificationService,
+  createConnectTransport({ baseUrl: 'https://api.example.com' }),
+);
+
+export async function subscribeNotifications(
+  signal: AbortSignal,
+  onNotification: (notification: Notification) => void,
+) {
+  for await (const notification of client.streamNotifications({}, { signal })) {
+    onNotification(notification);
+  }
+}
+```
+
+```ts
+// app/api/stream/route.ts - 素の gRPC サーバーストリーミングを SSE に変換
+import { toJson } from '@bufbuild/protobuf';
+import { Code, ConnectError, createClient } from '@connectrpc/connect';
+import { createGrpcTransport } from '@connectrpc/connect-node';
+import { NotificationService, NotificationSchema } from '@/gen/notification/v1/notification_pb';
+
+// v2 の gRPC transport は HTTP/2 固定（httpVersion オプションはない）
 const transport = createGrpcTransport({
   baseUrl: process.env.INTERNAL_API_URL!,
-  httpVersion: '2',
 });
 
+const client = createClient(NotificationService, transport);
+
 export async function GET(request: Request) {
-  const client = createClient(NotificationService, transport);
   const encoder = new TextEncoder();
+  const abort = new AbortController();
+  request.signal.addEventListener('abort', () => abort.abort());
 
   const stream = new ReadableStream({
     async start(controller) {
-      for await (const notification of client.streamNotifications({})) {
-        const data = `data: ${JSON.stringify(notification)}\n\n`;
-        controller.enqueue(encoder.encode(data));
+      try {
+        for await (const notification of client.streamNotifications({}, { signal: abort.signal })) {
+          // v2 のメッセージは bigint を含みうるので JSON.stringify ではなく toJson を使う
+          const data = `data: ${JSON.stringify(toJson(NotificationSchema, notification))}\n\n`;
+          controller.enqueue(encoder.encode(data));
+        }
+        controller.close();
+      } catch (err) {
+        // 切断による中断は正常終了として扱う
+        if (err instanceof ConnectError && err.code === Code.Canceled) return;
+        controller.error(err);
       }
-      controller.close();
     },
     cancel() {
-      // クライアントが接続を切った場合の後処理
+      abort.abort();
     },
   });
 
@@ -176,9 +220,16 @@ export async function GET(request: Request) {
     },
   });
 }
+```
 
-// クライアント側での SSE 購読
-function NotificationBell() {
+```tsx
+// components/notification-bell.tsx - クライアント側での SSE 購読
+'use client';
+
+import { useEffect } from 'react';
+import { showNotification } from '@/lib/notifications'; // アプリ側で用意する表示関数
+
+export function NotificationBell() {
   useEffect(() => {
     const eventSource = new EventSource('/api/stream');
     eventSource.onmessage = (e) => {
@@ -187,15 +238,21 @@ function NotificationBell() {
     };
     return () => eventSource.close();
   }, []);
+
+  return null;
 }
 ```
 
 **出典**:
-- [Connect Docs: Streaming](https://connectrpc.com/docs/web/streaming) (connectrpc.com公式)
+- [Connect for Web: Using clients](https://connectrpc.com/docs/web/using-clients) (connectrpc.com公式、サーバーストリーミングを `for await` で受ける) ※2026-10-25 確認
+- [Connect for Web: Cancellation & Timeouts](https://connectrpc.com/docs/web/cancellation-and-timeouts/) (connectrpc.com公式、`{ signal }` で中断すると `Code.Canceled` の `ConnectError`) ※2026-10-25 確認
+- [Connect FAQ](https://connectrpc.com/docs/faq/) (connectrpc.com公式、ブラウザのクライアントストリーミングの制約) ※2026-10-25 確認
+- [Connect for Web: Choosing a protocol](https://connectrpc.com/docs/web/choosing-a-protocol) (connectrpc.com公式、素の gRPC には Envoy などの変換層が必要) ※2026-10-25 確認
+- [connect-es MIGRATING.md](https://github.com/connectrpc/connect-es/blob/main/MIGRATING.md) (Connect 公式リポジトリ、v2 の gRPC transport は HTTP/2 必須で `httpVersion` を削除) ※2026-10-25 確認
 
-**バージョン**: @connectrpc/connect-web 1.0+, Next.js 13+
+**バージョン**: @connectrpc/connect 2.x, @connectrpc/connect-web 2.x, @connectrpc/connect-node 2.x, Next.js 13+
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 

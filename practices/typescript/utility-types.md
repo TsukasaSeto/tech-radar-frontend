@@ -43,9 +43,9 @@ type UpdateUserForm = Partial<Omit<User, 'id' | 'createdAt'>>;
 **出典**:
 - [TypeScript Handbook: Utility Types](https://www.typescriptlang.org/docs/handbook/utility-types.html) (TypeScript公式)
 
-**バージョン**: TypeScript 2.1+
+**バージョン**: TypeScript 2.1+（`Omit` は 3.5+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -162,7 +162,7 @@ type ActiveStatus = Exclude<Status, 'deleted'>;
 type PublishableStatus = Extract<Status, 'draft' | 'published'>;
 // 'draft' | 'published'
 
-// NonNullable は Exclude<T, null | undefined> のエイリアス
+// NonNullable は null / undefined を除く（TS 4.8 以降の定義は T & {}。それ以前は条件型）
 type RequiredValue = NonNullable<string | null | undefined>;
 // string
 
@@ -174,9 +174,9 @@ type MouseEvents = Extract<keyof HTMLElementEventMap, `mouse${string}`>;
 **出典**:
 - [TypeScript Handbook: Exclude](https://www.typescriptlang.org/docs/handbook/utility-types.html#excludeuniontype-excludedmembers) (TypeScript公式)
 
-**バージョン**: TypeScript 2.8+
+**バージョン**: TypeScript 2.8+（テンプレートリテラル型の例は 4.1+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 

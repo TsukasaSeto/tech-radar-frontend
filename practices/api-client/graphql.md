@@ -13,57 +13,87 @@
 - Apollo Client は大規模な機能セット（Apollo Studio 連携、詳細なキャッシュ制御）が必要な場合に有利
 - どちらも React 18 の Suspense に対応している
 
+App Router では Provider（Context と client インスタンス）を `'use client'` の Providers コンポーネントに分け、`app/layout.tsx` は Server Component のまま包む。
+
 **コード例**:
 ```tsx
-// urql のセットアップ（シンプル）
-import { createClient, cacheExchange, fetchExchange, Provider } from 'urql';
+// app/providers.tsx（Client Component。App Router では @urql/next を使う）
+'use client';
 
-const client = createClient({
-  url: '/api/graphql',
-  exchanges: [cacheExchange, fetchExchange],
-  fetchOptions: () => {
-    const token = getAuthToken();
-    return {
-      headers: { authorization: token ? `Bearer ${token}` : '' },
-    };
-  },
-});
+import { useMemo } from 'react';
+import { UrqlProvider, ssrExchange, cacheExchange, fetchExchange, createClient } from '@urql/next';
+import { getAuthToken } from '@/lib/auth-client'; // アプリ側で用意するトークン取得関数
 
-// app/layout.tsx
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export function Providers({ children }: { children: React.ReactNode }) {
+  // client はコンポーネント内で 1 回だけ作る（リクエスト間で共有しない）
+  const [client, ssr] = useMemo(() => {
+    const ssr = ssrExchange({ isClient: typeof window !== 'undefined' });
+    const client = createClient({
+      url: 'https://api.example.com/graphql', // SSR でも解決できる絶対 URL
+      exchanges: [cacheExchange, ssr, fetchExchange],
+      suspense: true,
+      fetchOptions: () => {
+        const token = getAuthToken();
+        return {
+          headers: { authorization: token ? `Bearer ${token}` : '' },
+        };
+      },
+    });
+    return [client, ssr] as const;
+  }, []);
+
   return (
-    <Provider value={client}>
+    <UrqlProvider client={client} ssr={ssr}>
       {children}
-    </Provider>
+    </UrqlProvider>
   );
 }
+```
 
-// コンポーネントでの使用
-import { useQuery } from 'urql';
+```tsx
+// app/layout.tsx（Server Component のまま）
+import { Providers } from './providers';
 
-const UserQuery = `
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="ja">
+      <body>
+        <Providers>{children}</Providers>
+      </body>
+    </html>
+  );
+}
+```
+
+```tsx
+// components/user-profile.tsx（使う側も Client Component）
+'use client';
+
+import { useQuery, gql } from '@urql/next';
+
+const UserQuery = gql`
   query GetUser($id: ID!) {
     user(id: $id) { id name email }
   }
 `;
 
-function UserProfile({ id }: { id: string }) {
-  const [result] = useQuery({ query: UserQuery, variables: { id } });
-  const { data, fetching, error } = result;
+// suspense: true なので、読み込み中は親の <Suspense> の fallback が表示される
+export function UserProfile({ id }: { id: string }) {
+  const [{ data, error }] = useQuery({ query: UserQuery, variables: { id } });
 
-  if (fetching) return <Spinner />;
-  if (error) return <ErrorMessage error={error} />;
-  return <ProfileCard user={data.user} />;
+  if (error) return <p role="alert">ユーザーを読み込めませんでした</p>;
+  return <p>{data?.user?.name}</p>;
 }
 ```
 
 **出典**:
 - [urql Docs](https://commerce.nearform.com/open-source/urql/docs/) (nearform / urql公式)
+- [urql Docs: Server-side Rendering - Next.js](https://github.com/urql-graphql/urql/blob/main/docs/advanced/server-side-rendering.md#nextjs) (urql公式ドキュメントのソース、`@urql/next` の `UrqlProvider` + `ssrExchange` を `'use client'` の layout で使う構成) ※2026-10-25 確認
 - [Apollo Client Docs](https://www.apollographql.com/docs/react) (Apollo公式)
 
-**バージョン**: urql 4+, Apollo Client 3+
+**バージョン**: urql 4+（App Router では @urql/next を併用）, Apollo Client 3+
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -77,14 +107,17 @@ GraphQL フラグメントを、そのデータを使うコンポーネントと
 - 上位コンポーネントがフィールドを追加・削除する際のリグレッションを防げる
 - GraphQL Code Generator が Fragment から型を生成するため、型安全性が向上する
 - Relay の思想を基盤としており、大規模アプリでのデータ管理に有効
+- GraphQL Code Generator の `client-preset` では Fragment Masking が既定で有効。子コンポーネントは展開済みの型ではなく `FragmentType<typeof ...>` で受け取り、`useFragment()` で展開する。親が自分で使うフィールド（`key` に使う `id` など）は親のクエリでも選択する
 
 **コード例**:
 ```tsx
 // components/UserCard/UserCard.tsx
 import { graphql } from '@/gql';
+import { useFragment, type FragmentType } from '@/gql/fragment-masking';
 
 // このコンポーネントが必要なフィールドをフラグメントで宣言
-export const UserCard_UserFragment = graphql(`
+// 変数名は生成される型名（UserCard_UserFragment）と衝突しない名前にする
+export const UserCardFragment = graphql(`
   fragment UserCard_User on User {
     id
     name
@@ -93,14 +126,13 @@ export const UserCard_UserFragment = graphql(`
   }
 `);
 
-// graphql-codegen が生成した型を使用
-import type { UserCard_UserFragment } from '@/gql/graphql';
-
 interface Props {
-  user: UserCard_UserFragment;
+  user: FragmentType<typeof UserCardFragment>;
 }
 
-export function UserCard({ user }: Props) {
+export function UserCard(props: Props) {
+  // useFragment は React Hook ではなく、マスクされた型を展開する関数
+  const user = useFragment(UserCardFragment, props.user);
   return (
     <div>
       <img src={user.avatarUrl} alt={user.name} />
@@ -109,19 +141,28 @@ export function UserCard({ user }: Props) {
     </div>
   );
 }
+```
 
-// pages/TeamPage/TeamPage.tsx
+```tsx
+// components/TeamPage/TeamPage.tsx
+'use client';
+
+import { useQuery } from '@urql/next';
+import { graphql } from '@/gql';
+import { UserCard } from '@/components/UserCard/UserCard';
+
 const TeamPageQuery = graphql(`
   query TeamPage {
     team {
       members {
+        id              # 親が key に使うので親のクエリでも選択する
         ...UserCard_User  # UserCard が必要なフィールドだけを取得
       }
     }
   }
 `);
 
-function TeamPage() {
+export function TeamPage() {
   const [{ data }] = useQuery({ query: TeamPageQuery });
   return (
     <div>
@@ -154,6 +195,7 @@ const TeamPageQuery = graphql(`
 **出典**:
 - [Apollo Docs: Fragments](https://www.apollographql.com/docs/react/data/fragments/) (Apollo公式)
 - [urql Docs: Fragments](https://commerce.nearform.com/open-source/urql/docs/basics/core-logic/) (urql公式)
+- [GraphQL Code Generator: client-preset - Fragment Masking](https://the-guild.dev/graphql/codegen/plugins/presets/preset-client#fragment-masking) (The Guild公式、既定で有効・`FragmentType` / `useFragment()` での受け渡し) ※2026-10-25 確認
 - [GraphQL Fragments: Let Each Component Own Its Data](https://dev.to/grimicorn/graphql-fragments-let-each-component-own-its-data-5359) (dev.to、Data Masking の解説と導入タイミングの判断基準) ※2026-06-25 fetch
 
 **出典引用**（追加）:
@@ -162,7 +204,7 @@ const TeamPageQuery = graphql(`
 
 **バージョン**: Apollo Client 3.12+（Data Masking）, urql 4+, GraphQL 16+
 **確信度**: 高
-**最終更新**: 2026-06-25
+**最終更新**: 2026-10-25
 
 ---
 
@@ -180,8 +222,8 @@ TypeScript 7.1+ では Content Mappers で `*.graphql` を生成ファイル無�
 - CI でスキーマとのチェックを自動化できる
 
 **コード例**:
-```yaml
-# codegen.ts (設定ファイル)
+```ts
+// codegen.ts (設定ファイル)
 import type { CodegenConfig } from '@graphql-codegen/cli';
 
 const config: CodegenConfig = {
@@ -240,7 +282,7 @@ const [{ data }] = useQuery({ query: GetUserQuery, variables: { id } });
 
 **バージョン**: @graphql-codegen/cli 5+, @graphql-codegen/client-preset 4+（Content Mappers 構成は TypeScript 7.1+）
 **確信度**: 高（codegen 本体）/ 中（Content Mappers 構成は単一記事・beta）
-**最終更新**: 2026-10-22
+**最終更新**: 2026-10-25
 
 ---
 
@@ -257,7 +299,9 @@ stale なデータをUIに表示し続けないよう必ず対処する。
 **コード例**:
 ```tsx
 // urql での Mutation 後キャッシュ無効化
-import { useMutation, gql } from 'urql';
+import { useMutation } from 'urql';
+import { graphql } from '@/gql';
+import type { CreatePostInput } from '@/gql/graphql';
 
 const CreatePostMutation = graphql(`
   mutation CreatePost($input: CreatePostInput!) {
@@ -279,8 +323,12 @@ function CreatePostForm() {
     // urql の cache exchange が __typename を見て自動的に関連クエリを無効化
   }
 }
+```
 
-// Apollo Client での楽観的更新
+```tsx
+// Apollo Client での楽観的更新（urql とは別のクライアントの例）
+import { useMutation } from '@apollo/client/react';
+
 const [createPost] = useMutation(CREATE_POST_MUTATION, {
   optimisticResponse: {
     createPost: {
@@ -311,7 +359,7 @@ const [createPost] = useMutation(CREATE_POST_MUTATION, {
 
 **バージョン**: Apollo Client 3+, urql 4+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 

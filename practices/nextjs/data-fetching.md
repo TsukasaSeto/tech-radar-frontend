@@ -2,38 +2,39 @@
 
 ## ルール
 
-### 1. Server Components でデータを取得し、props で渡す（ウォーターフォール回避）
+### 1. Server Components でデータを取得し、依存のない取得は並列化する（ウォーターフォール回避）
 
-可能な限りサーバー側でデータを取得する。並列で取得できるデータは `Promise.all` を使う。
+データはサーバー側の Server Components で取得し、必要なコンポーネントの近くで取得する（コロケーション。ページで全部取って props で配るより、各コンポーネントで取得して `<Suspense>` で分ける形を主にする。#3）。
+1 つのコンポーネントが互いに依存しない複数のデータを必要とする場合は、逐次 `await` せず `Promise.all` で並列に取得する。
 
 **根拠**:
-- サーバー側のデータ取得はウォーターフォールを削減する
-- `fetch` に自動的なキャッシュ・重複除去が適用される
+- サーバー側のデータ取得は、クライアントからの往復によるウォーターフォールを削減する
+- 依存のない取得を逐次 `await` すると、前の取得の完了を待ってから次が始まるので、合計時間が足し算になる。`Promise.all` なら最も遅い取得の時間で済む
+- 同一 URL・同一オプションの `fetch` は Request Memoization で同一レンダー内の重複が 1 回にまとまるので、コロケーションしても実 fetch は増えない。v15 以降、`fetch` はデフォルトではキャッシュされない（Data Cache への保存は明示が必要。`caching.md`）
 
 **コード例**:
 ```tsx
-async function Dashboard() {
-  const [user, posts, stats] = await Promise.all([
-    fetchUser(),
-    fetchPosts(),
-    fetchStats(),
-  ]);
-  return (
-    <>
-      <UserProfile user={user} />
-      <PostList posts={posts} />
-      <StatsPanel stats={stats} />
-    </>
-  );
+// Good: 1 つのコンポーネントが必要とする、互いに依存しないデータを並列に取得する
+async function ProfileHeader({ userId }: { userId: string }) {
+  const [user, stats] = await Promise.all([getUser(userId), getUserStats(userId)]);
+  return <Header user={user} stats={stats} />;
+}
+
+// Bad: 依存関係がないのに逐次 await してウォーターフォールにする
+async function ProfileHeaderSlow({ userId }: { userId: string }) {
+  const user = await getUser(userId);
+  const stats = await getUserStats(userId); // user の取得完了を待ってから始まる
+  return <Header user={user} stats={stats} />;
 }
 ```
 
 **出典**:
 - [Next.js Docs: Data Fetching Patterns](https://nextjs.org/docs/app/building-your-application/data-fetching/patterns) (Next.js公式)
+- [Next.js Docs: Caching and Revalidating (Previous Model)](https://nextjs.org/docs/app/guides/caching-without-cache-components) (Next.js 公式、`fetch` はデフォルトではキャッシュされない。`fetch` は自動でメモ化される) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（`fetch` がデフォルトでキャッシュされないのは 15+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 #### 追加根拠 (2026-05-16) — 手動取り込み
 
@@ -108,7 +109,9 @@ const revalidatedData = await fetch('https://api.example.com/posts', {
 
 **根拠**:
 - 最も遅いデータがページ全体の表示を妨げなくなる
-- ユーザーは部分的なコンテンツを先に見られる
+- ユーザーは部分的なコンテンツを先に見られる。サーバーは HTML を段階的にストリーミングし、ブラウザは受け取り次第レンダリングできる
+- `loading.tsx` はルート全体に Suspense を張るショートカット。コンポーネント単位で `<Suspense>` を張れば、どこまでを先に出すかを細かく制御できる
+- ページで全データを `Promise.all` してから描画すると、すべての取得が終わるまで何も表示されない（依存のない取得を 1 コンポーネント内で並列化するのは #1）
 - **LCP 要素（ヒーロー画像・主要見出し等）は Suspense 境界の外側（初期シェル）に置く**。スローデータを待つ Suspense 内に LCP 要素があると、シェルが届いてもレンダリングが遅延し LCP が最大 400ms 悪化するケースが観測されている
 
 **コード例**:
@@ -132,15 +135,29 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+// components/StatsPanel.tsx (Server Component) — 自分が必要なデータを自分で取得する
+export async function StatsPanel() {
+  const stats = await getStats(); // DAL 経由
+  return <div>{/* stats を表示 */}</div>;
+}
+
+// Bad: ページ全体を一つの async Server Component にまとめて全データを待つ
+export default async function DashboardPage() {
+  const [stats, feed] = await Promise.all([getStats(), getActivityFeed()]);
+  // 両方の取得が完了するまでユーザーは何も見えない
+  return <div>...</div>;
+}
 ```
 
 **出典**:
 - [Next.js Docs: Streaming with Suspense](https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming) (Next.js公式)
+- [Next.js Docs: Data Fetching Patterns](https://nextjs.org/docs/app/building-your-application/data-fetching/patterns) (Next.js公式 / 2024)
 - [Streaming SSR Is Not a Free LCP Win](https://dev.to/nosyos/streaming-ssr-is-not-a-free-lcp-win-5b8l) (dev.to、LCP配置の実測データ) ※2026-05-26に実際にfetch成功
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-26
+**最終更新**: 2026-10-25
 
 ---
 
@@ -188,8 +205,8 @@ export async function getUserUnsafe(id: number) {
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**確信度**: 中（Zenn book 1 冊が根拠。DataLoader と `React.cache()` の組み合わせは Next.js 公式ドキュメントの記載ではない）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -204,11 +221,15 @@ Next.js 16.3 の実験的機能 `experimental.useOffline` を有効にすると�
 **コード例**:
 ```ts
 // next.config.ts
-const nextConfig = {
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
   experimental: {
     useOffline: true,
   },
 };
+
+export default nextConfig;
 ```
 ```tsx
 // Good: useOffline で再接続中のフィードバックのみを担当する

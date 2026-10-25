@@ -10,7 +10,7 @@
 **根拠**:
 - ユーティリティファーストでCSSファイルの肥大化を防ぐ
 - クラス名を読むだけでスタイルが把握できる
-- 使われていないスタイルは PurgeCSS で自動削除される
+- Tailwind 3 以降は JIT エンジンがソース中で使われているクラスだけを生成するため、未使用のスタイルは出力されない
 
 **コード例**:
 ```tsx
@@ -63,7 +63,7 @@ function Button({ variant, className, ...props }: ButtonProps) {
 
 **バージョン**: Tailwind CSS 3+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -105,19 +105,23 @@ CSS カスタムプロパティで定義し、テーマ切り替えに対応す�
   --font-size-lg: 1.125rem;
 }
 
-/* ダークモード */
+/* ダークモード（OS 設定）。background / surface / text / muted は必ず組で上書きする
+   （一部だけ上書きすると、ライト用の text とダーク用の surface のような組み合わせが残る） */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-text: #f9fafb;
+    --color-text-muted: #9ca3af;  /* #111827 に対して 6.99:1、#1f2937 に対して 5.78:1 */
     --color-background: #111827;
     --color-surface: #1f2937;
   }
 }
 
-/* data 属性でのテーマ切り替え（JS制御）*/
+/* data 属性でのテーマ切り替え（JS 制御）。値は上の @media 版と同じ組にそろえる */
 [data-theme="dark"] {
   --color-text: #f9fafb;
+  --color-text-muted: #9ca3af;
   --color-background: #111827;
+  --color-surface: #1f2937;
 }
 ```
 
@@ -142,7 +146,7 @@ export default {
 
 **バージョン**: CSS Living Standard
 **確信度**: 高
-**最終更新**: 2026-08-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -153,7 +157,7 @@ export default {
 
 **根拠**:
 - モバイルユーザーが多い現代ではモバイルを優先することが自然
-- `min-width`（モバイルファースト）は `max-width` より特異性の衝突が少ない
+- メディアクエリは詳細度を変えないので、上書きはソース順で決まる。`min-width`（モバイルファースト）で狭い順に書けば、上書きの向きが「広い画面ほど後から足す」の一方向にそろう
 - Tailwind CSS のブレークポイントがモバイルファーストを前提としている（`sm:` = 640px以上）
 
 **コード例**:
@@ -205,7 +209,7 @@ function ProductGrid({ products }: { products: Product[] }) {
 
 **バージョン**: CSS Living Standard, Tailwind CSS 3+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -383,10 +387,12 @@ function ProductCard() {
   grid-template-columns: 1fr;
 }
 
-/* フォームが invalid な入力を含む場合にサブミットボタンを無効化 */
-form:has(input:invalid) .submit-button {
+/* フォームが不正な入力を含む間、送信ボタンを薄く表示する（見た目の同期だけ）
+   - pointer-events: none ではポインタ操作しか止まらず、Enter キーでの送信やフォーカスは止まらない。
+     送信の無効化は disabled 属性やフォームの状態（ネイティブバリデーション）で行う
+   - :invalid は未入力の required 項目にも初期表示から一致するので、操作後だけ一致する :user-invalid を使う */
+form:has(input:user-invalid) .submit-button {
   opacity: 0.5;
-  pointer-events: none;
 }
 
 /* 入力済みの input を持つフィールドのラベルを浮かせる（Floating Label） */
@@ -405,9 +411,9 @@ form:has(input:invalid) .submit-button {
 - [:has() CSS pseudo-class - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/:has) (MDN Web Docs)
 - [CSS Selectors Level 4: :has()](https://www.w3.org/TR/selectors-4/#relational) (W3C Spec)
 
-**バージョン**: Chrome 105+, Firefox 121+, Safari 15.4+
+**バージョン**: Chrome 105+, Firefox 121+, Safari 15.4+（`:user-invalid` は Chrome 119+, Firefox 88+, Safari 16.5+）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -420,12 +426,19 @@ form:has(input:invalid) .submit-button {
 - CSS 詳細度の衝突は大規模プロジェクトで管理困難になり `!important` の連鎖を招く
 - `@layer` はレイヤーの宣言順序で優先順位が決まるため、詳細度ハックが不要になる
 - Tailwind CSS v4 は内部的にカスケードレイヤーを使用しており、サードパーティCSSとの競合を防ぐ構造が標準化された
-- `@layer` 外に書かれたスタイルは常にすべてのレイヤーより優先されるため、緊急の上書きもシンプルに書ける
+- 通常の宣言では、`@layer` 外に書かれたスタイルがすべてのレイヤーより優先されるため、緊急の上書きもシンプルに書ける
+- `!important` を付けた宣言では順序が逆転する。レイヤー内の `!important` はレイヤー外の `!important` に勝ち、レイヤー同士では先に宣言したレイヤーの `!important` ほど強い。サードパーティ CSS の `!important` は、レイヤーに入れると自前の `!important` より強くなる点に注意する
+- サードパーティ CSS は `@import url(...) layer(vendor);` でレイヤーに読み込む。`@import` は `@charset` と `@layer` の宣言文以外のすべてのルールより前に書く必要があり、`@layer vendor { ... }` のブロック内に書いた `@import` は無効として無視される
 
 **コード例**:
 ```css
-/* レイヤーの優先順位を最初に宣言（後に宣言したレイヤーほど優先） */
-@layer base, components, utilities;
+/* レイヤーの優先順位を最初に宣言（先に宣言したレイヤーほど優先度が低い）。
+   vendor を先頭に置き、サードパーティ CSS を自前のスタイルに負けさせる */
+@layer vendor, base, components, utilities;
+
+/* サードパーティ CSS を vendor レイヤーに読み込む。
+   @import は @layer 宣言文の直後、ほかのルールより前のトップレベルに書く */
+@import url('vendor-library.css') layer(vendor);
 
 /* base レイヤー: リセット・デフォルトスタイル */
 @layer base {
@@ -454,12 +467,18 @@ form:has(input:invalid) .submit-button {
   .sr-only { /* スクリーンリーダーのみ表示 */ }
 }
 
-/* レイヤー外は全レイヤーより優先（例外的な上書きに使用） */
+/* レイヤー外は全レイヤーより優先（通常の宣言の場合。例外的な上書きに使用） */
 .critical-override {
   color: red;
 }
+```
 
-/* サードパーティCSS をレイヤーに封じ込め、自前スタイルに負けさせる */
+```css
+/* Bad: @import はブロック内に書けないので無視され、vendor CSS は読み込まれない。
+   また先頭の宣言に vendor がないため、このブロックで初めて作られる vendor は
+   最後尾（最優先）のレイヤーになり、「自前スタイルに負けさせる」意図と逆になる */
+@layer base, components, utilities;
+
 @layer vendor {
   @import url('vendor-library.css');
 }
@@ -467,11 +486,12 @@ form:has(input:invalid) .submit-button {
 
 **出典**:
 - [最近のCSS、全然追えてなかった。ここ1、2年で使えるようになった機能10選](https://zenn.dev/seekseek/articles/css-new-features-catch-up-2026) (Zenn seekseek / 2026) ※2026-05-06に実際にfetch成功
-- [MDN: @layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer) (MDN Web Docs)
+- [MDN: @layer](https://developer.mozilla.org/en-US/docs/Web/CSS/@layer) (MDN Web Docs、宣言順による優先度・レイヤー外の宣言・`!important` での逆転) ※2026-10-25 確認
+- [MDN: @import](https://developer.mozilla.org/en-US/docs/Web/CSS/@import) (MDN Web Docs、`@import` を置ける位置と `layer()` 構文) ※2026-10-25 確認
 
-**バージョン**: Chrome 99+, Firefox 97+, Safari 15.4+（Widely Available）
+**バージョン**: Chrome 99+, Firefox 97+, Safari 15.4+（`@layer` と `@import ... layer()` の両方。Widely Available）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -483,7 +503,7 @@ form:has(input:invalid) .submit-button {
 - モーダル表示時の `overflow: hidden` 切り替えなど、スクロールバーの表示・非表示でページ幅が変化し CLS が発生する
 - `scrollbar-gutter: stable` はコンテンツが overflow しない場合でもスクロールバー分のスペースを確保し、幅の変動を防ぐ
 - CSS 1行で解決でき、JavaScript での `padding-right` 補正など回避策のハックが不要になる
-- Chrome 94+、Firefox 97+、Safari 15.8+ でサポート済み（Widely Available）
+- Chrome 94+、Firefox 97+、Safari 18.2+ でサポート済み（Baseline Newly available: 2024-12。Safari 18.2 未満では無視されるだけで害はない）
 
 **コード例**:
 ```css
@@ -527,11 +547,11 @@ body.modal-open {
 
 **出典**:
 - [The Most Underrated CSS Property Nobody Talks About: scrollbar-gutter](https://medium.com/@konstantinkeylin/the-most-underrated-css-property-nobody-talks-about-scrollbar-gutter-2ca598352675) (Medium konstantinkeylin / 2026-05) ※2026-05-06に実際にfetch成功
-- [MDN: scrollbar-gutter](https://developer.mozilla.org/en-US/docs/Web/CSS/scrollbar-gutter) (MDN Web Docs)
+- [MDN: scrollbar-gutter](https://developer.mozilla.org/en-US/docs/Web/CSS/scrollbar-gutter) (MDN Web Docs、Baseline 2024 / Newly available と各ブラウザの対応版) ※2026-10-25 確認
 
-**バージョン**: Chrome 94+, Firefox 97+, Safari 15.8+
+**バージョン**: Chrome 94+, Firefox 97+, Safari 18.2+（Baseline Newly available: 2024-12）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -540,14 +560,14 @@ body.modal-open {
 npm パッケージとして配布する UIライブラリでは、CSS を JavaScript ファイルに自動インポートする形式を避け、利用者がアプリ側で明示的に CSS ファイルをインポートする設計にする。
 
 **根拠**:
-- `import './button.css'` のような静的 CSS インポートが JavaScript に含まれると、SSR 環境（Node.js）で `Unknown file extension ".css"` エラーが発生する
-- Next.js の App Router は Server Components でのスタイルシートのインポートを制限している
-- 利用者がアプリの `globals.css` で `@import` するか `<link>` タグで読み込む設計にすることで、CSS の適用タイミングとバンドル方式を利用者が制御できる
+- `import './button.css'` のような静的 CSS インポートが JavaScript に含まれると、バンドラを通さずに Node.js がライブラリの JS を直接読み込む環境（Node 単体での SSR やテスト実行など）で `Unknown file extension ".css"` エラーが発生する
+- Next.js の App Router 自体は、`app` 内のどのコンポーネントからでも CSS（npm パッケージが配布する CSS を含む）を import できる。問題になるのは上記のようにバンドラを通らない実行環境に限られる
+- 利用者がアプリの `globals.css` で `@import` するか `<link>` タグで読み込む設計にすることで、CSS の適用タイミングとバンドル方式を利用者が制御できる（Next.js では CSS の順序が import の順序で決まる）
 - `package.json` の `exports` フィールドで CSS ファイルの存在を明示する
 
 **コード例**:
 ```tsx
-// Bad: ライブラリコンポーネント内で CSS を静的インポート（SSR でクラッシュ）
+// Bad: ライブラリコンポーネント内で CSS を静的インポート（バンドラを通さない Node.js 実行でクラッシュ）
 // packages/my-ui-lib/src/Button.tsx
 import './button.css'; // Node.js: Unknown file extension ".css"
 export function Button({ children }: { children: React.ReactNode }) {
@@ -565,12 +585,12 @@ export function Button({ children }: { children: React.ReactNode }) {
 //   }
 // }
 
-// 利用側アプリで明示的にインポート
+// 利用側アプリで明示的にインポート（exports で公開したパスを使う。dist/ を直接指すと exports を尊重するリゾルバで解決できない）
 // app/globals.css
-// @import '@my-ui-lib/dist/styles.css';
+// @import '@my-ui-lib/styles.css';
 
 // または layout.tsx でインポート
-import '@my-ui-lib/dist/styles.css';
+import '@my-ui-lib/styles.css';
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return <html><body>{children}</body></html>;
 }
@@ -578,49 +598,24 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
 **出典**:
 - [Why UI Libraries Still Need Explicit CSS Imports](https://dev.to/ddtamn/why-ui-libraries-still-need-explicit-css-imports-5b6o) (dev.to ddtamn / 2026-05)
+- [Next.js Docs: CSS](https://nextjs.org/docs/app/getting-started/css) (Next.js 公式、global CSS と外部パッケージの CSS は `app` 内のどこからでも import できること、CSS の順序は import 順で決まること) ※2026-10-25 確認
 
 **バージョン**: Next.js 14+, Node.js 20+
-**確信度**: 高
-**最終更新**: 2026-05-07
+**確信度**: 中（ライブラリ設計の主張は 1 記事。Next.js の挙動は公式で確認）
+**最終更新**: 2026-10-25
 
 ---
 
 ### 10. Modern CSS の3大原則（論理プロパティ・`:focus-visible`・opacity/transform アニメーション）を適用する
 
-Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のための論理プロパティ、キーボード専用フォーカスリング（`:focus-visible`）、リフローを起こさないコンポジタレイヤアニメーション（opacity/transform）の3つを一貫して使う。
+Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のための論理プロパティ、フォーカスリングの `:focus-visible`、リフローを起こさないコンポジタレイヤアニメーション（opacity/transform）の3つを一貫して使う。
+論理プロパティの詳細は `practices/i18n/rtl.md` #1、`:focus-visible` の詳細は `practices/web-standards/accessibility.md` #5 を参照。このルールでは opacity/transform アニメーションを扱う。
 
 **根拠**:
-- **論理プロパティ**: `margin-left` 等の物理プロパティは LTR を前提とするため RTL レイアウトで反転対応が必要。`margin-inline-start` 等の論理プロパティは書字方向に応じて自動で適切な方向が適用される
-- **`:focus-visible`**: `:focus` はマウスクリック時もフォーカスリングを表示する。`:focus-visible` はキーボードナビゲーション時のみリングを表示するため、マウスユーザーに不要なスタイルが表示されない
 - **opacity/transform アニメーション**: `height`・`width`・`top` 等はアニメーション時にレイアウト再計算（リフロー）が発生する。`opacity`・`transform` はコンポジタレイヤで処理されリフローが不要。GPU 加速により 60fps を維持しやすい
 
 **コード例**:
 ```css
-/* Good: 論理プロパティ — LTR/RTL 両対応 */
-.card {
-  margin-inline-start: 1rem;  /* LTR: margin-left / RTL: margin-right */
-  padding-inline: 1rem;       /* 左右両方に適用 */
-  border-inline-end: 1px solid #ddd;
-}
-
-/* Bad: 物理プロパティ — RTL で崩れる */
-.card {
-  margin-left: 1rem;
-  padding-left: 1rem;
-  padding-right: 1rem;
-}
-
-/* Good: キーボードナビ時のみフォーカスリングを表示 */
-:focus-visible {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 2px;
-}
-
-/* Bad: マウスクリック時にもフォーカスリングが出る */
-:focus {
-  outline: 2px solid var(--color-primary);
-}
-
 /* Good: コンポジタレイヤのアニメーション（リフローなし） */
 .modal {
   opacity: 0;
@@ -640,18 +635,7 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 }
 ```
 
-**論理プロパティ対応表（主なもの）**:
-| 物理プロパティ | 論理プロパティ |
-|---|---|
-| `margin-left` / `margin-right` | `margin-inline-start` / `margin-inline-end` |
-| `padding-left` / `padding-right` | `padding-inline-start` / `padding-inline-end` |
-| `border-left` / `border-right` | `border-inline-start` / `border-inline-end` |
-| `left` / `right`（position） | `inset-inline-start` / `inset-inline-end` |
-| `width` / `height` | `inline-size` / `block-size` |
-
 **アンチパターン**:
-- i18n 対応が不要と判断して論理プロパティをスキップする → 後からの RTL 対応が困難になる
-- `outline: none` でフォーカスを完全消去する → キーボードユーザーがナビゲーション不能になる
 - `top` / `height` をアニメーション対象にする → パフォーマンス問題が発生する
 
 **出典引用**:
@@ -659,8 +643,8 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 > ([Googleの「Modern Web Guidance」で学ぶModern CSSのDo's and Don'ts](https://zenn.dev/ubie_dev/articles/modern-css-dos-donts), セクション "Modern CSSのDo's and Don'ts") ※2026-05-21に実際にfetch成功
 
 **バージョン**: CSS Living Standard（全モダンブラウザで対応済み）
-**確信度**: 高（Google 公式 Modern Web Guidance 準拠）
-**最終更新**: 2026-05-21
+**確信度**: 中（Google の Modern Web Guidance を紹介する 1 記事が出典）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -672,8 +656,10 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 **根拠**:
 - Floating UI / Popper.js のような外部ライブラリが不要になり、バンドルサイズと実行時オーバーヘッドが削減できる
 - `position-try-fallbacks` によりビューポート端でのはみ出しを CSS だけで自動回避できる
-- Chrome / Edge 125+、Firefox 147+、Safari 26+ で利用できる（W3C Candidate Recommendation。caniuse では Safari 27 以外は部分対応の扱い）
-- 2026-09 に Baseline 入りし、主要ブラウザの現行リリースが対応。`position-area` と論理値（`block-end span-inline-end`）を使えば RTL 対応も追加 CSS なしで得られる（古い環境ではフォールバック配置に劣化する）
+- 対応版: `anchor-name` / `anchor()` / `@position-try` は Chrome / Edge 125+、`position-try-fallbacks` は Chrome / Edge 128+（125〜127 は旧名 `position-try-options`）、Firefox 147+、Safari 26+（W3C Candidate Recommendation）
+- Baseline: web-features のデータでは、主要な個別機能が 2026-01 に Newly available になり、2026-09 に `position-anchor` の全値（Chrome / Edge 151・Firefox 151・Safari 27）がそろった。ただし `position-visibility` の一部の値が Safari だけの対応のため、「Anchor positioning」機能全体はまだ Baseline ではない（caniuse でも Safari 27 以外は部分対応の扱い）
+- `position-area` と論理値（`block-end span-inline-end`）を使えば RTL 対応も追加 CSS なしで得られる（古い環境ではフォールバック配置に劣化する）
+- `@position-try` に書けるのは inset・margin・サイズ・self-alignment・`position-anchor` / `position-area` だけで、`transform` は上書きできない。中央寄せを `transform: translateX(-50%)` で行うと、すべての候補に同じ transform が残って位置がずれるので、`anchor-center` で揃える
 
 **コード例**:
 ```css
@@ -685,26 +671,28 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 .tooltip {
   position: absolute;
   position-anchor: --tooltip-anchor;
+  /* 既定: アンカーの上に置き、横方向はアンカーの中央に揃える */
   bottom: calc(anchor(top) + 8px);
-  left: anchor(center);
-  transform: translateX(-50%);
+  justify-self: anchor-center;
 
-  /* ビューポート端に当たったら上→右→左の順で試す */
-  position-try-fallbacks:
-    --above,
-    --right,
-    --left;
+  /* ビューポート端に当たったら 下 → 右 → 左 の順で試す
+     （flip-block は上下の inset と anchor() の辺を入れ替える組み込みの候補） */
+  position-try-fallbacks: flip-block, --right, --left;
 }
 
-@position-try --above {
-  bottom: calc(anchor(top) + 8px);
-  top: auto;
-}
-
+/* 候補ごとに、既定の配置で使った bottom / justify-self を打ち消してから位置を指定する */
 @position-try --right {
-  left: calc(anchor(right) + 8px);
   bottom: auto;
-  top: anchor(center);
+  left: calc(anchor(right) + 8px);
+  justify-self: normal;
+  align-self: anchor-center;
+}
+
+@position-try --left {
+  bottom: auto;
+  right: calc(anchor(left) + 8px);
+  justify-self: normal;
+  align-self: anchor-center;
 }
 ```
 
@@ -719,16 +707,19 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 **出典**:
 - [Dropdowns That Position Themselves: CSS Anchor Positioning Is Baseline Now](https://dev.to/rashadmehtab/dropdowns-that-position-themselves-css-anchor-positioning-is-baseline-now-450d) (dev.to、Baseline 到達と `position-area` の論理値記法) ※2026-10-05 fetch
   > "CSS anchor positioning reached Baseline in September 2026... the current release of every major browser supports it, while older installs do not." (セクション "Browser Support")
+- [MDN: position-try-fallbacks](https://developer.mozilla.org/en-US/docs/Web/CSS/position-try-fallbacks) (MDN Web Docs、try-tactic と `@position-try` の参照方法、ブラウザ対応版) ※2026-10-25 確認
+- [MDN: @position-try](https://developer.mozilla.org/en-US/docs/Web/CSS/@position-try) (MDN Web Docs、`@position-try` に書けるプロパティ) ※2026-10-25 確認
+- [web-features: anchor-positioning](https://github.com/web-platform-dx/web-features/blob/main/features/anchor-positioning.yml) (W3C WebDX CG、個別機能ごとの Baseline 到達日) ※2026-10-25 確認
 
-**バージョン**: Chrome / Edge 125+, Firefox 147+, Safari 26+（W3C CSS Anchor Positioning Module Level 1 CR）
+**バージョン**: Chrome / Edge 128+（`position-try-fallbacks`。125〜127 は旧名 `position-try-options`）, Firefox 147+, Safari 26+（W3C CSS Anchor Positioning Module Level 1 CR）
 **確信度**: 高（W3C Candidate Recommendation + 主要ブラウザの現行版が対応）
-**最終更新**: 2026-10-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 12. `will-change` / `transform: translateZ(0)` は子要素の `position: fixed` を壊すことを踏まえて配置する
 
-パフォーマンス最適化のために親要素へ `will-change` や `transform: translateZ(0)` を指定すると、その要素は子孫要素にとっての containing block（包含ブロック）になる。結果として子要素の `position: fixed` がビューポート基準ではなく、その親要素基準で配置されてしまい、意図せず固定表示が壊れる。
+パフォーマンス最適化のために親要素へ `will-change: transform`（`transform` や `filter` など、指定すると包含ブロックを作るプロパティを挙げた `will-change`）や `transform: translateZ(0)` を指定すると、その要素は子孫要素にとっての containing block（包含ブロック）になる。結果として子要素の `position: fixed` がビューポート基準ではなく、その親要素基準で配置されてしまい、意図せず固定表示が壊れる。
 
 **根拠**:
 - CSS 仕様上、`transform` に `none` 以外の値を指定した要素は、すべての子孫要素に対して containing block となり、新しいスタッキングコンテキストを作成する
@@ -779,7 +770,7 @@ Google の Modern Web Guidance（2026）に基づき、RTL/i18n 対応のため�
 
 **バージョン**: CSS仕様（Stacking Context / Containing Block、全モダンブラウザ共通の挙動）
 **確信度**: 中（CSS仕様上の一般的挙動の解説だが、出典は1記事）
-**最終更新**: 2026-08-07
+**最終更新**: 2026-10-25
 
 ---
 
@@ -916,10 +907,10 @@ ol, ul, menu {
 
 ### 16. CSS-in-JS をランタイムで解決させず、CSS Modules 等の静的抽出方式に移行する
 
-CSS-in-JS ライブラリ（styled-components 等）はコンポーネントのレンダーごとにスタイルオブジェクトを計算・注入するため、SSR とクライアント初期化の両方に実行時コストを持ち込む。GitHub は本番の CSS-in-JS を CSS Modules へ段階移行し、SSR 時間 55%減・コンポーネント初期化 25%高速化を達成した。
+CSS-in-JS ライブラリ（styled-components 等）はスタイルを実行時に生成・注入する（props に依存する動的なスタイルはレンダーごとに計算し、静的なスタイルも初回に生成してキャッシュする）ため、SSR とクライアント初期化の両方に実行時コストを持ち込む。GitHub は本番の CSS-in-JS を CSS Modules へ段階移行し、SSR 時間 55%減・コンポーネント初期化 25%高速化を達成した。
 
 **根拠**:
-- CSS-in-JS はレンダーのたびにスタイルオブジェクトを計算・注入するため、SSR・クライアント初期化の双方でJS実行コストが発生する
+- CSS-in-JS はスタイルを実行時に生成・注入する（動的なスタイルはレンダーのたびに計算する）ため、SSR・クライアント初期化の双方でJS実行コストが発生する
 - CSS Modules はビルド時にスタイルを静的なCSSファイルへ抽出するため、ランタイムでのスタイル計算が不要になる
 - 大規模移行は feature flag による段階的ロールアウト（社内→社員→一般ユーザー）と Visual Regression Testing での出力比較を組み合わせることで安全に進められる
 - codemod や AI支援ツールによる自動書き換えで、数千箇所規模の移行も現実的な工数で実行できる
@@ -927,7 +918,7 @@ CSS-in-JS ライブラリ（styled-components 等）はコンポーネントの�
 
 **コード例**:
 ```tsx
-// Bad: CSS-in-JS はレンダーごとにスタイルを計算・注入する
+// Bad: CSS-in-JS は実行時にスタイルを生成・注入する（props に依存する場合はレンダーごとに計算する）
 const Button = styled.button`
   padding: 8px 16px;
   border-radius: 4px;
@@ -952,7 +943,7 @@ function Button() {
 > ([Improving site performance by shipping more CSS](https://github.blog/engineering/architecture-optimization/improving-site-performance-by-shipping-more-css/), GitHub Blog, セクション "Introducing CSS (Modules)") ※2026-09-25に実際にfetch成功
 
 **バージョン**: フレームワーク非依存（CSS Modules は Webpack/Vite 等のバンドラでネイティブサポート）
-**確信度**: 高（公式 GitHub Engineering Blog、パターン1採用）
-**最終更新**: 2026-09-26
+**確信度**: 中（公式 GitHub Engineering Blog の 1 記事）
+**最終更新**: 2026-10-25
 
 ---

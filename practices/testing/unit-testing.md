@@ -6,6 +6,7 @@
 
 「何をするか」ではなく「何ができるか」をテストする。
 内部のメソッド名・変数名・状態の持ち方に依存したテストを書かない。
+何が「公開契約」かは対象によって決まる。Hook を単体で公開している（他のコンポーネントが使う API として提供している）なら、その戻り値（`renderHook` の `result.current`）は公開契約なので検証してよい。debounce の「最後の呼び出しから 1 回だけ呼ぶ」のように、呼び出し回数そのものが仕様なら回数も検証してよい（#5）。避けるのは、検証したい振る舞いの代わりに内部構造を見ること。
 
 **根拠**:
 - 実装詳細に依存したテストはリファクタリング時に壊れやすく、メンテコストが高い
@@ -13,7 +14,10 @@
 - テストが壊れたとき「ロジックが壊れた」のか「リファクタリングしただけ」なのかが明確になる
 
 **コード例**:
-```ts
+```tsx
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+
 // Bad: 実装詳細のテスト
 it('should call _formatPrice internal method', () => {
   const cart = new ShoppingCart();
@@ -26,16 +30,17 @@ it('should display formatted price with currency symbol', () => {
   expect(cart.getTotalDisplay()).toBe('¥2,000');  // ユーザーが見る結果
 });
 
-// Bad: React の内部状態をテスト
+// Bad: フォームの振る舞いを確かめたいのに、フォームが内部で使う Hook の state を見る
 it('should set isLoading state to true', () => {
   const { result } = renderHook(() => useSubmit());
-  expect(result.current.isLoading).toBe(true);  // 内部の state 名に依存
+  expect(result.current.isLoading).toBe(true);  // SubmitForm の内部で使う state 名に依存
 });
 
-// Good: ユーザーが体験する振る舞いをテスト
+// Good: ユーザーが体験する振る舞いをテスト（操作は userEvent。component-testing.md #2）
 it('should show loading indicator while submitting', async () => {
+  const user = userEvent.setup();
   render(<SubmitForm />);
-  fireEvent.click(screen.getByRole('button', { name: '送信' }));
+  await user.click(screen.getByRole('button', { name: '送信' }));
   expect(screen.getByRole('status')).toBeInTheDocument();  // UIの振る舞い
 });
 ```
@@ -46,8 +51,8 @@ it('should show loading indicator while submitting', async () => {
 
 1. **`_` プレフィックスの private メソッドを直接呼ぶ** — 例: `expect(cart._calculate).toHaveBeenCalled()` → ユーザーが触れない関数。public API 経由でテスト
 2. **`useState` の戻り値の `setState` を直接アサート** — 例: `expect(setState).toHaveBeenCalledWith('loading')` → 内部 state を観測している。レンダリング結果をテスト
-3. **コンポーネントの内部変数名・hook 名に依存** — 例: `result.current.isLoading` を直接見る → 名前変更でテスト崩壊。`screen.getByRole('status')` 等の UI 経由
-4. **Mock の呼び出し回数を厳密に検証** — 例: `expect(fetcher).toHaveBeenCalledTimes(1)` → リトライ実装の変更で壊れる。最終的な結果（"ユーザーにデータが表示される"）を検証
+3. **コンポーネントのテストで、内部で使う変数名・hook の state に依存** — 例: コンポーネントの振る舞いを確かめるのに、内部の Hook の `result.current.isLoading` を直接見る → 名前変更でテスト崩壊。`screen.getByRole('status')` 等の UI 経由（Hook 自体を公開 API として提供しているなら、その戻り値は検証してよい）
+4. **回数が仕様ではない Mock の呼び出し回数を厳密に検証** — 例: `expect(fetcher).toHaveBeenCalledTimes(1)` → リトライ実装の変更で壊れる。最終的な結果（"ユーザーにデータが表示される"）を検証（debounce のように回数そのものが仕様なら検証してよい。#5）
 5. **CSS クラス名・テストID・data-\* 属性で要素を取得** — 例: `getByTestId('submit-btn')` → クラスリネームで壊れる。`getByRole('button', { name: '送信' })` 等のセマンティック検索
 6. **スナップショットテストのみで振る舞いを保証** — DOM ツリー全体のスナップショットは「何が壊れたか」を伝えない（`test-strategy.md` Rule 4 参照）
 7. **コンポーネントの内部 import をモック** — 例: 子コンポーネントを `vi.mock` で全部スタブ化 → 統合の壊れを検出できない。MSW で外部 API のみモック
@@ -82,7 +87,7 @@ it('should show loading indicator while submitting', async () => {
 
 **バージョン**: Vitest 1+, Jest 27+, Testing Library 14+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -202,52 +207,69 @@ describe('formatCurrency', () => {
 - `vi.mock` はモジュール解決時点でホイストされ、インポート後の全呼び出しを置換するため副作用の完全な排除に向く
 - `vi.spyOn` は元の実装を保持しつつ呼び出しを記録できるため、実装の一部だけを差し替えたい場合に適する
 - `vi.spyOn` は `afterEach(() => vi.restoreAllMocks())` と組み合わせることで元の実装への復元が保証される
-- ホイストされる `vi.mock` は**ファイルのトップレベルに置く**。Vitest 5.0.0-rc.1 ではトップレベル以外の `vi.mock` があるとテストファイル全体がロード失敗する（4.1 は警告のみ）。あわせて `clearMocks` のデフォルトが `true` になり、各テスト前にモックの呼び出し履歴がクリアされる（RC 時点の報告）
+- ホイストされる `vi.mock` は**ファイルのトップレベルに置く**。Vitest 5.0 ではトップレベル以外（関数・ブロック・`describe` / `test` のコールバック内）の `vi.mock` / `vi.unmock` / `vi.hoisted` はエラーになる（4.x は警告のみ）。あわせて `clearMocks` の既定値が `true` になり、各テストの前に `vi.clearAllMocks()` が呼ばれてモックの呼び出し履歴がクリアされる（実装は残る）。テスト本体の外（setup ファイル・モジュールのトップレベル・`beforeAll`）で記録した呼び出しを後のテストで検証している場合は影響を受ける
+- `vi.mock` はファイル全体に効くので、同じファイルで同じモジュールに `vi.spyOn` を重ねても意味がない。両者を使い分けるなら、テストファイルを分ける
 
 **コード例**:
 ```ts
-import { vi, describe, it, expect, afterEach } from 'vitest';
-import * as api from '@/lib/api';
+// user-service.test.ts — vi.mock: 依存モジュール全体を差し替える（副作用を完全に除去したい場合）
+import { vi, describe, it, expect } from 'vitest';
 import { fetchUser } from '@/lib/api';
+import { UserService } from '@/lib/user-service';
 
-// vi.mock: モジュール全体を差し替え（副作用を完全に除去したい場合）
+// トップレベルに書く（ファイル先頭へホイストされる）
 vi.mock('@/lib/api', () => ({
-  fetchUser: vi.fn().mockResolvedValue({ id: '1', name: 'Alice' }),
-  updateUser: vi.fn().mockResolvedValue({ success: true }),
+  fetchUser: vi.fn(),
 }));
 
-// vi.spyOn: 特定メソッドのみを監視・置換（元実装を保持したい場合）
+describe('UserService', () => {
+  it('should return display name of the fetched user', async () => {
+    vi.mocked(fetchUser).mockResolvedValue({ id: '42', name: 'Bob' });
+
+    // Good: テスト対象（UserService）を呼び、その結果を検証する
+    const name = await new UserService().getDisplayName('42');
+
+    expect(name).toBe('Bob さん');
+    expect(fetchUser).toHaveBeenCalledWith('42');
+  });
+});
+```
+
+```ts
+// user-service.cache.test.ts — vi.spyOn: 既存オブジェクトの 1 メソッドだけを置き換える（他は元の実装のまま）
+import { vi, describe, it, expect, afterEach } from 'vitest';
+import { cache } from '@/lib/cache';
+import { UserService } from '@/lib/user-service';
+
 describe('UserService', () => {
   afterEach(() => {
     vi.restoreAllMocks(); // spyOn で変更したメソッドを元に戻す
   });
 
-  it('should call fetchUser with correct id', async () => {
-    // Good: spyOn で特定メソッドだけ監視
-    const spy = vi.spyOn(api, 'fetchUser').mockResolvedValue({ id: '42', name: 'Bob' });
+  it('should use cached user without calling the API', async () => {
+    const spy = vi.spyOn(cache, 'get').mockReturnValue({ id: '42', name: 'Bob' });
 
-    const result = await api.fetchUser('42');
+    const name = await new UserService().getDisplayName('42');
 
-    expect(spy).toHaveBeenCalledWith('42');
-    expect(result.name).toBe('Bob');
+    expect(name).toBe('Bob さん');
+    expect(spy).toHaveBeenCalledWith('user:42');
   });
 
-  it('should NOT use vi.mock when only observing a single method', async () => {
-    // Bad: モジュール全体をモックすると他のエクスポートも巻き込む
-    // vi.mock('@/lib/api') <- 不要なモック範囲の拡大
-  });
+  // Bad: cache.get だけ差し替えたいのに vi.mock('@/lib/cache') でモジュール全体を置き換える
+  // → set / delete など他のエクスポートも巻き込み、モックの範囲が不要に広がる
 });
 ```
 
 **出典**:
 - [Vitest Docs: Mocking](https://vitest.dev/guide/mocking) (Vitest公式)
 - [Vitest API: vi.mock / vi.spyOn](https://vitest.dev/api/vi#vi-mock) (Vitest公式)
-- [Vitest 5 RC に上げてみたら、テストより先に npm が落ちた](https://zenn.dev/clopy/articles/vitest5-rc-breaking-changes) (Zenn、5.0.0-rc.1 での `vi.mock` 位置制約と `clearMocks` 既定値変更の検証。RC 段階の単一記事のため確信度は据え置き) ※2026-10-09 fetch
+- [Vitest Docs: Migrating to Vitest 5.0](https://vitest.dev/guide/migration) (Vitest公式、"Hoisted Mocking Calls Must Be at the Top Level"、"clearMocks is Enabled by Default") ※2026-10-25 確認
+- [Vitest 5 RC に上げてみたら、テストより先に npm が落ちた](https://zenn.dev/clopy/articles/vitest5-rc-breaking-changes) (Zenn、5.0.0-rc.1 での `vi.mock` 位置制約と `clearMocks` 既定値変更の検証) ※2026-10-09 fetch
   > "Hoisted Mocking Calls Must Be at the Top Level"（移行ガイドの見出しを記事が引用）
 
-**バージョン**: Vitest 2+（トップレベル必須は 5.0 RC 以降）
+**バージョン**: Vitest 2+（トップレベル必須と `clearMocks` の既定 `true` は 5.0+）
 **確信度**: 高
-**最終更新**: 2026-10-09
+**最終更新**: 2026-10-25
 
 ---
 
@@ -304,6 +326,14 @@ describe('debounce', () => {
 });
 
 describe('formatRelativeTime', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers(); // setSystemTime で固定した時刻も元に戻る
+  });
+
   it('should return "1時間前" for 1 hour ago', () => {
     // 現在時刻を固定
     vi.setSystemTime(new Date('2026-05-06T12:00:00Z'));
@@ -319,18 +349,19 @@ describe('formatRelativeTime', () => {
 
 **バージョン**: Vitest 2+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 6. `unauthorized()` / `forbidden()` の throw を内部実装非依存で検証する
 
-Next.js App Router の `unauthorized()` / `forbidden()` / `notFound()` は内部で特殊な Error を throw する。これらをテストする際、エラー型・`digest` プロパティ・メッセージ文字列など内部構造に依存して assert すると、Next.js のバージョンアップで簡単に壊れる。原則は **「throw されたことだけを検証する」**（`rejects.toThrow()` のみ）。より厳密に判別したい場合は DAL 内で独自エラーラッパーを設計し、呼び出し側（Server Component / Server Action）で `unauthorized()` に変換する。
+Next.js App Router の `unauthorized()` / `forbidden()` / `notFound()` は内部で特殊な Error を throw する。これらをテストする際、エラー型・`digest` プロパティ・メッセージ文字列など内部構造に依存して assert すると、Next.js のバージョンアップで簡単に壊れる。原則は **「throw されたことだけを検証する」**（`rejects.toThrow()`）。ただし `rejects.toThrow()` だけでは、認可チェックを消しても後続の処理（DB の戻り値が空で `notFound()` に落ちる等）が例外を投げればテストが通ってしまうので、保護対象へのアクセスが起きていないこと（DB や API のモックが呼ばれていないこと）もあわせて検証する。より厳密に判別したい場合は DAL 内で独自エラーラッパーを設計し、呼び出し側（Server Component / Server Action）で `unauthorized()` に変換する。
+なお `unauthorized()` / `forbidden()` は experimental で、`next.config.ts` の `experimental.authInterrupts: true` が前提になる。
 
 **根拠**:
 - Next.js の `unauthorized()` / `forbidden()` が throw する Error の構造（`digest` 値や内部クラス名）は **公開 API ではなく実装詳細**であり、マイナーバージョンアップでも変わりうる
 - `rejects.toThrow(/UNAUTHORIZED/)` のようなメッセージ正規表現マッチングは将来の i18n / メッセージ変更で壊れる
-- テストの目的は「**認可で守られているか**」であって「**Next.js が何を throw したか**」ではない。前者だけ検証すれば十分
+- テストの目的は「**認可で守られているか**」であって「**Next.js が何を throw したか**」ではない。throw の有無に加えて、認可前に保護対象のデータへアクセスしていないことを検証すれば十分
 - 独自エラーラッパー（例: `AuthorizationError` クラス）を設けると、DAL の単体テストを Next.js から独立させられ、クラス判定で厳密に検証できる。トレードオフとして変換層が必要
 
 **コード例**:
@@ -345,11 +376,14 @@ beforeEach(() => vi.clearAllMocks());
 
 test('未ログインなら認可エラーを投げる', async () => {
   const { verifySession } = await import('./auth');
+  const { db } = await import('@/lib/db');
   const { getMyDraft } = await import('./post');
   vi.mocked(verifySession).mockResolvedValue(null);
 
   // unauthorized() の内部エラー型に依存せず、throw 自体だけ検証
   await expect(getMyDraft('post-1')).rejects.toThrow();
+  // 認可チェックを消しても後続の notFound() などで throw されるので、保護対象に触れていないことも確かめる
+  expect(db.post.findUnique).not.toHaveBeenCalled();
 });
 
 // Good: 独自エラーラッパー設計（DAL を Next.js から独立させたい場合）
@@ -389,9 +423,10 @@ await expect(getMyDraft('post-1')).rejects.toMatchObject({
 
 **出典**:
 - [Next.jsの考え方 / DAL のテストと特殊エラーの検証](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [Next.js Docs: unauthorized](https://nextjs.org/docs/app/api-reference/functions/unauthorized) (Next.js公式、Experimental。`experimental.authInterrupts` の有効化が必要) ※2026-10-25 確認
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
-**バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**バージョン**: Next.js 16+（`unauthorized()` / `forbidden()` は `experimental.authInterrupts: true` が前提）
+**確信度**: 中（出典は 1 冊の Zenn book のみ）
+**最終更新**: 2026-10-25

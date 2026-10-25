@@ -15,6 +15,7 @@ LTR / RTL の切り替えで自動的に反転される。
 - 論理プロパティ（`inline-start` / `inline-end`）は writing-mode に従って自動的に反転する
 - 縦書き（日本語縦組み）にも対応できる（`block-start` / `block-end` は writing-mode 依存）
 - CSS Logical Properties Level 1 は全モダンブラウザでサポート済み
+- 「今は i18n 対応が不要」と判断して物理プロパティで書くと、後から RTL 対応するときに全箇所の書き換えが必要になる。最初から論理プロパティで書く
 
 **対応表（物理 → 論理）**:
 
@@ -32,6 +33,7 @@ LTR / RTL の切り替えで自動的に反転される。
 | `text-align: right` | `text-align: end` |
 | `float: left` | `float: inline-start` |
 | `border-top-left-radius` | `border-start-start-radius` |
+| `width` / `height` | `inline-size` / `block-size` |
 
 **コード例**:
 ```css
@@ -70,14 +72,19 @@ LTR / RTL の切り替えで自動的に反転される。
 **`<html dir="rtl">` で自動反転される**:
 ```tsx
 // app/[locale]/layout.tsx
-const RTL_LOCALES = ['ar', 'he', 'fa', 'ur'];
+import { getDirection } from '@/i18n/direction';  // #2 のヘルパー（ar-EG のような地域付きロケールも判定する）
 
-export default async function LocaleLayout({ params }) {
+export default async function LocaleLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ locale: string }>;
+}) {
   const { locale } = await params;
-  const dir = RTL_LOCALES.includes(locale) ? 'rtl' : 'ltr';
 
   return (
-    <html lang={locale} dir={dir}>
+    <html lang={locale} dir={getDirection(locale)}>
       <body>{children}</body>
     </html>
   );
@@ -102,7 +109,7 @@ export default async function LocaleLayout({ params }) {
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -115,33 +122,52 @@ export default async function LocaleLayout({ params }) {
 - `<html dir>` でドキュメント全体のフローを決めるのが標準的アプローチ
 - ブラウザは `dir` に応じて scrollbar 位置・テキスト選択方向・select の dropdown 方向まで自動調整する
 - 個別の方向上書きは `<bdi>` / `<bdo>` / `dir` 属性で局所的に行える
-- `Intl.Locale` の `textInfo.direction` で BCP 47 タグから direction を取得できる
+- `Intl.Locale` の `getTextInfo().direction` で BCP 47 タグから direction を取得できる。古い実装（Chrome 129 以前、Node.js 18〜23 など）は旧形式の `textInfo` アクセサだけを持ち、Firefox 153+ などは `getTextInfo()` だけを持つので、両方を順に試す
+- 自前の一覧で判定する場合は、ロケール全体ではなく言語サブタグ（`new Intl.Locale(locale).language`）で比べる。`'ar-EG'` や `'he-IL'` を完全一致で比べると `ltr` と誤判定する
 
 **コード例**:
-```tsx
-// 標準的な実装
-const RTL_LOCALES = new Set(['ar', 'he', 'fa', 'ur', 'yi']);
+```ts
+// i18n/direction.ts
+const RTL_LANGUAGES = new Set(['ar', 'he', 'fa', 'ur', 'yi']);
 
-export default async function LocaleLayout({ children, params }) {
+type TextInfo = { direction?: 'ltr' | 'rtl' };
+// getTextInfo() は現行仕様、textInfo は旧実装のアクセサ。lib の設定によらず型が通るように両方を任意で宣言する
+type LocaleWithTextInfo = Intl.Locale & {
+  getTextInfo?: () => TextInfo;
+  textInfo?: TextInfo;
+};
+
+export function getDirection(locale: string): 'ltr' | 'rtl' {
+  try {
+    const loc: LocaleWithTextInfo = new Intl.Locale(locale);
+    const direction = (loc.getTextInfo?.() ?? loc.textInfo)?.direction;
+    if (direction) return direction;
+    // どちらもない環境では言語サブタグで判定する（ar-EG / he-IL も rtl になる）
+    return RTL_LANGUAGES.has(loc.language) ? 'rtl' : 'ltr';
+  } catch {
+    return 'ltr';  // 不正な BCP 47 タグ
+  }
+}
+```
+
+```tsx
+// app/[locale]/layout.tsx
+import { getDirection } from '@/i18n/direction';
+
+export default async function LocaleLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ locale: string }>;
+}) {
   const { locale } = await params;
-  const dir = RTL_LOCALES.has(locale) ? 'rtl' : 'ltr';
 
   return (
-    <html lang={locale} dir={dir}>
+    <html lang={locale} dir={getDirection(locale)}>
       <body>{children}</body>
     </html>
   );
-}
-
-// Intl.Locale API での判定（推奨、将来は本格活用）
-function getDirectionForLocale(locale: string): 'ltr' | 'rtl' {
-  try {
-    // @ts-expect-error — textInfo は ECMAScript 2024 提案
-    const direction = new Intl.Locale(locale).textInfo?.direction;
-    return direction ?? 'ltr';
-  } catch {
-    return 'ltr';
-  }
 }
 ```
 
@@ -199,10 +225,11 @@ test.describe('RTL layout', () => {
 - [MDN: bdi element](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/bdi) (MDN Web Docs)
 - [W3C: Internationalization - Setting the document base direction](https://www.w3.org/International/questions/qa-html-dir) (W3C i18n)
 - [TC39: Intl.Locale textInfo proposal](https://github.com/tc39/proposal-intl-locale-info) (TC39)
+- [MDN: Intl.Locale.prototype.getTextInfo()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/Locale/getTextInfo) (MDN Web Docs。browser-compat-data で `getTextInfo()` が Chrome 130 / Firefox 153 / Safari 17、旧名 `textInfo` が Chrome 99 / Node.js 18 から使えることを確認) ※2026-10-25 確認
 
-**バージョン**: HTML Living Standard
+**バージョン**: HTML Living Standard / `getTextInfo()` は Chrome 130+, Firefox 153+, Safari 17+（Baseline Newly available: 2026-07）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -222,7 +249,6 @@ test.describe('RTL layout', () => {
 - 戻る・進む: history navigation
 - インデント: list indent / outdent
 - リスト・順序: rank, ordering
-- メディアコントロール: rewind / fast-forward（**例外**: play/pause は反転しない）
 - スワイプ・スライド方向
 
 **反転しないアイコン**:
@@ -230,7 +256,7 @@ test.describe('RTL layout', () => {
 - ✓ / ✗ / +/-
 - 時計 ⏰（数字は LTR）
 - 音量 🔊
-- play / pause（メディア国際標準）
+- メディア再生コントロール: play / pause / rewind / fast-forward（読む方向ではなく再生の時間方向を表すので反転しない）
 
 **コード例（CSS で一括反転）**:
 ```css
@@ -256,7 +282,8 @@ import { ChevronLeft } from 'lucide-react';
 
 **判定ヘルパー関数**:
 ```tsx
-const directionalIcons = new Set(['arrow-back', 'arrow-forward', 'chevron-left', 'chevron-right', 'rewind', 'fast-forward']);
+// rewind / fast-forward などのメディア再生アイコンは反転しないので含めない
+const directionalIcons = new Set(['arrow-back', 'arrow-forward', 'chevron-left', 'chevron-right']);
 
 function Icon({ name, ...props }: { name: string }) {
   const className = directionalIcons.has(name) ? 'rtl:scale-x-[-1]' : '';
@@ -287,20 +314,20 @@ function Icon({ name, ...props }: { name: string }) {
 
 **バージョン**: パターン（一般原則）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
 ### 4. Tailwind の `rtl:` / `ltr:` 修飾子で方向別スタイルを書く
 
-論理プロパティでカバーできない部分（grid template / アイコンの transform 等）は Tailwind の `rtl:` / `ltr:` 修飾子で個別対応する。
+論理プロパティでカバーできない部分（アイコンの transform・アニメーション方向等）は Tailwind の `rtl:` / `ltr:` 修飾子で個別対応する。
+grid の列や flex の並びは `dir="rtl"` で自動的に反転するので、`rtl:` で入れ替えない（二重に反転する）。
 Tailwind v3 から RTL モディファイアが標準サポート。
 
 **根拠**:
 - 論理プロパティは margin / padding / border / text-align 等の「方向対応のあるプロパティ」だけ自動反転する
-- transform / grid-template-columns / animation 等は手動で RTL 別スタイルが必要
+- transform / animation 等は手動で RTL 別スタイルが必要。一方で grid の列（`grid-template-columns` の並び）や flex の並びはインライン方向に従うので、RTL では自動的に右から並ぶ
 - `rtl:` 修飾子は `dark:` と同様にプレフィックスで適用、保守性が高い
-- Tailwind 設定で `darkMode: 'class'` ではなく `dir-based` で動かす
 
 **Tailwind 設定**:
 ```ts
@@ -317,10 +344,16 @@ const config: Config = {
 
 **実装例**:
 ```tsx
-// アイコンの反転
-<svg className="rtl:scale-x-[-1] rtl:rotate-180">...</svg>
+// アイコンの反転（水平反転だけ。rtl:rotate-180 と組み合わせると左右ではなく上下の反転になる）
+<svg className="rtl:scale-x-[-1]">...</svg>
 
-// 異なる Grid レイアウト
+// Grid レイアウト: 列定義はそのままでよい（RTL では Sidebar が右、MainContent が左に来る）
+<div className="grid grid-cols-[200px_1fr]">
+  <Sidebar />
+  <MainContent />
+</div>
+
+// Bad: rtl:grid-cols-[1fr_200px] で入れ替えると、自動の反転と二重になり MainContent が 200px になる
 <div className="grid grid-cols-[200px_1fr] rtl:grid-cols-[1fr_200px]">
   <Sidebar />
   <MainContent />
@@ -342,9 +375,9 @@ const config: Config = {
   ...
 </button>
 
-// アイコン + テキストの順序（gap も反転対応）
+// アイコン + テキストの順序: flex も RTL で自動的に反転するので rtl:order-* は付けない（gap も反転対応）
 <div className="flex items-center gap-2">
-  <Icon className="rtl:order-2" />
+  <Icon />
   <span>ラベル</span>
 </div>
 ```
@@ -417,4 +450,4 @@ test('RTL: arrow icon is mirrored', () => {
 
 **バージョン**: Tailwind CSS 3.3+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

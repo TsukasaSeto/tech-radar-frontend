@@ -70,19 +70,39 @@ export default async function LocaleLayout({
 ```
 
 **`<head>` への `hreflang` 注入**:
-```tsx
-export async function generateMetadata({ params }): Promise<Metadata> {
-  const { locale } = await params;
+
+canonical と `languages` はページごとに、パスを含めて作る。locale の layout に固定の URL で置くと、`/ja/about` や記事ページなど子ページすべての canonical がロケールのトップになってしまう。
+
+```ts
+// i18n/alternates.ts
+import type { Metadata } from 'next';
+
+const BASE_URL = 'https://example.com';
+const locales = ['ja', 'en'] as const;
+
+export function localeAlternates(locale: string, path: string): Metadata['alternates'] {
   return {
-    alternates: {
-      canonical: `https://example.com/${locale}`,
-      languages: {
-        'ja': 'https://example.com/ja',
-        'en': 'https://example.com/en',
-        'x-default': 'https://example.com/en',
-      },
+    canonical: `${BASE_URL}/${locale}${path}`,
+    languages: {
+      ...Object.fromEntries(locales.map((l) => [l, `${BASE_URL}/${l}${path}`])),
+      'x-default': `${BASE_URL}/en${path}`,
     },
   };
+}
+```
+
+```tsx
+// app/[locale]/about/page.tsx
+import type { Metadata } from 'next';
+import { localeAlternates } from '@/i18n/alternates';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  return { alternates: localeAlternates(locale, '/about') };
 }
 ```
 
@@ -91,26 +111,27 @@ export async function generateMetadata({ params }): Promise<Metadata> {
 - [Google: Locale-aware crawling](https://developers.google.com/search/docs/specialty/international/managing-multi-regional-sites) (Google Search Central)
 - [web.dev: Tell Google about localized versions of your page](https://web.dev/articles/hreflang) (web.dev)
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 15+（`params` が Promise。v14 以前は同期オブジェクトで、`await` せずに読む）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
-### 2. Middleware で Accept-Language を検出し、未指定なら正規 URL にリダイレクトする
+### 2. Proxy（v15 以前は Middleware）で Accept-Language を検出し、未指定なら正規 URL にリダイレクトする
 
-`middleware.ts` で `/` 等のロケールなし URL を `Accept-Language` 解析でリダイレクトする。
-`/en/...` のような有効ロケールはそのまま通過させる。
+Next.js 16 以降は `proxy.ts`（`export function proxy`）、v15 以前は `middleware.ts`（`export function middleware`）で、`/` 等のロケールなし URL を `Accept-Language` 解析でリダイレクトする。
+`/en/...` のような有効ロケールはそのまま通過させる。next-intl を使う場合は自前で書かず `createMiddleware`（#3）に任せる。
 
 **根拠**:
 - Accept-Language ヘッダーはブラウザの言語設定をサーバーが知る標準的手段
 - 初回訪問時に「正しい言語にリダイレクト」+「明示パスでブックマーク可能」の両立
 - BCP 47 形式のパースは `@formatjs/intl-localematcher` 等のライブラリに任せる
-- `middleware` でリダイレクトすれば Server Component 側の処理は単純化できる
+- Proxy でリダイレクトすれば Server Component 側の処理は単純化できる
+- Proxy は Next.js 16 で Middleware から改名された（ファイル名と関数名が変わる。codemod: `npx @next/codemod@canary middleware-to-proxy .`）。Proxy は Node.js ランタイム固定で、`runtime` を書くとエラーになる
 
-**Middleware の実装**:
+**Proxy の実装**:
 ```ts
-// middleware.ts
+// proxy.ts（Next.js 16+。v15 以前はファイル名を middleware.ts、関数名を middleware にする）
 import { NextRequest, NextResponse } from 'next/server';
 import Negotiator from 'negotiator';
 import { match as matchLocale } from '@formatjs/intl-localematcher';
@@ -130,7 +151,7 @@ function detectLocale(request: NextRequest): string {
   }
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
   // すでにロケール付きならスキップ
@@ -152,8 +173,10 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // _next/static, _next/image, api, favicon は除外
-    '/((?!api|_next|favicon.ico|sitemap.xml|robots.txt).*)',
+    // api / _next / _vercel と、拡張子付きのパス（public の画像・favicon.ico・sitemap.xml 等）を除外する。
+    // 静的ファイルまで /ja/logo.svg にリダイレクトされて 404 になるのを防ぐ。
+    // /users/jane.doe のようにドットを含むページがある場合は、そのパスを別途 matcher に足す
+    '/((?!api|_next|_vercel|.*\\..*).*)',
   ],
 };
 ```
@@ -193,8 +216,8 @@ function LanguageSwitcher({ current }: { current: string }) {
 - 静的ファイル（画像・OGP）を matcher に含めてリダイレクト → 不要な処理
 - `301`（permanent）でリダイレクト → ユーザーが言語切替しても古いリダイレクトがキャッシュされる
 
-**例外: `output: 'export'`（静的エクスポート）では Middleware が動作しない**:
-静的エクスポートにはサーバーが存在しないため、Middleware による `Accept-Language` 検出・リダイレクトは使えない。ロケール判定を完全に URL パスへ寄せ、`generateStaticParams()` で全ロケール × 全ルートを事前レンダリングする設計に切り替える。
+**例外: `output: 'export'`（静的エクスポート）では Proxy（Middleware）が動作しない**:
+静的エクスポートにはサーバーが存在しないため、Proxy による `Accept-Language` 検出・リダイレクトは使えない。ロケール判定を完全に URL パスへ寄せ、`generateStaticParams()` で全ロケール × 全ルートを事前レンダリングする設計に切り替える。
 
 ```ts
 // routing.ts（サーバーなし・パスのみでロケールを決定）
@@ -210,13 +233,15 @@ export function generateStaticParams() {
 
 **出典**:
 - [Next.js Docs: Internationalization - Routing](https://nextjs.org/docs/app/building-your-application/routing/internationalization#routing-overview) (Next.js 公式)
+- [Next.js Docs: proxy.js](https://nextjs.org/docs/app/api-reference/file-conventions/proxy) (Next.js 公式、v16 での Middleware → Proxy の改名、`export function proxy`、Node.js ランタイム固定、matcher の書き方) ※2026-10-25 確認
+- [next-intl: Proxy / middleware](https://next-intl.dev/docs/routing/middleware) (next-intl 公式、推奨 matcher `'/((?!api|trpc|_next|_vercel|.*\\..*).*)'` とドットを含むパスの扱い) ※2026-10-25 確認
 - [@formatjs/intl-localematcher](https://formatjs.io/docs/polyfills/intl-localematcher/) (FormatJS)
 - [BCP 47](https://www.rfc-editor.org/info/bcp47) (IETF)
 - [Eight locales and no server: internationalizing a static Next.js site](https://dev.to/coolnico/eight-locales-and-no-server-internationalizing-a-static-nextjs-site-54jh) (dev.to、`output: 'export'` 配下で Middleware が使えない例外の実装パターン) ※2026-08-15に実際にfetch成功
 
-**バージョン**: Next.js 13+（`output: 'export'` の例外込みで Next.js 15 で検証）
+**バージョン**: Next.js 16+（`proxy.ts`）/ v15 以前は `middleware.ts`（`output: 'export'` の例外は Next.js 15 で検証）
 **確信度**: 高
-**最終更新**: 2026-08-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -228,7 +253,9 @@ ICU MessageFormat サポート・型安全・Server Component 統合の 3 点で
 **根拠**:
 - `next-intl` は App Router を最初から想定して設計されている（Server Component / Client Component 両対応）
 - ICU MessageFormat（複数形・性別・選択）を標準サポート
-- TypeScript 型生成でメッセージキーを型レベルで強制できる
+- `declare module 'next-intl'` の `AppConfig` を拡張すると、メッセージキーを型レベルで強制できる（設定は `practices/i18n/message-catalog.md` #4 を参照）
+- `createNavigation()` が返す `Link` / `redirect` / `useRouter` / `usePathname` はロケールを自動で付与するので、`next/navigation` を直接使うより実装でロケールを意識せずに済む
+- ロケールの検出・リダイレクトは `createMiddleware(routing)` を `proxy.ts`（v15 以前は `middleware.ts`）から default export するだけで済む
 - `react-i18next` / `react-intl` も使えるが、App Router 統合は `next-intl` が最も滑らか
 
 **ライブラリ比較**:
@@ -245,6 +272,53 @@ ICU MessageFormat サポート・型安全・Server Component 統合の 3 点で
 ```bash
 pnpm add next-intl
 ```
+
+```ts
+// i18n/routing.ts
+import { defineRouting } from 'next-intl/routing';
+
+export const routing = defineRouting({
+  locales: ['ja', 'en'],
+  defaultLocale: 'ja',
+});
+```
+
+```ts
+// proxy.ts（Next.js 16+。v15 以前は middleware.ts。どちらも default export でよい）
+import createMiddleware from 'next-intl/middleware';
+import { routing } from './i18n/routing';
+
+export default createMiddleware(routing);
+
+export const config = {
+  // api / _next / _vercel と、拡張子付きのパス（静的ファイル）を除外する
+  matcher: '/((?!api|trpc|_next|_vercel|.*\\..*).*)',
+};
+```
+
+```ts
+// i18n/navigation.ts
+import { createNavigation } from 'next-intl/navigation';
+import { routing } from './routing';
+
+// next/navigation の代わりにこちらを使う（ロケールとローカライズ済みのパスを自動付与）
+export const { Link, redirect, usePathname, useRouter, getPathname } = createNavigation(routing);
+```
+
+```ts
+// global.ts - メッセージキーとロケールの型安全化（next-intl 4 の AppConfig。3 系の IntlMessages ではない）
+import { routing } from './i18n/routing';
+import messages from './i18n/messages/ja.json';  // 基準にするロケールの JSON を default import する
+
+declare module 'next-intl' {
+  interface AppConfig {
+    Locale: (typeof routing.locales)[number];
+    Messages: typeof messages;
+  }
+}
+```
+
+型安全化の詳細（next-intl 3 系での書き方、未使用キーの検出）は `practices/i18n/message-catalog.md` #4 を参照。
 
 ```ts
 // i18n/request.ts
@@ -329,14 +403,17 @@ export default async function LocaleLayout({ children, params }) {
 - 翻訳作業を翻訳者に外注、CAT ツール統合重視 → FormatJS（広く採用）
 
 **出典**:
-- [next-intl Docs](https://next-intl-docs.vercel.app/) (next-intl)
+- [next-intl Docs](https://next-intl.dev/) (next-intl)
+- [next-intl: Proxy / middleware](https://next-intl.dev/docs/routing/middleware) (next-intl 公式、`proxy.ts` は Next.js 16 より前は `middleware.ts` だったこと、`createMiddleware(routing)` の default export) ※2026-10-25 確認
+- [next-intl: Navigation APIs](https://next-intl.dev/docs/routing/navigation) (next-intl 公式、`createNavigation(routing)` が返す `Link` / `redirect` / `usePathname` / `useRouter` / `getPathname`) ※2026-10-25 確認
+- [next-intl: TypeScript augmentation](https://next-intl.dev/docs/workflows/typescript) (next-intl 公式、`declare module 'next-intl'` の `AppConfig` に `Locale` / `Messages` を宣言する) ※2026-10-25 確認
 - [react-i18next](https://react.i18next.com/) (i18next)
 - [FormatJS](https://formatjs.io/) (FormatJS)
 - [paraglide-js](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) (inlang)
 
-**バージョン**: next-intl 3+, Next.js 13+
+**バージョン**: next-intl 4+, Next.js 15+（`proxy.ts` は Next.js 16+）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -367,7 +444,7 @@ export default async function LocaleLayout({ children, params }) {
 /ja/about    ← 非デフォルト
 ```
 - **メリット**: 既存サイトの URL を維持しやすい、デフォルトロケールの URL が短い
-- **デメリット**: hreflang の `x-default` 指定が必須、URL 構造が非対称
+- **デメリット**: hreflang に `x-default` を付けておくことが推奨される（Google のガイドでは必須ではない）、URL 構造が非対称
 
 #### パターン C: ドメイン分離
 ```
@@ -398,18 +475,22 @@ export const routing = defineRouting({
 ```
 
 **hreflang の設定（パターン A）**:
+
+canonical と `languages` は #1 の `localeAlternates` でページごとに作る（`x-default` は、検索エンジンがどのロケールにも該当しないユーザーに出す URL）。
+
 ```tsx
-export async function generateMetadata({ params }): Promise<Metadata> {
-  return {
-    alternates: {
-      canonical: `https://example.com/${locale}`,
-      languages: {
-        'en': 'https://example.com/en',
-        'ja': 'https://example.com/ja',
-        'x-default': 'https://example.com/en',  // 検索エンジンが「どれにも該当しない」時に使う
-      },
-    },
-  };
+// app/[locale]/about/page.tsx
+import type { Metadata } from 'next';
+import { localeAlternates } from '@/i18n/alternates';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ locale: string }>;
+}): Promise<Metadata> {
+  const { locale } = await params;
+  // → canonical: https://example.com/{locale}/about、languages: ja / en / x-default（/en/about）
+  return { alternates: localeAlternates(locale, '/about') };
 }
 ```
 
@@ -422,6 +503,6 @@ export async function generateMetadata({ params }): Promise<Metadata> {
 - [Google: URL structures for multilingual sites](https://developers.google.com/search/docs/specialty/international/managing-multi-regional-sites#url-structures) (Google Search Central)
 - [next-intl: Routing](https://next-intl-docs.vercel.app/docs/routing) (next-intl)
 
-**バージョン**: Next.js 13+, next-intl 3+
+**バージョン**: Next.js 15+, next-intl 4+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

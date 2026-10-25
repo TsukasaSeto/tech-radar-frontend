@@ -7,7 +7,7 @@ Web フォントは LCP・CLS の主要な悪化要因の 1 つ。フォーマ�
 ### 1. Web フォントは `font-display: swap` または `optional` で FOIT を回避する
 
 `@font-face` には必ず `font-display` を設定する。
-ブロッキング動作（`block`）はデフォルトであり、フォント読み込み中にテキストが表示されない（FOIT: Flash of Invisible Text）状態を引き起こす。
+初期値は `auto`（表示戦略は UA 任せで、多くのブラウザでは `block` 相当）で、フォント読み込み中にテキストが表示されない（FOIT: Flash of Invisible Text）状態を引き起こす。
 
 **根拠**:
 - `block` はおよそ 3 秒間テキストを非表示にする。LCP が大きく悪化する
@@ -17,7 +17,7 @@ Web フォントは LCP・CLS の主要な悪化要因の 1 つ。フォーマ�
 
 **コード例**:
 ```css
-/* Bad: font-display なし → デフォルトの block 動作で FOIT */
+/* Bad: font-display なし → 初期値 auto（多くのブラウザで block 相当）で FOIT */
 @font-face {
   font-family: 'CustomFont';
   src: url('/fonts/custom.woff2') format('woff2');
@@ -74,7 +74,7 @@ const notoSansJP = Noto_Sans_JP({
 
 **バージョン**: CSS Fonts Module Level 4 / すべてのモダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -164,6 +164,7 @@ Web フォントとフォールバックフォントは字幅・行高が異な�
 - フォールバックフォントを「Web フォントの形に近づけて」表示することで差し替え時の位置ずれをゼロに近づけられる
 - Next.js の `next/font` は `adjustFontFallback` で自動的にこの計算を行う
 - 手動計算は [Fontaine](https://github.com/unjs/fontaine) や [Capsize](https://seek-oss.github.io/capsize/) で支援できる
+- Safari は `size-adjust` には 17 から対応しているが、`ascent-override` / `descent-override` / `line-gap-override` には未対応（2026-10 時点）。Safari では縦方向の補正が効かないので、効果は幅の調整に限られる
 
 **コード例**:
 ```css
@@ -222,10 +223,11 @@ const { fontFamily, fontFaces } = createFontStack([inter, arial]);
 - [MDN: ascent-override](https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/ascent-override) (MDN Web Docs)
 - [web.dev: Improved font fallbacks](https://developer.chrome.com/blog/font-fallbacks) (Chrome for Developers)
 - [Capsize](https://seek-oss.github.io/capsize/) (SEEK OSS)
+- [MDN browser-compat-data: css/at-rules/font-face.json](https://github.com/mdn/browser-compat-data/blob/main/css/at-rules/font-face.json) (MDN、`size-adjust` は Chrome 92 / Firefox 92 / Safari 17、override 系は Chrome 87 / Firefox 89 で Safari は未対応) ※2026-10-25 確認
 
-**バージョン**: Chrome 87+ (`size-adjust`), Firefox 89+, Safari 17+
+**バージョン**: `size-adjust` は Chrome 92+ / Firefox 92+ / Safari 17+、`ascent-override` / `descent-override` / `line-gap-override` は Chrome 87+ / Firefox 89+（Safari 未対応）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 

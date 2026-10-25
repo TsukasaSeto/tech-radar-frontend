@@ -53,6 +53,7 @@ function ParentComponent() {
 type FormState =
   | { status: 'idle'; name: string; email: string }
   | { status: 'submitting'; name: string; email: string }
+  | { status: 'success'; name: string; email: string }
   | { status: 'error'; name: string; email: string; error: Error };
 
 type FormAction =
@@ -64,13 +65,20 @@ type FormAction =
 function formReducer(state: FormState, action: FormAction): FormState {
   switch (action.type) {
     case 'SET_FIELD':
-      return { ...state, [action.field]: action.value };
+      return action.field === 'name'
+        ? { ...state, name: action.value }
+        : { ...state, email: action.value };
     case 'SUBMIT':
-      return { ...state, status: 'submitting' };
+      return { status: 'submitting', name: state.name, email: state.email };
+    case 'SUBMIT_SUCCESS':
+      return { status: 'success', name: state.name, email: state.email };
     case 'SUBMIT_ERROR':
-      return { ...state, status: 'error', error: action.error };
-    default:
-      return state;
+      return { status: 'error', name: state.name, email: state.email, error: action.error };
+    default: {
+      // action の case を書き忘れると、ここが型エラーになる
+      const unhandled: never = action;
+      return unhandled;
+    }
   }
 }
 ```
@@ -99,7 +107,7 @@ const handleUndo = () => setPitches(pitches.slice(0, -1));
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-10-25
 
 ---
 
@@ -114,24 +122,26 @@ const handleUndo = () => setPitches(pitches.slice(0, -1));
 
 **コード例**:
 ```tsx
-// app/todos/page.tsx
-export default function TodosPage({
+// app/todos/page.tsx — Next.js 15 以降の searchParams は Promise
+export default async function TodosPage({
   searchParams,
 }: {
-  searchParams: { filter?: string; page?: string };
+  searchParams: Promise<{ filter?: string; page?: string }>;
 }) {
-  const filter = searchParams.filter ?? 'all';
-  const page = Number(searchParams.page ?? 1);
-  return <TodoList filter={filter} page={page} />;
+  const { filter = 'all', page = '1' } = await searchParams;
+  return <TodoList filter={filter} page={Number(page)} />;
 }
 ```
 
+Client Component で読む場合は `useSearchParams()`（`next/navigation`）を使う。Next.js 14 以前は `searchParams` が同期オブジェクトで、15 では一時的な互換として同期アクセスも動いたが、16 で同期アクセスは削除された。
+
 **出典**:
 - [React Docs: You Might Not Need an Effect](https://react.dev/learn/you-might-not-need-an-effect) (React公式)
+- [Next.js Docs: How to upgrade to version 16 — Async Request APIs](https://nextjs.org/docs/app/guides/upgrading/version-16#async-request-apis-breaking-change) (Next.js公式、v16 で `params` / `searchParams` の同期アクセスが削除された) ※2026-10-25 確認
 
-**バージョン**: React 18+, Next.js 14+
+**バージョン**: React 18+, Next.js 15+（`searchParams` は Promise。v16 で同期アクセスは削除）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -176,7 +186,7 @@ function UserProfile({ userId }: { userId: string }) {
 
 **判断軸の優先順位**:
 
-1. **URL に乗せられるか？** → 乗せる（[Rule 5 の URL State 参照](../react/suspense.md)）
+1. **URL に乗せられるか？** → 乗せる（[Rule 3 の URL State 参照](#3-url-を状態として使うurl-state)）
 2. **サーバー由来か？** → TanStack Query / SWR で扱う
 3. **コンポーネントツリーで共有が必要か？** → No なら `useState`
 4. **変更頻度が低く、Provider 1 つで済むか？** → Context
@@ -199,7 +209,7 @@ const UserContext = createContext<User | null>(null);
 const ThemeContext = createContext<Theme>('light');
 const CartContext = createContext<Cart>(emptyCart);
 
-// Good: state と setState を別 Context にして「読むだけ」のコンポーネントを再レンダリングから守る
+// Good: state と dispatch を別 Context にして、dispatch だけを使う（更新操作だけを行う）コンポーネントを state 変化による再レンダリングから守る
 const CartStateContext = createContext<Cart>(emptyCart);
 const CartDispatchContext = createContext<Dispatch<CartAction>>(() => {});
 ```
@@ -228,7 +238,7 @@ const CartDispatchContext = createContext<Dispatch<CartAction>>(() => {});
 
 **バージョン**: React 18+, TanStack Query v5+, Zustand v4+, Jotai v2+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -252,7 +262,7 @@ You Might Not Need an Effect では「URL を状態として持つ」「store id
 **根拠**:
 - `state.docs?.ids || []` は `docs` が `undefined` のとき毎回 `[]` を新規生成する。`[] === []` は `false` のため `shallowEqual` は参照が変化したと判定し再レンダリングが走る
 - `shallowEqual` はオブジェクト内のプロパティを比較するが、プロパティの値が新規 `[]` インスタンスの場合は参照が異なると判定される
-- `createSelector` は入力セレクタの出力が変化しない限り前回の返り値（同じ参照）を返す。これにより「配列の中身が同じなら再レンダリングしない」が保証される
+- `createSelector` は入力セレクタの結果がすべて前回と `===` で等しい限り、前回の返り値（同じ参照）を返す。保証されるのは「入力の参照が変わらなければ出力の参照も変わらない」ことまでで、入力の参照が変われば中身が同じでも新しい配列が返る
 - Redux Toolkit に同梱の `createSelector`（Reselect v5）は双方向メモ化に対応
 
 **コード例**:
@@ -288,13 +298,17 @@ const docIds = useSelector(getActiveDocIds);
 
 **アンチパターン**:
 - `useSelector` で `|| []` を使いながら `shallowEqual` で最適化しようとする（根本解決にならない）
-- 親コンポーネントで `createSelector` のインスタンスを子コンポーネントと共有する（各コンポーネントは自分のメモ化インスタンスを持つべき）
+- Reselect 4 以前（`lruMemoize`、キャッシュサイズ 1）で、引数付きセレクタ（`(state, id) => ...`）の 1 つのインスタンスを複数のコンポーネントから別々の引数で呼ぶ（互いの結果を追い出し合う）。Reselect 5 の既定 `weakMapMemoize` は引数ごとにキャッシュを持つので共有してよい。コンポーネントごとにインスタンスが要るのは、小さなキャッシュの `lruMemoize` を選んだ場合や、アンマウント時にキャッシュを手放したい場合（`useMemo(makeSelector, [])`）
 - `createSelector` を使わずに `useMemo` で代替する（`useMemo` はコンポーネント再レンダリング時に評価されるため不完全）
 
 **出典引用**:
 > "プロパティ `ary` の値を `===` で比較するとき、それぞれの `[]` は別のインスタンスであるため参照が異なると判定される"
 > ([useSelector で配列を返すとき shallowEqual では不十分なケースがある](https://tech.smarthr.jp/entry/2026/05/20/190738), セクション "shallowEqual の限界") ※2026-05-21に実際にfetch成功
 
+**出典**:
+- [useSelector で配列を返すとき shallowEqual では不十分なケースがある](https://tech.smarthr.jp/entry/2026/05/20/190738) (SmartHR Tech Blog、`|| []` フォールバックと shallowEqual の限界) ※2026-05-21 fetch
+- [Redux Docs: Deriving Data with Selectors](https://redux.js.org/usage/deriving-data-selectors) (Redux公式、`createSelector` のメモ化条件と、Reselect 5 の `weakMapMemoize` ではセレクタを共有してよいこと) ※2026-10-25 確認
+
 **バージョン**: Redux Toolkit v2+（Reselect v5 同梱）, React-Redux v8+
 **確信度**: 高
-**最終更新**: 2026-05-21
+**最終更新**: 2026-10-25

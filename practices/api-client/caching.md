@@ -51,7 +51,12 @@ export function Providers({ children }: { children: React.ReactNode }) {
 // SWR（推奨: シンプルなユースケース）
 import useSWR from 'swr';
 
-const fetcher = (url: string) => fetch(url).then(r => r.json());
+// SWR は fetcher が throw したときだけ error に入れる。fetch は 4xx / 5xx で reject しないので自分で throw する
+const fetcher = async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+};
 
 function useUser(id: string) {
   const { data, error, isLoading } = useSWR<User>(
@@ -69,10 +74,12 @@ function useUser(id: string) {
 **出典**:
 - [TanStack Query Docs](https://tanstack.com/query/latest/docs/framework/react/overview) (TanStack公式)
 - [SWR Docs](https://swr.vercel.app/docs/getting-started) (Vercel公式)
+- [SWR Docs: Error Handling](https://swr.vercel.app/docs/error-handling) (Vercel公式、fetcher 内で throw したエラーが `error` として返る) ※2026-10-25 確認
+- [TanStack Query: Important Defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults) (TanStack公式、inactive なクエリは既定 5 分で GC される) ※2026-10-25 確認
 
 **バージョン**: TanStack Query 5+, SWR 2+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -135,7 +142,7 @@ const { data: inventory } = useQuery({
 const { data: prefectures } = useQuery({
   queryKey: ['prefectures'],
   queryFn: fetchPrefectures,
-  staleTime: Infinity,  // 絶対にリフェッチしない
+  staleTime: Infinity,  // 自動ではリフェッチしない（invalidateQueries を呼べば再取得される）
   gcTime: Infinity,     // メモリに永続
 });
 ```
@@ -143,10 +150,11 @@ const { data: prefectures } = useQuery({
 **出典**:
 - [TanStack Query: Important Defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults) (TanStack公式)
 - [TanStack Query: Caching](https://tanstack.com/query/latest/docs/framework/react/guides/caching) (TanStack公式)
+- [TanStack Query: Important Defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults) (TanStack公式、`staleTime: Infinity` のクエリも `invalidateQueries()` で無効化できる) ※2026-10-25 確認
 
 **バージョン**: TanStack Query 5+（注: v4 では `cacheTime`、v5 では `gcTime`）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -160,10 +168,11 @@ const { data: prefectures } = useQuery({
 - ファクトリ関数で型安全にクエリキーを生成できる
 - `queryClient.invalidateQueries` での無効化範囲を正確に制御できる
 - キー構造の変更が1箇所に集約される
+- ファクトリは機能（REST ならリソース）ごとに 1 つ作り、その機能のクエリの近くに置く。全キーを 1 つのグローバルなファイルにまとめる必要はない（REST での階層のそろえ方は `practices/api-client/rest.md` #6）
 
 **コード例**:
 ```ts
-// lib/query-keys.ts
+// features/users/query-keys.ts（機能ごとに 1 つ）
 export const userKeys = {
   all: ['users'] as const,
   lists: () => [...userKeys.all, 'list'] as const,
@@ -196,10 +205,11 @@ useQuery({ queryKey: ['user', id] });  // どこかで ['users', id] と書い�
 
 **出典**:
 - [TanStack Query: Query Keys](https://tanstack.com/query/latest/docs/framework/react/guides/query-keys) (TanStack公式)
+- [Effective React Query Keys](https://tkdodo.eu/blog/effective-react-query-keys) (TkDodo's Blog、TanStack Query のメンテナー。「one Query Key factory per feature」とキーをクエリの近くに置く方針) ※2026-10-25 確認
 
 **バージョン**: TanStack Query 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -213,18 +223,36 @@ useQuery({ queryKey: ['user', id] });  // どこかで ['users', id] と書い�
 - ネットワーク遅延をユーザーが体感しにくくなる
 - エラー時のロールバックで一貫性を保つ
 - TanStack Query の `onMutate` / `onError` / `onSettled` で実装できる
+  - `onMutate`: 先に `cancelQueries` で進行中の再フェッチを止め（古いレスポンスが楽観的更新を上書きしないように）、現在のキャッシュをスナップショットしてから先行更新し、スナップショットを返す
+  - `onError`: `onMutate` が返したスナップショットでロールバックする
+  - `onSettled`: 成功・失敗に関わらず実行されるので、ここで `invalidateQueries` してサーバーの値に合わせる
+- `mutationFn` は失敗時に必ず reject させる。openapi-fetch は 4xx / 5xx でも reject しないので、`error` を throw に変換する（`practices/api-client/rest.md` #3）。変換しないと `onError` のロールバックが走らない
+- 楽観的な結果を表示する場所が 1 か所だけなら、キャッシュを書き換えずに `useMutation` が返す `variables` を描画する方法のほうが単純で、ロールバックも要らない。画面の複数箇所に反映する場合はキャッシュを書き換える
 
 **コード例**:
 ```tsx
+// features/todos/components/TodoItem.tsx
+'use client';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiClient } from '@/lib/api-client';
+import { ApiError } from '@/lib/api-error';
+import { showErrorToast } from '@/lib/toast';
+import type { Todo } from '@/features/todos/types';
+
 // TanStack Query での楽観的更新
-function TodoItem({ todo }: { todo: Todo }) {
+export function TodoItem({ todo }: { todo: Todo }) {
   const queryClient = useQueryClient();
 
   const { mutate: toggleTodo } = useMutation({
-    mutationFn: (id: string) => apiClient.PATCH('/todos/{id}', {
-      params: { path: { id } },
-      body: { completed: !todo.completed },
-    }),
+    mutationFn: async (id: string) => {
+      const { data, error, response } = await apiClient.PATCH('/todos/{id}', {
+        params: { path: { id } },
+        body: { completed: !todo.completed },
+      });
+      // openapi-fetch は 4xx / 5xx でも reject しないので、throw しないと onError が走らない
+      if (error) throw new ApiError(response.status, 'TODO_UPDATE_FAILED', `HTTP ${response.status}`);
+      return data;
+    },
 
     onMutate: async (id) => {
       // 進行中のクエリをキャンセル（競合を防ぐ）
@@ -242,9 +270,9 @@ function TodoItem({ todo }: { todo: Todo }) {
       return { previousTodos };
     },
 
-    onError: (err, id, context) => {
+    onError: (_err, _id, onMutateResult) => {
       // エラー時にスナップショットに戻す
-      queryClient.setQueryData(['todos'], context?.previousTodos);
+      queryClient.setQueryData(['todos'], onMutateResult?.previousTodos);
       showErrorToast('更新に失敗しました');
     },
 
@@ -263,11 +291,12 @@ function TodoItem({ todo }: { todo: Todo }) {
 ```
 
 **出典**:
-- [TanStack Query: Optimistic Updates](https://tanstack.com/query/latest/docs/framework/react/guides/optimistic-updates) (TanStack公式)
+- [TanStack Query: Optimistic Updates](https://tanstack.com/query/latest/docs/framework/react/guides/optimistic-updates) (TanStack公式、キャッシュを書き換える方法と `variables` で UI を更新する方法の使い分け・各コールバックの引数) ※2026-10-25 確認
+- [openapi-fetch Docs](https://openapi-ts.dev/openapi-fetch/) (openapi-ts.dev、`error` は 4xx / 5xx のときに返り値として入る) ※2026-10-25 確認
 
 **バージョン**: TanStack Query 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -350,7 +379,7 @@ function PostList() {
 新たに以下の記事でTanStack Query v5の重要な変更点が示された:
 - [TanStack Query実践パターン ： キャッシュ・楽観的更新・無限スクロール](https://zenn.dev/correlate_dev/articles/react-query-patterns) (Zenn correlate_dev / 2026) ※2026-05-06に実際にfetch成功
 
-TanStack Query v5 の破壊的変更: `useQuery` の `suspense: true` オプションが廃止され、`useSuspenseQuery` フックが正式な Suspense 統合手段になった。`useSuspenseQuery` を使うとローディング/エラー状態の管理が `<Suspense>` と `<ErrorBoundary>` に委譲され、コンポーネント内でのステータスチェックが不要になる。また `useInfiniteQuery` v5 では `initialPageParam` が必須になった（v4 からの破壊的変更）。gcTime は staleTime の約2倍を目安に設定すると、stale中のキャッシュが消える問題を防ぐ。
+TanStack Query v5 の破壊的変更: `useQuery` の `suspense: true` オプションが廃止され、`useSuspenseQuery` フックが正式な Suspense 統合手段になった。`useSuspenseQuery` を使うとローディング/エラー状態の管理が `<Suspense>` と `<ErrorBoundary>` に委譲され、コンポーネント内でのステータスチェックが不要になる。また `useInfiniteQuery` v5 では `initialPageParam` が必須になった（v4 からの破壊的変更）。gcTime は、どのコンポーネントからも使われなくなった（inactive な）クエリをキャッシュに残す時間で、既定は 5 分。使用中のクエリは stale になっても gcTime では消えないので、staleTime との比率で決めるものではない。
 
 **確信度**: 既存（高）→ 高（v5破壊的変更を実例で確認）
 

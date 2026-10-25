@@ -11,7 +11,7 @@
 - `strict: true` は `noImplicitAny`, `strictNullChecks`, `strictFunctionTypes` などを一括有効化
 - null 参照エラー、暗黙の `any` など実行時バグの大多数を型チェックで防げる
 - TypeScript を使う最大のメリットを享受できる
-- TypeScript 6 では `strict: true` がデフォルト値になる予定（TSKaigi 2026 基調講演 Jake Bailey）。新規プロジェクトでは明示的に書かなくてもよくなるが、**既存プロジェクトでは明示的に記述してチームへの意図を示すことを推奨**
+- TypeScript 6.0 で `strict` の既定値が `true` になった（7.0 も同じ）。`strict` を書いていない既存プロジェクトは 6.0 に上げた時点で全 strict 系フラグが有効になるので、以前の挙動に頼っていたなら `"strict": false` を明示する必要がある。既定値に頼らず `"strict": true` を明示して、チームへの意図を示すことを推奨
 
 **コード例**:
 ```json
@@ -37,14 +37,15 @@ user.name; // strictNullChecks: null かもしれないのにアクセスでき�
 
 **出典**:
 - [TypeScript tsconfig reference: strict](https://www.typescriptlang.org/tsconfig#strict) (TypeScript公式)
+- [TypeScript 6.0 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html) (TypeScript公式、`strict` を含む既定値の変更) ※2026-10-25 確認
 - [Jake Bailey さんの TypeScript ネイティブ移植基調講演をまとめた](https://zenn.dev/nishiken_zenn/articles/jake-bailey-keynote-at-tskaigi-2026) (Zenn、TypeScript 6 での strict デフォルト化・レガシー機能削除) ※2026-05-29に実際にfetch成功
 
 > "We wanted to change the behavior not at all and move the code to a new language"
 > ([Jake Bailey さんの TypeScript ネイティブ移植基調講演をまとめた](https://zenn.dev/nishiken_zenn/articles/jake-bailey-keynote-at-tskaigi-2026), セクション "Language Selection") ※2026-05-29に実際にfetch成功
 
-**バージョン**: TypeScript 2.3+ / TypeScript 6 でデフォルト化予定
-**確信度**: 高（公式tsconfig参照）/ TypeScript 6 の件は 中（コミュニティ基調講演まとめ）
-**最終更新**: 2026-05-29
+**バージョン**: TypeScript 2.3+ / TypeScript 6.0 で既定値が `true` に変更
+**確信度**: 高
+**最終更新**: 2026-10-25
 
 ---
 
@@ -144,7 +145,7 @@ const config: Config = { theme: 'dark' }; // OK
 ### 4. `paths` エイリアスで絶対インポートを整理し、`baseUrl` の非推奨化（TS 6.0）に対応する
 
 相対パスの深いインポート（`../../../components/Button`）を避けるため、`paths` でエイリアスを設定する。
-`baseUrl` は TypeScript 6.0 で非推奨化され、**TypeScript 7.0（7.0.2 が 2026-08-20 にリリース済み）では実際に削除された**ため、`paths` 内にディレクトリを直接埋め込む方式へ移行する。
+`baseUrl` は TypeScript 6.0 で非推奨化され、**TypeScript 7.0（7.0.2 が 2026-07-08 にリリース済み）では実際に削除された**ため、`paths` 内にディレクトリを直接埋め込む方式へ移行する。
 
 **根拠**:
 - ファイル移動時のインポートパス修正が不要になる
@@ -166,19 +167,19 @@ const config: Config = { theme: 'dark' }; // OK
 ```
 
 ```json
-// Bad: baseUrl 使用（TS 6.0 非推奨 / TS 7.0 削除予定）
+// Bad: baseUrl 使用（TS 6.0 非推奨 / TS 7.0 で削除）
 {
   "compilerOptions": {
     "baseUrl": "./src",
     "paths": {
-      "@/*": ["app/*"]
+      "@/*": ["*"]
     }
   }
 }
 ```
 
 ```json
-// 移行猶予（TS 7.0 より前の一時的な警告抑制）
+// 移行猶予（TS 6.0 でのみ効くエラー抑制。7.0 では効かない。#9 参照）
 {
   "compilerOptions": {
     "baseUrl": "./src",
@@ -207,7 +208,7 @@ import { Button } from '@/components/ui/Button';
 
 **バージョン**: TypeScript 6.0+（非推奨）/ 7.0 で削除済み（7.0.2 で確認）
 **確信度**: 高
-**最終更新**: 2026-08-28
+**最終更新**: 2026-10-25
 
 ---
 
@@ -238,15 +239,15 @@ import { Button } from '@/components/ui/Button';
 **出典**:
 - [TypeScript tsconfig reference: skipLibCheck](https://www.typescriptlang.org/tsconfig#skipLibCheck) (TypeScript公式)
 
-**バージョン**: TypeScript 2.0+
+**バージョン**: TypeScript 2.0+（コード例の `moduleResolution: "bundler"` は 5.0+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 6. `useUnknownInCatchVariables: true` で catch 節の変数を `unknown` にする
 
-`strict: true` に含まれる `useUnknownInCatchVariables`（TS4.0以降で `strict` に内包）を確認し、
+`strict: true` に含まれる `useUnknownInCatchVariables`（TS 4.4 以降で `strict` に内包）を確認し、
 catch 節のエラー変数が `any` ではなく `unknown` として扱われることを活用する。
 エラー処理時に型ガードで安全に絞り込む習慣をチームに定着させる。
 
@@ -301,7 +302,7 @@ try {
 
 **バージョン**: TypeScript 4.4+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -396,33 +397,35 @@ function processInput(value: unknown): string {
 
 ---
 
-### 8. `strict: true` を段階的に導入する際は8フラグを難易度順に有効化する
+### 8. `strict: true` を段階的に導入する際は内包フラグを難易度順に有効化する
 
 既存のコードベースに `strict: true` を一括で適用するのではなく、
-内包される8つのフラグを難易度（発生エラー数）が低い順に個別に有効化する。
-`strictNullChecks` は最後に適用する。
+内包されるフラグ（TS 5.6 以降は 9 個、それ以前は 8 個）を難易度（発生エラー数）が低い順に個別に有効化する。
+`strictNullChecks` は最後に適用する（`strictPropertyInitialization` は `strictNullChecks` なしでは指定できないため、同時に有効化する）。
+TS 6.0 以降は `strict` の既定値が `true` なので、段階導入中は `"strict": false` を明示してから個別のフラグを足す（書かないと最初から全フラグが有効になる）。
 
 **根拠**:
-- `strict: true` は実際には8つの独立したフラグの束であり、一括適用すると数千件のエラーが一度に発生する
+- `strict: true` は実際には独立したフラグの束（`alwaysStrict` / `strictNullChecks` / `strictBindCallApply` / `strictBuiltinIteratorReturn` / `strictFunctionTypes` / `strictPropertyInitialization` / `noImplicitAny` / `noImplicitThis` / `useUnknownInCatchVariables`。`strictBuiltinIteratorReturn` は TS 5.6 で追加）であり、一括適用すると数千件のエラーが一度に発生する
 - フラグを難易度順に有効化することで、段階的なPRで進められ、レビューが可能になる
 - `strictNullChecks` だけで全エラーの60〜80%を占めるため（30kライン換算で1000〜4000件）、最後に予算を確保して臨む
 - 既存プロジェクトで `strict` を一括有効化すると大量のエラーが同時発生するため、個別フラグを分けて段階導入する方針は複数の実務記事でも共通して推奨されている
 
 **有効化推奨順序**（エラー影響が少ない順）:
-1. `alwaysStrict` — ほぼコストゼロ（`"use strict"` 付与のみ）
+1. `alwaysStrict` — ほぼコストゼロ（`"use strict"` 付与のみ。TS 6.0 以降は `false` 自体が非推奨で、常に strict mode として扱われる）
 2. `noImplicitThis` — 少数（`this` パラメータ宣言で修正）
 3. `useUnknownInCatchVariables` — 少数（catch節のe型ガード追加）
-4. `strictBindCallApply` — 少数〜中（bind/call/apply の引数型修正）
-5. `strictFunctionTypes` — 中（関数パラメータの反変性）
-6. `noImplicitAny` — 中〜多（型アノテーション追加）
-7. `strictPropertyInitialization` — 多（クラスプロパティ初期化）
-8. `strictNullChecks` — **最多**（全体の60〜80%、複数週分の作業）
+4. `strictBuiltinIteratorReturn` — 少数（TS 5.6+。組み込みイテレータの戻り値型が `any` から `undefined` になる）
+5. `strictBindCallApply` — 少数〜中（bind/call/apply の引数型修正）
+6. `strictFunctionTypes` — 中（関数パラメータの反変性）
+7. `noImplicitAny` — 中〜多（型アノテーション追加）
+8. `strictNullChecks` + `strictPropertyInitialization` — **最多**（全体の60〜80%、複数週分の作業。`strictPropertyInitialization` を単独で指定すると TS5052 エラーになるので、`strictNullChecks` と同時かそれ以降に有効化する）
 
 **コード例**:
 ```json
-// 段階1: まず低コストのフラグだけ有効化
+// 段階1: まず低コストのフラグだけ有効化（TS 6.0 以降は "strict": false の明示が必要）
 {
   "compilerOptions": {
+    "strict": false,
     "alwaysStrict": true,
     "noImplicitThis": true,
     "useUnknownInCatchVariables": true
@@ -452,48 +455,51 @@ function processInput(value: unknown): string {
 **出典**:
 - [TypeScript strict Mode Is 8 Flags. Turn strictNullChecks On Last.](https://dev.to/gabrielanhaia/typescript-strict-mode-is-8-flags-turn-strictnullchecks-on-last-52mj) (dev.to gabrielanhaia / 2026-05-07) ※2026-05-07に実際にfetch成功
 - [TypeScriptのstrictを段階的に有効にするためのtsconfigの設定順番](https://qiita.com/felix-jp-studio/items/6246cd224e77def4f845) (Qiita、段階導入方針の独立した裏付けとコード例) ※2026-08-05に実際にfetch成功
+- [TypeScript tsconfig reference: strict](https://www.typescriptlang.org/tsconfig#strict) (TypeScript公式、strict に含まれる 9 フラグ。`strictBuiltinIteratorReturn` は 5.6 で追加) ※2026-10-25 確認
 
-**バージョン**: TypeScript 4.0+
+**バージョン**: TypeScript 4.0+（9 フラグ構成は 5.6+。`"strict": false` の明示が必要なのは 6.0+）
 **確信度**: 高
-**最終更新**: 2026-08-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 9. TypeScript 7.0（ネイティブ Go コンパイラ）移行時は削除された `target` / `moduleResolution` オプションを事前に置き換える（6.0 時点で既にビルドが止まる点に注意）
 
 TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target: "es5"` と `moduleResolution: "node"` / `"classic"` が廃止される。
-移行前に `tsconfig.json` の対象オプションを確認し、`target: "ES2015"` 以上・`moduleResolution: "bundler"` に置き換える。
+移行前に `tsconfig.json` の対象オプションを確認し、`target: "ES2015"` 以上に上げる。`moduleResolution` は用途で移行先が分かれ、バンドラー（や Bun）を使うなら `module: "preserve"` + `moduleResolution: "bundler"`、Node.js で直接実行するなら `module: "nodenext"`（`moduleResolution` も `nodenext`）にする。
 高速化を謳う宣伝文句（「10倍高速」等）はソースによって数値が大きく異なるため、鵜呑みにせず自プロジェクトで実測する。
-**この非推奨化は 7.0 を待たず、6.0 の時点で既に `error`（終了コード2）としてビルドを止める。** `ignoreDeprecations: "6.0"` で 6.0 では黙らせられるが、この設定自体が 7.0 では削除され黙って無視される。
-7.0 は 7.0.2 が 2026-08-20 に GitHub Releases 上でリリース済みで、削除対象は `target: "es5"` / `moduleResolution` だけではない。`baseUrl`・`downlevelIteration`・`module` の `"amd"` / `"umd"` / `"systemjs"` / `"none"`・`esModuleInterop: false` / `allowSyntheticDefaultImports: false`・namespace の `module` キーワード・import の `assert` キーワードも同時に落ちるため、**アップグレード前に tsconfig 全体を棚卸しする**。
-加えて既定値も変わる（`strict: true` / `module: "esnext"` / `noUncheckedSideEffectImports: true` / `rootDir: "./"` / `types: []` / `stableTypeOrdering: true`）。特に `types` の既定が `["*"]` から `[]` になるため、`@types/node` 等を暗黙に拾っていたプロジェクトは明示列挙が必要になる。
+**この非推奨化は 7.0 を待たず、6.0 の時点で既に `error`（終了コード2）としてビルドを止める。** `ignoreDeprecations: "6.0"` で 6.0 では黙らせられるが、7.0 ではこの設定を書いてもエラーにも警告にもならず、単に効かない（削除されたオプション自体が個別にエラーになる）。
+7.0 は 7.0.2 が 2026-07-08 にリリース済み（npm の公開日時。公式ブログの発表も同日）で、削除対象は `target: "es5"` / `moduleResolution` だけではない。`baseUrl`・`downlevelIteration`・`module` の `"amd"` / `"umd"` / `"systemjs"` / `"none"`・`esModuleInterop: false` / `allowSyntheticDefaultImports: false`・namespace の `module` キーワード・import の `assert` キーワードも同時に落ちるため、**アップグレード前に tsconfig 全体を棚卸しする**。
+既定値の変更は 7.0 ではなく 6.0 で入っている（`strict: true` / `module: "esnext"` / `target` は最新の ES（6.0 時点で `es2025`）/ `noUncheckedSideEffectImports: true` / `libReplacement: false` / `rootDir` は `tsconfig.json` のあるディレクトリ / `types: []`）。7.0 はこれを引き継ぎ、さらに `stableTypeOrdering` が常に有効（無効化不可）になる。特に `types` の既定が「見えている `@types` をすべて含める」から `[]` になるため、`@types/node` 等を暗黙に拾っていたプロジェクトは明示列挙が必要になる（`["*"]` で以前の挙動に戻せる）。
 
 **根拠**:
 - `target: "es5"` を指定したままアップグレードすると `error TS5023: Option 'target' cannot be 'es5'. It must be 'ES2015' or higher.` でビルドが失敗する
-- `moduleResolution` の `"node"` / `"classic"` も削除され、`"bundler"` が唯一の推奨値になる（本ファイル Rule #5 のコード例が既に `"bundler"` を採用しているのはこの流れに合致する）
+- `moduleResolution` の `"node"`（`"node10"`）は 6.0 で非推奨、`"classic"` は 6.0 で削除され、7.0 ではどちらも使えない。公式の移行先は、Node.js で直接実行するなら `nodenext`、バンドラーや Bun を使うなら `bundler`（Node.js で動かすコードに `bundler` は向かない）。本ファイル Rule #5 のコード例の `"bundler"` はバンドラーを使うプロジェクトの例
 - ベンダー側は「10倍高速」を謳うが、独自ベンチマーク記事では型チェックのみで実測 3.3〜4.1倍にとどまったと報告されており、公称値と実測値に乖離がある。マーケティング数値をそのまま採用せず自プロジェクトで計測する
 - 別の独立ベンチマーク（約10.5万行の実プロジェクト）でも tsc 6.0.3 の 2,457ms に対し tsc 7.0.2 は 535ms（4.6倍）、Go バイナリを直接叩く `tsgo` は 524ms（4.7倍、Node.js 起動オーバーヘッド約86ms を除く）と、複数ソースで「公称10倍」と「実測4〜5倍」の乖離が再現している
 - 並列型チェック用の `--checkers` フラグが新設され、ワーカー数は CPU コア数に合わせるのが目安（4コア機で `--checkers 4` 相当）。既定値は 4 で、Project References のビルド並列度は別途 `--builders` が制御する（両者は掛け算で効く）。デバッグやリソース制約環境では `--singleThreaded` で並列化を切る
 - 削除される compilerOptions は `target: "es5"` / `moduleResolution: "node"` / `"node10"` / `"classic"` に加えて `baseUrl`・`downlevelIteration`・`module` の `"amd"` / `"umd"` / `"systemjs"` / `"none"`・`esModuleInterop: false` / `allowSyntheticDefaultImports: false`・namespace の `module` キーワード・import の `assert` キーワードにも及ぶ（いずれもハードエラー）
-- 既定値の変更のうち実害が出やすいのは `types: ["*"] → []` と `rootDir: "./"`。前者は `@types/*` を暗黙に拾っていたプロジェクトで型が一斉に消えるため、`"types": ["node", "jest"]` のように明示列挙する
+- 既定値の変更（6.0 から）のうち実害が出やすいのは `types`（`[]` になる）と `rootDir`（`tsconfig.json` のあるディレクトリになる）。前者は `@types/*` を暗黙に拾っていたプロジェクトで型が一斉に消えるため、`"types": ["node", "jest"]` のように明示列挙する
 - テンプレートリテラル型がサロゲートペアを 1 文字として扱うようになり、`HeadTail<"😀abc">` が 6.x の `["\ud83d", "\ude00abc"]` から `["😀", "abc"]` に変わる。文字列型を 1 文字ずつ分解する型ユーティリティは挙動差分を確認する
-- 7.0 系のリリース実績は GitHub Releases 上で 7.0.2（2026-08-20）。移行は「まず 6.0 で既定値・非推奨オプションを片付け、その後 7.0 に上げる」順が安全
-- TypeScript 7.0 の `require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開し、Compiler API がそこから消える。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。`package.json` で `typescript` を TS 6.x 系にエイリアスし、実体の TS 7 系は別名で入れる回避策がある
-- 6.0.3 / 6.0.beta の実測検証では、非推奨オプションは「警告」ではなく `error TS5107` として即座にビルドを止める。`ignoreDeprecations: "6.0"` を指定すれば 6.0 では抑制できるが、7.0.2 ではこのオプション自体が削除されており、指定しても怒られもせず単に効かなくなる（`error TS5108` で「削除済みなので設定から除去せよ」と表示される）。「7.0 が来るまでは 6.0 で猶予がある」という前提は成立しない
+- 7.0 系のリリース実績は 7.0.2（2026-07-08、npm の公開日時）。移行は「まず 6.0 で既定値・非推奨オプションを片付け、その後 7.0 に上げる」順が安全
+- TypeScript 7.0 は API を同梱しておらず（新しい API は 7.1 以降の予定）、`require('typescript')` エントリポイントは `version` / `versionMajorMinor` のみを公開する。`typescript-eslint` はこれを検知して起動時に明示的にエラーを投げるため、素直にバージョンを上げると ESLint が1件も走らなくなる。公式も npm エイリアスで `typescript` を `@typescript/typescript6`（6.0 の API を再エクスポートし、`tsc6` を提供する）に向け、7.0 本体は `@typescript/native` などの別名で入れる構成を案内している
+- 6.0.3 / 6.0.beta の実測検証では、非推奨オプションは「警告」ではなく error として即座にビルドを止める（`baseUrl` なら `error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0.`、終了コード 2）。`ignoreDeprecations: "6.0"` を指定すれば 6.0 では抑制できるが、7.0.2 では指定しても怒られもせず単に効かない。削除されたオプションはそれぞれ `error TS5102: Option 'baseUrl' has been removed. Please remove it from your configuration.` のようにエラーになる。「7.0 が来るまでは 6.0 で猶予がある」という前提は成立しない
 - TypeScript公式チームが2026年3月に公開した初期ベンチマークでは、VS Code 10.4倍・Playwright 10.1倍・TypeORM 13.5倍・date-fns 9.5倍・tRPC 9.1倍・rxjs 11.0倍と、プロジェクトごとに8〜13倍台で実測差がある。アーキテクチャは「書き直し」ではなく既存ロジック構造を保った「移植」であるため、コミュニティの再測定値（3〜5倍）との乖離は対象プロジェクトの違いや「型チェックのみ」か「emit込みフルビルド」かという測定条件差に起因する可能性が高い
 
 **コード例**:
-```json
-// tsconfig.json - TypeScript 7.0 で削除されたオプションを置き換える
+```jsonc
+// tsconfig.json - TypeScript 7.0 で削除されたオプションを置き換える（バンドラーを使うプロジェクトの例）
 {
   "compilerOptions": {
     // NG: "target": "es5" → TS 7.0 では build エラー (TS5023)
     "target": "ES2015",
     // NG: "moduleResolution": "node" / "classic" は削除済み
+    // Node.js で直接実行するなら、この 2 行の代わりに "module": "nodenext" を使う
+    "module": "preserve",
     "moduleResolution": "bundler",
-    // TS 7.0 で既定が [] に変わるため、暗黙に拾っていた型定義は明示列挙する
+    // TS 6.0 以降は既定が [] なので、暗黙に拾っていた型定義は明示列挙する
     "types": ["node", "jest"],
-    // TS 7.0 の既定は "./"。出力先の想定が違うなら明示する
+    // TS 6.0 以降の既定は tsconfig.json のあるディレクトリ。出力先の想定が違うなら明示する
     "rootDir": "./src"
   }
 }
@@ -502,14 +508,13 @@ TypeScript 7.0 系のネイティブ（Go 移植）コンパイラでは `target
 # 並列型チェックのワーカー数を明示する（CPUコア数を目安に）
 tsc --checkers 4
 ```
+typescript-eslint が TS 7.0 を拒否する場合は、公式が案内する npm エイリアスで、Compiler API が必要なツールには `typescript` として TS 6 系（`@typescript/typescript6`）を渡し、TS 7 ネイティブコンパイラは別名で入れる（package.json にはコメントを書けないので説明はここに書く）。
+
 ```json
-// package.json - typescript-eslint が TS7.0 を拒否する場合の package alias 回避策
 {
   "devDependencies": {
-    // Compiler API が必要な typescript-eslint 等には TS6系実体を "typescript" として渡す
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    // 実体の TS7 ネイティブコンパイラは別名で導入する
-    "@typescript/native": "npm:typescript@^7.0.2"
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }
 ```
@@ -537,10 +542,12 @@ tsc --checkers 4
 > ([TypeScript 7は本当に10倍速い？ 公式ベンチマークからGo移植の効果を見てみる](https://zenn.dev/pug/articles/typescript-7-native-go), セクション "「書き直し」ではなく「移植」なのも重要") ※2026-08-30に実際にfetch成功
 
 **出典**:
+- [TypeScript 6.0 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html) (TypeScript公式、既定値の変更・非推奨オプションの一覧・`ignoreDeprecations: "6.0"`・`moduleResolution` の移行先（`nodenext` / `bundler`）) ※2026-10-25 確認
+- [Announcing TypeScript 7.0](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/) (TypeScript公式ブログ、2026-07-08。6.0 の非推奨はすべてハードエラー・API 非同梱・`@typescript/typescript6` を使った併用構成・`--checkers` の既定 4) ※2026-10-25 確認
 - [TypeScript 7に上げたらeslintが1件も走らなくなった話と、公式のalias構成](https://zenn.dev/clopy/articles/typescript7-alias-tsc6) (Zenn、`typescript-eslint` の TS7.0拒否と package alias による回避策の実機検証) ※2026-08-18 fetch
-- [TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error) (Zenn、5.9.3/6.0.3/7.0.2 の実機検証で `ignoreDeprecations: "6.0"` が7.0で削除され無効化される点を確認) ※2026-08-19 fetch
+- [TypeScript 6.0 は「警告」ではなく落ちる](https://zenn.dev/clopy/articles/typescript6-deprecated-tsconfig-already-error) (Zenn、5.9.3/6.0.3/7.0.2 の実機検証で `ignoreDeprecations: "6.0"` が7.0で無効になる点と、TS5101 / TS5102 の出力を確認) ※2026-08-19 fetch、2026-10-25 再確認
 - [TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750) (Qiita、削除オプションの全量・既定値変更（`types: []` / `rootDir`）・`--builders` / `--singleThreaded`・テンプレートリテラル型の Unicode 対応という追加観点) ※2026-08-28 fetch
-- [microsoft/TypeScript Releases](https://github.com/microsoft/TypeScript/releases) (GitHub、7.0.2 が 2026-08-20 リリース済みであることを確認) ※2026-08-28に実際にfetch成功
+- [microsoft/TypeScript Releases](https://github.com/microsoft/TypeScript/releases) (GitHub、7.0.2 がリリース済みであることを確認。公開日時は npm で 2026-07-08) ※2026-08-28に実際にfetch成功
 - [TypeScript 7は本当に10倍速い？ 公式ベンチマークからGo移植の効果を見てみる](https://zenn.dev/pug/articles/typescript-7-native-go) (Zenn、公式初期ベンチマークのプロジェクト別内訳（VS Code 10.4倍〜TypeORM 13.5倍）と「書き直しでなく移植」という設計意図の整理) ※2026-08-30に実際にfetch成功
 
 > "コンパイラと言語サービスが Go にネイティブ移植され、フルビルドが 6.0 比でおおむね 8〜12倍高速に"
@@ -549,8 +556,8 @@ tsc --checkers 4
 > "⑧【重要】7.0 には API がない"
 > ([TypeScript 7.0 【新機能まとめ】](https://qiita.com/tsubasa_k0814/items/781a2aab64b0289ca750), セクション "⑧【重要】7.0 には API がない") ※2026-08-28に実際にfetch成功
 
-**バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化）/ 7.0（`ignoreDeprecations` 自体が削除、7.0.2 が 2026-08-20 リリース）
-**確信度**: 中（コミュニティ複数記事+コード例のパターン2は満たす。2026-08-28 に GitHub Releases 上で 7.0.2（2026-08-20 リリース）の存在は確認できたが、公式リリースノート本文（devblogs.microsoft.com）は egress 制限で取得できず、高速化の実測値も情報源間で 3〜4倍・4〜5倍・8〜12倍・8〜13倍・10倍と食い違うため「高」ではなく「中」を維持する）
-**最終更新**: 2026-08-30
+**バージョン**: TypeScript 6.0+（非推奨オプションが即エラー化・既定値の変更）/ 7.0（2026-07-08 公式発表。`ignoreDeprecations` は効かない。7.0.2 が同日に npm で公開）
+**確信度**: 高（削除・非推奨オプション、既定値の変更、エイリアス構成は公式リリースノートとブログで確認）/ 高速化の数値と診断コードは 中（情報源間で 3〜4倍・4〜5倍・8〜12倍・8〜13倍・10倍と食い違い、診断コードは 1 記事の実測）
+**最終更新**: 2026-10-25
 
 ---

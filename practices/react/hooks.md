@@ -1,8 +1,5 @@
 # React Hooks のベストプラクティス
 
-このファイルはフォーマットのサンプルです。
-ブートストラップ実行時に上書き or 拡張されます。
-
 ## ルール
 
 ### 1. useEffect でデータ取得しない（Reactの公式立場）
@@ -12,7 +9,7 @@
 useEffect でのfetchはレース条件、メモリリーク、ウォーターフォールを招く。
 
 **根拠**:
-- React公式が `useEffect` のデータ取得を推奨しないと明記
+- React公式はデータ取得をフレームワークやライブラリに任せるよう勧めており、Effect で取得する場合はレース条件を避ける cleanup が必要だと説明している
 - レース条件の発生（古いリクエストの結果が新しい状態を上書き）
 - StrictModeで二重実行される副作用への対処が複雑化
 
@@ -50,7 +47,7 @@ async function Profile({ userId }: { userId: string }) {
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -113,7 +110,7 @@ ESLint の `exhaustive-deps` ルールに従い、`useEffect` 内で使用する
 **根拠**:
 - 依存配列が不正確だと古い値を参照する（Stale Closure）
 - 意図的な省略はバグの原因になる
-- `useEffectEvent`（React 19+）でエフェクトのイベントハンドラー部分を分離できる
+- `useEffectEvent`（React 19.2+）でエフェクトのイベントハンドラー部分を分離できる（#6）
 
 **コード例**:
 ```tsx
@@ -160,10 +157,14 @@ useEffect(() => {
   return () => clearInterval(id);
 }, []);
 
-// Good (React 18 まで): useRef で最新値を保持
+// Good (React 19.1 以前): useRef で最新値を保持し、更新は Effect の中で行う
+import { useEffect, useLayoutEffect, useRef } from 'react';
+
 function useLatest<T>(value: T) {
   const ref = useRef(value);
-  ref.current = value;       // レンダリングごとに最新値に更新
+  useLayoutEffect(() => {
+    ref.current = value;     // レンダー中に ref.current を読み書きしない（初期化を除く。公式の useRef の注意事項）
+  });
   return ref;
 }
 
@@ -177,19 +178,7 @@ function Example({ count }: { count: number }) {
   }, []); // interval は1回だけ張る
 }
 
-// Good (React 19+): useEffectEvent で「非反応的なロジック」を分離
-import { useEffectEvent } from 'react';
-
-function Example({ count }: { count: number }) {
-  const logCount = useEffectEvent(() => {
-    console.log(count); // 常に最新の count を読む（deps に含めなくて良い）
-  });
-
-  useEffect(() => {
-    const id = setInterval(logCount, 1000);
-    return () => clearInterval(id);
-  }, []); // logCount は deps 不要
-}
+// Good (React 19.2+): useEffectEvent で「非反応的なロジック」を分離する（書き方は #6）
 ```
 
 **Object / Array deps の対処**:
@@ -212,19 +201,19 @@ useEffect(() => {
   fetcher.get('/users', { filter });
 }, [filter]);
 
-// Good: 中身で比較したい場合は useMemo / use-deep-compare-effect
-const itemsKey = useMemo(() => items.map(i => i.id).join(','), [items]);
-useEffect(() => {
-  saveItems(items);
-}, [itemsKey]);
-
 // Good: そもそも Effect ではなくイベントハンドラーで実行する（推奨）
 // 「items が変わったら保存」ではなく「ユーザー操作時に保存」が本来のセマンティクス
+function List({ items }: { items: Item[] }) {
+  return <button onClick={() => saveItems(items)}>保存</button>;
+}
+
+// どうしても「内容の変化」に反応させたい場合は、ID だけでなく内容全体を比較する（use-deep-compare-effect など）。
+// ID を連結したキーだけを deps にすると、同じ ID のまま内容が変わったときに保存されない
 ```
 
 **React Compiler 移行への影響**:
 
-- React Compiler（React 19 で beta）は自動的に memoization を行うため、`useMemo` / `useCallback` の手動使用が大幅に減る
+- React Compiler 1.0（2025年10月 stable。導入方法は [`rendering.md`](./rendering.md) #7）は自動的に memoization を行うため、`useMemo` / `useCallback` の手動使用が大幅に減る
 - ただし **`useEffect` の依存配列は引き続き正確に記述する必要がある**。Compiler は副作用の依存関係を推論しない
 - 移行前後で `exhaustive-deps` ルールを違反していたコードは、Compiler 後に動作差分が出る可能性がある（参照同一性が変わるため）。移行前に lint エラーをゼロにしておく
 
@@ -233,16 +222,17 @@ useEffect(() => {
 - [ ] deps にオブジェクト・配列リテラルが直接入っていない
 - [ ] 「最新値を読みたいが再実行はしたくない」要件は `useEffectEvent` または `useRef` で分離
 - [ ] Effect 内で setState する場合、無限ループにならないか確認
-- [ ] そもそも `useEffect` が必要か（[Rule 5: イベントハンドラーに置く](#5-ユーザー操作に起因する処理は-useeffect-ではなくイベントハンドラーに置く) と [Rule 1: useEffect でデータ取得しない](#1-useeffect-でデータ取得しない-react-の公式立場) を再確認）
+- [ ] そもそも `useEffect` が必要か（[Rule 5: イベントハンドラーに置く](#5-ユーザー操作に起因する処理は-useeffect-ではなくイベントハンドラーに置く) と [Rule 1: useEffect でデータ取得しない](#1-useeffect-でデータ取得しないreactの公式立場) を再確認）
 
 **出典**:
 - [React Docs: Specifying Reactive Dependencies](https://react.dev/learn/lifecycle-of-reactive-effects#react-verifies-that-you-specified-every-reactive-value-as-a-dependency) (React公式)
 - [React Docs: Separating Events from Effects](https://react.dev/learn/separating-events-from-effects) (React公式)
-- [React Docs: useEffectEvent](https://react.dev/reference/react/experimental_useEffectEvent) (React公式)
+- [React Docs: useEffectEvent](https://react.dev/reference/react/useEffectEvent) (React公式) ※2026-10-25 確認
+- [React Docs: useRef — Caveats](https://react.dev/reference/react/useRef) (React公式、初期化以外でレンダー中に `ref.current` を読み書きしない) ※2026-10-25 確認
 
-**バージョン**: React 18+ / `useEffectEvent` は React 19+
+**バージョン**: React 18+ / `useEffectEvent` は React 19.2+
 **確信度**: 高
-**最終更新**: 2026-05-05 / 補強 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -328,7 +318,7 @@ function Form() {
 
 ---
 
-### 6. `useEffectEvent` でエフェクトの「非反応的なロジック」を分離する（React 19+）
+### 6. `useEffectEvent` でエフェクトの「非反応的なロジック」を分離する（React 19.2+）
 
 エフェクト内で「再実行のトリガーにしたくない値」を参照する場合、
 `useEffectEvent` でその部分を切り出す。依存配列を意図的に省略する代わりに使うことで、
@@ -368,10 +358,11 @@ useEffect(() => {
 
 **出典**:
 - [Separating Events from Effects](https://react.dev/learn/separating-events-from-effects) (React公式 / 2024)
+- [React 19.2](https://react.dev/blog/2025/10/01/react-19-2) (React公式ブログ、19.2 の新機能として `useEffectEvent` を追加) ※2026-10-25 確認
 
-**バージョン**: React 19+
+**バージョン**: React 19.2+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

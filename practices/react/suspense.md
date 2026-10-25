@@ -104,21 +104,59 @@ function UserDetails({ userPromise }: { userPromise: Promise<User> }) {
 
 ### 4. `browser()` で SSR 不可なコンポーネントを明示し、ハイドレーションミスマッチではなく Suspense フォールバックに落とす
 
-`react-dom` の `browser()` と `use()` を組み合わせると、ブラウザでしかレンダリングできないコンポーネントを明示的に宣言できる。SSR 時は自動的に Suspense のフォールバック UI へ落ち、クライアントでレンダリングが成功してもハイドレーションミスマッチとして扱われない。
+`react-dom` の `browser()` の戻り値を `use()` に渡す（`use(browser('理由'))`）と、ブラウザでしかレンダリングできないコンポーネントを明示的に宣言できる。サーバーではそのコンポーネントのレンダーを止めて最も近い `<Suspense>` のフォールバックを HTML に残し、ブラウザでは `use(browser())` が `undefined` を返して通常どおりレンダリングする。クライアントでレンダリングが成功しても、ハイドレーションミスマッチとしては扱われない。
+`browser()` が受け取るのは SSR を止める理由（文字列か、理由を返す関数）で、Promise ではない。データ取得そのものは、キャッシュされた Promise を扱う Suspense 対応ライブラリに任せる。
 
 **根拠**:
 - 目視でフォールバックに見えても実際はハイドレーションミスマッチだった、という混同を防げる
-- クライアント専用データ取得（`useBrowserQuery` 等）を hydration 後まで安全に遅延できる
+- `use` は条件分岐の中でも呼べるので、「初期データがないときだけ SSR を止め、取得はクライアントのクエリライブラリに任せる」という条件付きの使い方ができる
 - ルーターやライブラリ側で「pathless SSR モード」のような SSR 除外パターンを組み立てやすくなる
+- 公式の制約: サーバーレンダリング時は `<Suspense>` の内側で呼ぶ（境界がないとサーバーレンダーが失敗する）。Client Component から呼ぶ。`browser()` を呼ぶだけでは何も起きず、`use` に渡す必要がある（throw もしない）
 
 **コード例**:
 ```tsx
+// Good: localStorage に依存するコンポーネントを SSR から外す
+'use client';
+import { Suspense, use, useState } from 'react';
 import { browser } from 'react-dom';
-import { use } from 'react';
 
-function useBrowserQuery<T>(fetcher: () => Promise<T>) {
-  // browser() はブラウザ環境でのみ解決される Promise を返し、
-  // SSR 時は use() が Suspense フォールバックへフォールスルーする
+function SavedDraft() {
+  use(browser('下書きは localStorage に保存している'));
+  const [draft] = useState(() => localStorage.getItem('draft') ?? '');
+  return <textarea defaultValue={draft} />;
+}
+
+export function DraftSection() {
+  return (
+    <Suspense fallback={<p>下書きを読み込み中...</p>}>
+      <SavedDraft />
+    </Suspense>
+  );
+}
+```
+
+```tsx
+// Good: 初期データがないときだけ SSR を止め、取得は Suspense 対応ライブラリに任せる
+'use client';
+import { use } from 'react';
+import { browser } from 'react-dom';
+import { useSuspenseQuery } from '@tanstack/react-query';
+
+export function useBrowserQuery<T>(
+  queryKey: readonly unknown[],
+  queryFn: () => Promise<T>,
+  initialData?: T,
+) {
+  if (initialData === undefined) {
+    use(browser('useBrowserQuery: 初期データがない'));
+  }
+  return useSuspenseQuery({ queryKey, queryFn, initialData }).data;
+}
+
+// Bad: browser() に Promise を渡す
+// browser() は理由（文字列 / 関数）しか受け取らず、ブラウザでは use(browser(...)) が undefined を返すので、
+// このフックはクライアントで何も言わずに undefined を返す。fetcher() も SSR を含め毎レンダー実行され、キャッシュされない Promise を作る
+function useBrowserQueryBad<T>(fetcher: () => Promise<T>) {
   return use(browser(fetcher()));
 }
 ```
@@ -128,8 +166,10 @@ function useBrowserQuery<T>(fetcher: () => Promise<T>) {
 > ([React 19.3 browser() APIの使いみち〜FUNSTACK Routerの場合〜](https://zenn.dev/uhyo/articles/react-use-browser-usage), セクション "browser() APIの導入") ※2026-08-21に実際にfetch成功
 
 **出典**:
+- [React Docs: browser](https://react.dev/reference/react-dom/browser) (React公式、引数は理由の文字列か関数・サーバーとブラウザでの戻り値・Suspense 境界が必須などの制約・`useBrowserQuery` の公式パターン) ※2026-10-25 確認
+- [React 19.3](https://react.dev/blog/2026/09/09/react-19-3) (React公式ブログ、19.3 で `browser()` が追加された) ※2026-10-25 確認
 - [React 19.3 browser() APIの使いみち〜FUNSTACK Routerの場合〜](https://zenn.dev/uhyo/articles/react-use-browser-usage) (Zenn、react-dom の browser() API を用いた実装例) ※2026-08-21 fetch
 
 **バージョン**: React 19.3+ / react-dom
-**確信度**: 中（公式ドキュメントでの直接確認ができておらず、単独のコミュニティ記事による報告）
-**最終更新**: 2026-08-21
+**確信度**: 高
+**最終更新**: 2026-10-25

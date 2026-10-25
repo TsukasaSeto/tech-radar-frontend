@@ -192,18 +192,54 @@ test('商品を検索して詳細を開く', async ({ searchAction }) => {
 - テストの実行順序に依存すると並列実行ができなくなる
 - 前のテストが失敗したとき、後続テストが誤った状態でスタートして偽陰性になる
 - テストの独立性は再実行可能性（Idempotency）を保証する
+- サーバー側の状態（カートなど）を書き換えるテストで全テストが 1 つの storageState（同じアカウント）を共有すると、並列実行したテスト同士が互いのカートを消し合ってフレーキーになる。Playwright 公式は、サーバー側の状態を変えるテストにはワーカーごとに別アカウントで認証する方法を推奨している（状態を変えないテストは 1 アカウントの共有でよい）
 
 **コード例**:
 ```ts
+// playwright/fixtures.ts — ワーカーごとに別アカウントで 1 回だけログインし、storageState を差し替える
+import { test as baseTest, expect } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
+
+export { expect };
+
+export const test = baseTest.extend<{}, { workerStorageState: string }>({
+  storageState: ({ workerStorageState }, use) => use(workerStorageState),
+
+  workerStorageState: [async ({ browser }, use) => {
+    const id = test.info().parallelIndex;
+    const fileName = path.resolve(test.info().project.outputDir, `.auth/${id}.json`);
+    if (fs.existsSync(fileName)) {
+      await use(fileName);
+      return;
+    }
+
+    // storageState を外したクリーンな状態でログインする
+    const page = await browser.newPage({
+      baseURL: test.info().project.use.baseURL,
+      storageState: undefined,
+    });
+    // ワーカー番号ごとのテスト用アカウント（ワーカー数ぶん事前に用意しておく）
+    await page.goto('/login');
+    await page.getByLabel('メールアドレス').fill(`e2e-user-${id}@example.com`);
+    await page.getByLabel('パスワード').fill(process.env.TEST_USER_PASSWORD!);
+    await page.getByRole('button', { name: 'ログイン' }).click();
+    await page.waitForURL('/dashboard');
+
+    await page.context().storageState({ path: fileName });
+    await page.close();
+    await use(fileName);
+  }, { scope: 'worker' }],
+});
+```
+
+```ts
 // e2e/checkout.spec.ts
-import { test, expect } from '@playwright/test';
+import { test, expect } from '../playwright/fixtures';
 
-// テスト毎に独立したユーザーを使う（並列実行可能）
-test.use({ storageState: 'playwright/.auth/user.json' });
-
-test.beforeEach(async ({ request }) => {
-  // テスト前にカートをリセット
-  await request.delete('/api/cart');
+test.beforeEach(async ({ page }) => {
+  // このワーカーのアカウントのカートだけをリセットする（page.request はページと Cookie を共有する）
+  await page.request.delete('/api/cart');
 });
 
 test('商品をカートに追加して購入できる', async ({ page }) => {
@@ -223,10 +259,11 @@ test('商品をカートに追加して購入できる', async ({ page }) => {
 
 **出典**:
 - [Playwright Docs: Test Isolation](https://playwright.dev/docs/test-isolation) (Playwright公式)
+- [Playwright Docs: Authentication](https://playwright.dev/docs/auth) (Playwright公式、"Moderate: one account per parallel worker" — "This is the recommended approach for tests that modify server-side state.") ※2026-10-25 確認
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -240,7 +277,8 @@ test('商品をカートに追加して購入できる', async ({ page }) => {
 - Fixture は依存関係を宣言的に記述でき、必要なテストだけがセットアップコストを払う
 - `scope: 'worker'` を使うと同じワーカー内で Fixture を1度だけ初期化でき、認証などの重い処理を最小化できる
 - Page Object と組み合わせることでテストコードを最大限に簡潔にできる
-- `page.click()` ではなく `page.locator('.btn').click()` を使う（Locator API）——後者は要素の actionability（visible・enabled・stable）を自動チェックし、SPA のハイドレーション前にクリックが走る「ゴースト要素」問題を根本解決する。実運用での成功率が 72% → 99.5% に改善した事例がある
+- `page.click(selector)` ではなく `page.getByRole('button', { name: '保存' }).click()` のような Locator API を使う（`page.click()` は公式で非推奨）。actionability（visible・enabled・stable などの自動待機）はどちらも行うので、違いはそこではない。Locator は操作のたびに要素を取り直し（再解決）、複数の要素に一致するとエラーにする（strict）ため、再描画で要素が差し替わる SPA や、意図しない要素を押す取り違えに強い。セレクタは CSS クラスではなくロールで書く（#1 の方針）。記事では Locator への移行などで成功率が 72% → 99.5% に改善したと報告されている
+- ハイドレーション前のクリックは Locator にしても防げない（enabled なボタンはイベントハンドラの登録前でも押せる）。準備が整うまでボタンを disabled にしておくか、準備完了を示す表示を `expect(...).toBeVisible()` などで待ってから操作する
 - `page.route()` で外部 API をモックすると「実サーバーの応答タイミングによるフレーキー」が 8% → 1.2% に低下する（実測値）
 
 **コード例**:
@@ -317,6 +355,8 @@ test('ユーザー情報が表示される', async ({ page }) => {
 - [Playwright Docs: Authentication](https://playwright.dev/docs/auth) (Playwright公式)
 - [Playwright Docs: Network](https://playwright.dev/docs/network) (Playwright公式、page.route() によるリクエストインターセプト)
 - [Playwright導入で地獄を見た話 - 本番運用までに踏んだ罠と解決策](https://zenn.dev/devex12/articles/playwright-e2e-testing-guide) (Zenn devex12、Locator API と page.route() の実測改善値) ※2026-06-15 fetch
+- [Playwright API: Page.click](https://playwright.dev/docs/api/class-page#page-click) (Playwright公式、"Discouraged: Use locator-based locator.click() instead."、`page.click()` も actionability チェックを行う) ※2026-10-25 確認
+- [Playwright Docs: Auto-waiting](https://playwright.dev/docs/actionability) (Playwright公式、Enabled / Stable / Receives Events の定義) ※2026-10-25 確認
 
 **出典引用**:
 > "Locator API を使え。page.click() ではなく page.locator().click() を使うだけで大半の問題は解決する。"
@@ -324,7 +364,7 @@ test('ユーザー情報が表示される', async ({ page }) => {
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-06-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -338,6 +378,8 @@ UIの意図しない見た目の変化を自動的に検出する。
 - CSSの変更やサードパーティライブラリのアップデートによる意図しないUI崩れを自動検出できる
 - スクリーンショットは CI のアーティファクトとして保存でき、差分を視覚的にレビューできる
 - `maxDiffPixelRatio` で許容誤差を設定でき、アンチエイリアスや描画差異によるフレーキーを軽減できる
+- 撮影前の待機に `waitForLoadState('networkidle')` は使わない。公式で非推奨（"Don't use this method for testing"）で、アニメーションの完了とも関係がない。画面が完成したことを示す要素を web-first アサーション（`expect(...).toBeVisible()` など）で待つ。アニメーションは `toHaveScreenshot()` の既定（`animations: 'disabled'`）で止まり、有限のアニメーションは完了まで早送りされる
+- 日時やランダム ID など毎回変わる要素は `mask` で隠す
 - Sentry をすでに使用するチームは Sentry Snapshots（beta）で CI 統合型スクリーンショット差分を追加できる。PR ごとに差分を検出して自動ブロックし、メタデータをエージェントのコンテキストとして渡せる点が特徴
 - **Playwright 専用ではなく Vitest 4 の Browser Mode でも同種の視覚的回帰テストが書ける**（`toMatchScreenshot()`）。実運用の初回導入では複数の詰まりどころが報告されている: ブラウザプロバイダー設定、非同期レンダリング完了待ち、初回実行時のベースライン画像未存在エラー、依存パッケージ解決、オプションのネスト構造の違い。Playwright と Vitest どちらもコンポーネント/ページ単位のツールを既に使っている場合は、E2E とユニット/コンポーネントテストで視覚的回帰の仕組みを分けずに揃えられる
 
@@ -350,11 +392,13 @@ test.describe('視覚的回帰テスト', () => {
   test('トップページが期待通りに表示される', async ({ page }) => {
     await page.goto('/');
 
-    // アニメーションが完了するまで待機してから撮影
-    await page.waitForLoadState('networkidle');
+    // 画面の完成を示す要素を待ってから撮影（networkidle は使わない）
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
-    // ページ全体のスクリーンショットと比較
+    // ページ全体のスクリーンショットと比較（アニメーションは既定の animations: 'disabled' で止まる）
     await expect(page).toHaveScreenshot('top-page.png', {
+      fullPage: true,
+      mask: [page.getByTestId('updated-at')], // 毎回変わる日時は隠す
       maxDiffPixelRatio: 0.02, // 2%以内の差異は許容
     });
   });
@@ -371,7 +415,7 @@ test.describe('視覚的回帰テスト', () => {
     // カラースキームを設定
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 
     await expect(page).toHaveScreenshot('top-page-dark.png', {
       maxDiffPixelRatio: 0.02,
@@ -388,7 +432,8 @@ test.describe('視覚的回帰テスト', () => {
 
 **出典**:
 - [Playwright Docs: Visual Comparisons](https://playwright.dev/docs/test-snapshots) (Playwright公式)
-- [Playwright API: toHaveScreenshot](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1) (Playwright公式)
+- [Playwright API: toHaveScreenshot](https://playwright.dev/docs/api/class-pageassertions#page-assertions-to-have-screenshot-1) (Playwright公式、`animations` の既定は `"disabled"`) ※2026-10-25 確認
+- [Playwright API: Page.waitForLoadState](https://playwright.dev/docs/api/class-page#page-wait-for-load-state) (Playwright公式、`'networkidle'` は "DISCOURAGED") ※2026-10-25 確認
 - [Catch visual regressions with Snapshots, now in beta](https://blog.sentry.io/snapshots-available-beta/) (Sentry Blog、CI 統合型スクリーンショット差分 + エージェントコンテキスト対応) ※2026-06-11 fetch
 - [Vitest 4 の Browser Mode で toMatchScreenshot を初めて書いてみた](https://zenn.dev/clopy/articles/vitest4-browser-mode-visual-regression-log) (Zenn Clopy、初回導入で遭遇した5つの詰まりどころの実体験ログ) ※2026-07-08に実際にfetch成功
 
@@ -397,7 +442,7 @@ test.describe('視覚的回帰テスト', () => {
 
 **バージョン**: Playwright 1.40+ / Vitest 4+（Browser Mode）
 **確信度**: 高
-**最終更新**: 2026-07-08
+**最終更新**: 2026-10-25
 
 ---
 
@@ -496,13 +541,13 @@ Dockerコンテナ内でPlaywrightを実行することで、CIとローカル�
 **根拠**:
 - テストデータをコード内にハードコードすると、ケース追加のたびにテストファイルを修正する必要がある
 - JSON ファイルに分離することで、エンジニア以外（QA・企画）がテストデータを追加できる
-- TypeScript インターフェースで JSON スキーマを定義することで、データの型安全性を保証できる
+- `satisfies` で JSON の推論型を TypeScript インターフェースと照合すると、項目の欠落や型の違いをコンパイル時に検出できる。`as ArticleData[]` は型を言い張るだけで何も検査しない（欠けた項目があっても通る）ので使わない。実行時に読み込むファイルや外部から受け取るデータは、型ではなくスキーマ検証（Zod など。`practices/api-client/type-safety.md` #2）で確かめる
 - 認証情報は JSON に含めず環境変数から取得し、リポジトリへの機密情報漏洩を防ぐ
 
 **コード例**:
 ```ts
 // e2e/data/types.ts - テストデータの型定義
-interface ArticleData {
+export interface ArticleData {
   id: string;
   title: string;
   body: string;
@@ -517,9 +562,12 @@ interface ArticleData {
 
 // e2e/article.spec.ts
 import { test, expect } from '@playwright/test';
-import testArticlesJson from './data/test-articles.json';
+import type { ArticleData } from './data/types';
+import testArticlesJson from './data/test-articles.json'; // tsconfig の resolveJsonModule が必要
 
-const testArticles = testArticlesJson as ArticleData[];
+// Good: JSON の中身がインターフェースに合わないとコンパイルエラーになる
+const testArticles = testArticlesJson satisfies ArticleData[];
+// Bad: const testArticles = testArticlesJson as ArticleData[];  // 項目が欠けていても通る
 
 for (const article of testArticles) {
   test(`記事「${article.title}」を投稿できる`, async ({ page }) => {
@@ -548,9 +596,12 @@ for (const article of testArticles) {
 > "TypeScript インターフェースで JSON スキーマを定義することで、データの型安全性を保証できる"
 > ([PlaywrightのE2EテストでJSONデータを使ってテストケースを動的生成する](https://qiita.com/jptools_jp/items/7f5cdff3bf3fa77dffd3), Qiita jptools_jp / 2026-05) ※2026-05-06に実際にfetch成功
 
-**バージョン**: Playwright 1.40+, TypeScript 5+
-**確信度**: 高
-**最終更新**: 2026-05-06
+**出典**:
+- [Playwright Docs: Parameterize tests](https://playwright.dev/docs/test-parameterize) (Playwright公式、ループでのテスト生成と外部ファイル（CSV）からのテスト生成) ※2026-10-25 確認
+
+**バージョン**: Playwright 1.40+, TypeScript 5+（`satisfies` は 4.9+）
+**確信度**: 高（テストの動的生成は公式ドキュメント、JSON + インターフェースの構成は 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -569,7 +620,7 @@ Playwright CLI のスナップショット機能と Claude Code Agent Skills を
   システム実装と分離した仕様適合性の検証が可能（単なる一貫性チェックを超える）
 
 **コード例**:
-```yaml
+```bash
 # Playwright CLI スナップショットによるページ操作例
 # AIが ref 番号で要素を自動特定し、人間は操作内容を自然言語で記述するだけ
 playwright-cli click e42 --session=pc        # カートに追加ボタン
@@ -595,13 +646,13 @@ playwright-cli screenshot --output screenshots/cart-top.png --session=pc
 
 ### 8. E2E は dev サーバではなく、デプロイする静的ビルド成果物に対して回す
 
-`next dev` に対する E2E は本番挙動を保証しない。`next build` の出力（例: `next export` の `out/`）を `serve` などで配信し、そのサーバーに対して Playwright を実行する。
+`next dev` に対する E2E は本番挙動を保証しない。`next build` の出力（例: `output: 'export'` を設定した `next build` が出力する `out/`。`next export` コマンドは廃止済み）を `serve` などで配信し、そのサーバーに対して Playwright を実行する。
 
 **根拠**:
 - `generateStaticParams()` の実装が誤っていると、dev サーバでは該当ページが表示できてしまうのに、ビルド成果物にはそのページ自体が生成されていない、という dev と本番で挙動が異なるバグが起こり得る。dev に対する E2E はこの種のバグを一切検出できない
 - ビルドが重い場合は「入力が同じならビルドを省略する」キャッシュを入れてよいが、判定できないときは必ずビルドする側に倒す。省略判定が壊れたまま古い成果物を検証し続けるのが最も気づきにくい失敗パターンになる
 - git worktree 等で並列実行する場合はポートの動的割当てが必要
-- Playwright のワーカー数は CPU コア数の 50% 程度に抑えると安定する
+- Playwright のワーカー数は CPU コア数の 50% 程度に抑えると安定する（Playwright の既定値も論理コア数の半分なので、`workers: '50%'` は既定を明示しているだけ）
 
 **コード例**:
 ```ts
@@ -625,7 +676,7 @@ export default defineConfig({
 
 **バージョン**: Next.js 15+（`output: 'export'` を使う構成を想定）, Playwright 1.40+
 **確信度**: 中
-**最終更新**: 2026-08-15
+**最終更新**: 2026-10-25
 
 ---
 

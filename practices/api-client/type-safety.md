@@ -72,6 +72,8 @@ Zod でランタイム検証を行い、期待と異なるデータを早期に�
 - Zod v4 は文字列パースが約14倍、配列パースが約7倍高速化し、バンドルサイズも約2.3倍小さくなった。`z.string().email()` → `z.email()` のようにバリデータがトップレベル関数に昇格し、`error.flatten()` → `z.flattenError(result.error)` もグローバル関数に変更された
 - `z.uuid()` は v4 で RFC 9562/4122 準拠の厳格な検証になった（非準拠UUIDを拒否する場合があるため、ゆるい検証が必要なら `z.guid()` を使う）
 - `safeParse` の結果を型ガード関数でラップすると二重parseと `transform` 効果の損失が起きるため、結果はラップせず直接使う。外部データの検証はAPIクライアント層（アプリ境界）で1回だけ行い、以降は型安全として扱う
+- v4 では `ZodError` の `.errors`（v3 の `.issues` の別名）が削除されたので `.issues` を使う。`z.string().uuid()` / `.datetime()` / `.url()` などのメソッド形式は非推奨で、`z.uuid()` / `z.iso.datetime()` / `z.url()` を使う
+- 検証に失敗したレスポンスは未検証のデータであり、PII やトークンを含みうる。監視サービスには受信データ全文を送らず、issue のパス・コード・期待型だけを送る（PII スクラブの方針は `practices/observability/error-tracking.md` #3）
 
 **コード例**:
 ```ts
@@ -79,34 +81,44 @@ Zod でランタイム検証を行い、期待と異なるデータを早期に�
 import { z } from 'zod';
 
 export const UserSchema = z.object({
-  id: z.string().uuid(),
+  id: z.uuid(),
   name: z.string().min(1).max(100),
   email: z.email(), // v4: z.string().email() から昇格
   role: z.enum(['admin', 'member', 'viewer']),
-  createdAt: z.string().datetime(),
+  createdAt: z.iso.datetime(),
   profile: z.object({
-    avatarUrl: z.string().url().nullable(),
+    avatarUrl: z.url().nullable(),
     bio: z.string().optional(),
   }).optional(),
 });
 
 // Zod スキーマから TypeScript 型を自動生成（重複定義不要）
 export type User = z.infer<typeof UserSchema>;
+```
 
-// APIレスポンスの検証
-async function fetchUser(id: string): Promise<User> {
+```ts
+// lib/api/users.ts
+import * as Sentry from '@sentry/nextjs';
+import { UserSchema, type User } from '@/lib/schemas/user';
+
+export async function fetchUser(id: string): Promise<User> {
   const res = await fetch(`/api/users/${id}`);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-  const json = await res.json();
+  const json: unknown = await res.json();
 
   // safeParse でエラーハンドリング
   const result = UserSchema.safeParse(json);
   if (!result.success) {
-    // スキーマ不一致をエラー監視サービスに送信
-    captureError(new Error('API schema mismatch'), {
-      validationErrors: result.error.errors,
-      received: json,
+    // 受信データ（json）は送らず、どこが・何を期待して外れたかだけを送る
+    Sentry.captureException(new Error('API schema mismatch'), {
+      extra: {
+        issues: result.error.issues.map((issue) => ({
+          path: issue.path.map(String).join('.'),
+          code: issue.code,
+          expected: 'expected' in issue ? issue.expected : undefined,
+        })),
+      },
     });
     throw new Error('API レスポンスの形式が想定と異なります');
   }
@@ -115,11 +127,16 @@ async function fetchUser(id: string): Promise<User> {
 }
 
 // Bad: レスポンスを型アサーションで素通し
-const user = await res.json() as User;  // ランタイムで壊れる可能性がある
+export async function fetchUserUnsafe(id: string): Promise<User> {
+  const res = await fetch(`/api/users/${id}`);
+  return (await res.json()) as User;  // ランタイムで壊れる可能性がある
+}
 ```
 
 **出典**:
 - [Zod Docs](https://zod.dev) (Zod公式)
+- [Zod 4: Migration guide](https://zod.dev/v4/changelog) (Zod公式、`.errors` の削除と文字列フォーマットのトップレベル化) ※2026-10-25 確認
+- [Zod: Defining schemas](https://zod.dev/api) (Zod公式、`z.uuid()` / `z.iso.datetime()` / `z.url()`) ※2026-10-25 確認
 - [TypeScript 5.5の型ガードとZod v4で、APIレスポンスを安全に扱おう](https://zenn.dev/lv/articles/214f22bbc6df17) (Zenn lv、v4破壊的変更と推奨パターン) ※2026-05-06 fetch
 - [ゼロから構築！Zod v4で叶える型安全なスキーマ駆動開発](https://zenn.dev/fd_ai_teacher/articles/tech-20260816020131-1) (Zenn fd_ai_teacher、パース速度・バンドルサイズの改善幅) ※2026-08-16 fetch
 
@@ -129,7 +146,7 @@ const user = await res.json() as User;  // ランタイムで壊れる可能性�
 
 **バージョン**: Zod 4+
 **確信度**: 高
-**最終更新**: 2026-08-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -140,44 +157,44 @@ const user = await res.json() as User;  // ランタイムで壊れる可能性�
 
 **根拠**:
 - Valibot はモジュラー設計で使用したバリデーターのみがバンドルに含まれる（tree-shakable）
-- Zod は全体が1モジュールのため、使用量に関わらず一定のバンドルサイズがかかる
+- Zod（通常の `zod`）はメソッドチェーン設計のため、使っていないメソッドもバンドラーで除去しにくい。Zod 4 の `zod/mini`（関数型 API）を使うと差は縮む。Valibot 公式の比較（ログインフォームのスキーマ、esbuild）では Zod 約 17.7 kB、Zod Mini 約 6.88 kB、Valibot 1.37 kB
 - API は Zod に類似しているため移行のコストが低い
 - クライアントバンドルへの影響が大きいプロジェクトで特に有効
 
 **コード例**:
 ```ts
-// Valibot の使用例
+// Valibot の使用例（v1: 検証は v.pipe() でつなぐ）
 import * as v from 'valibot';
 
 const UserSchema = v.object({
-  id: v.string([v.uuid()]),
-  name: v.string([v.minLength(1), v.maxLength(100)]),
-  email: v.string([v.email()]),
+  id: v.pipe(v.string(), v.uuid()),
+  name: v.pipe(v.string(), v.minLength(1), v.maxLength(100)),
+  email: v.pipe(v.string(), v.email()),
   role: v.picklist(['admin', 'member', 'viewer']),
-  createdAt: v.string([v.isoTimestamp()]),
+  createdAt: v.pipe(v.string(), v.isoTimestamp()),
 });
 
-type User = v.Output<typeof UserSchema>;
+type User = v.InferOutput<typeof UserSchema>;
 
-// safeParse（Zod と同じ使い勝手）
-const result = v.safeParse(UserSchema, json);
-if (!result.success) {
-  console.error(result.issues);
-  throw new Error('Invalid user data');
+export function parseUser(json: unknown): User {
+  // safeParse（Zod と同じ使い勝手）
+  const result = v.safeParse(UserSchema, json);
+  if (!result.success) {
+    console.error(result.issues);
+    throw new Error('Invalid user data');
+  }
+  return result.output;
 }
-const user = result.output;
-
-// Zod との比較
-// Zod:    ~14KB gzip（全機能）
-// Valibot: ~2KB gzip（使用部分のみ）
 ```
 
 **出典**:
 - [Valibot Docs](https://valibot.dev) (Valibot公式)
+- [Valibot: Introduction](https://valibot.dev/guides/introduction/) (Valibot公式、`v.pipe()` と `v.InferOutput`) ※2026-10-25 確認
+- [Valibot: Comparison](https://valibot.dev/guides/comparison/) (Valibot公式、Zod / Zod Mini とのバンドルサイズ比較) ※2026-10-25 確認
 
-**バージョン**: Valibot 0.31+
+**バージョン**: Valibot 1.0+
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -266,31 +283,29 @@ jobs:
 
 OpenAPI スペックファイル（JSON/YAML）から `openapi-typescript` を使って型を生成し、
 手書きの interface/type 定義をゼロにする。
-CI でスペックとの整合を確認し、型の陳腐化を防ぐ。
+スキーマ駆動の方針とツール選定は #1、CI でのドリフト検出は #4、生成型を使うクライアントの作り方は `practices/api-client/rest.md` #3 を参照。
 
 **根拠**:
 - 手書き型定義はバックエンドの変更に追随できず、型と実データの乖離がサイレントに発生する
 - `openapi-typescript` はパス・パラメータ・リクエストボディ・レスポンスの型を網羅的に生成する
 - 生成型は `paths` オブジェクトに集約されており、`openapi-fetch` の `createClient<paths>` と組み合わせると全エンドポイントが型付きになる
 - `$defs` や `allOf` / `oneOf` も正確に TypeScript の型へ変換される
+- 生成型はコンパイル時の保証であり、実行時にレスポンスを検証するものではない。信頼できない API のレスポンスは #2 のスキーマ検証も併用する
 
 **コード例**:
 ```bash
-# インストール
+# インストール（devDependency）
 npm install -D openapi-typescript
 
-# ローカルの OpenAPI ファイルから型を生成
+# リポジトリ内の OpenAPI ファイルから型を生成
 npx openapi-typescript ./openapi.yaml -o src/types/api.d.ts
-
-# リモート URL から直接生成
-npx openapi-typescript https://api.example.com/openapi.json -o src/types/api.d.ts
 
 # package.json スクリプト化
 # "generate:types": "openapi-typescript ./openapi.yaml -o src/types/api.d.ts"
 ```
 
 ```ts
-// src/types/api.d.ts（生成物 - 手動編集禁止）
+// src/types/api.d.ts（生成物 - 手動編集禁止。説明用に簡略化）
 export interface paths {
   '/users': {
     get: { responses: { 200: { content: { 'application/json': { users: User[] } } } } };
@@ -300,23 +315,21 @@ export interface paths {
     get: { parameters: { path: { id: string } }; responses: { 200: { content: { 'application/json': User } }; 404: never } };
   };
 }
+```
 
-// lib/api-client.ts - 生成型を使って型安全なクライアントを構築
+```ts
+// lib/api-client.ts（クライアントの設定とエラー処理は rest.md #3）
 import createClient from 'openapi-fetch';
 import type { paths } from '@/types/api';
 
 export const api = createClient<paths>({ baseUrl: '/api' });
 
-// 全エンドポイントが型付き
-const { data: users } = await api.GET('/users');
-//            ^^^^^ User[] | undefined
+// レスポンス型はスキーマの 200 レスポンスそのもの
+const { data } = await api.GET('/users');
+//      ^^^^ { users: User[] } | undefined（エラー時は undefined）
+```
 
-const { data: newUser } = await api.POST('/users', {
-  body: { name: 'Alice', email: 'alice@example.com' },
-  //     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  //     CreateUserRequest に一致しないとコンパイルエラー
-});
-
+```ts
 // Bad: 手書き型定義（バックエンド変更時に陳腐化する）
 interface User {        // APIと乖離しても TypeScript は気づかない
   id: string;
@@ -331,7 +344,7 @@ interface User {        // APIと乖離しても TypeScript は気づかない
 
 **バージョン**: openapi-typescript 7+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -340,65 +353,122 @@ interface User {        // APIと乖離しても TypeScript は気づかない
 Zod スキーマを「型定義の唯一の正」として扱い、
 `z.infer<typeof Schema>` で TypeScript 型を派生させる。
 型定義とバリデーションロジックの二重管理を解消する。
+`z.infer` による型の派生の基本は #2 で扱い、ここでは変換・部分スキーマ・フォームと API 境界での再利用を扱う。
 
 **根拠**:
 - `z.infer` を使うことでスキーマと型定義が常に同期され、手動での型更新が不要になる
 - フォームバリデーション（React Hook Form + Zod）やAPIレスポンス検証に同一スキーマを再利用できる
 - `z.discriminatedUnion` や `z.transform` を活用してレスポンスの正規化も型安全に行える
+- Zod 4 の `.transform()` は `ZodPipe` を返し、object スキーマのメソッド（`.pick()` / `.omit()` など）を持たない。部分スキーマを派生させるときは、変換前の object スキーマを別に定義してそこから派生させる
 - スキーマをファイル分割してフロント・バック（tRPC 等）で共有できる
-- 「型が付いている」と「実行時に検証されている」を混同しない： `@hono/zod-openapi` の `responses[...].content['application/json'].schema` は OpenAPI ドキュメント生成と TypeScript の型推論にしか使われず、実行時には一切検証されない。`c.json(dbRow)` のように DB の生データをそのまま返すと、型上は正しく見えても余分なカラムが漏洩しうるため、`satisfies z.infer<typeof Schema>` や `schema.parse(data)` を通す実装側の一手間が別途必要になる
+- 「型が付いている」と「実行時に検証されている」を混同しない： `@hono/zod-openapi` の `responses[...].content['application/json'].schema` は OpenAPI ドキュメント生成と TypeScript の型推論にしか使われず、実行時には一切検証されない。`c.json(dbRow)` のように DB の生データをそのまま返すと、型上は正しく見えても余分なカラム（パスワードハッシュなど）が漏洩しうる
+- 漏洩を防ぐ手段は、返すフィールドだけで DTO を明示的に組み立てるか、`schema.parse(data)` で未知のキーを取り除く（`z.object` は既定で未知のキーを strip する）かのどちらかに限る。`satisfies` は実行時に何も取り除かず、変数を渡したときは余剰プロパティチェックも働かないので、型の整合確認にしか使えない
 
 **コード例**:
 ```ts
 // lib/schemas/post.ts
 import { z } from 'zod';
 
-// スキーマがすべての「型の正」
-export const PostSchema = z.object({
-  id: z.string().uuid(),
+// 変換前の object スキーマを「型の正」として定義する（.pick() などはこちらから派生させる）
+export const PostBaseSchema = z.object({
+  id: z.uuid(),
   title: z.string().min(1).max(200),
   status: z.enum(['draft', 'published', 'archived']),
-  publishedAt: z.string().datetime().nullable(),
+  publishedAt: z.iso.datetime().nullable(),
   tags: z.array(z.string()).default([]),
-  // APIが snake_case を返す場合、transform で camelCase に変換
-  author_id: z.string().uuid(),
-}).transform(data => ({
-  ...data,
-  authorId: data.author_id,  // キー名を正規化
+  author_id: z.uuid(),
+});
+
+// APIが snake_case を返す場合、transform で camelCase に変換
+export const PostSchema = PostBaseSchema.transform(({ author_id, ...rest }) => ({
+  ...rest,
+  authorId: author_id,  // キー名を正規化
 }));
 
 // z.infer で型を自動導出（手書き interface 不要）
 export type Post = z.infer<typeof PostSchema>;
 // => { id: string; title: string; status: 'draft' | 'published' | 'archived';
-//      publishedAt: string | null; tags: string[]; author_id: string; authorId: string }
+//      publishedAt: string | null; tags: string[]; authorId: string }
 
-// フォームバリデーション用に部分スキーマを派生
-export const CreatePostSchema = PostSchema.innerType().pick({
+// フォームバリデーション用に部分スキーマを派生（変換前のスキーマから）
+export const CreatePostSchema = PostBaseSchema.pick({
   title: true,
   status: true,
   tags: true,
 });
 export type CreatePostInput = z.infer<typeof CreatePostSchema>;
+```
 
-// React Hook Form との統合
+```tsx
+// components/create-post-form.tsx
+'use client';
+
+import type { z } from 'zod';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { CreatePostSchema } from '@/lib/schemas/post';
 
-function CreatePostForm() {
-  const form = useForm<CreatePostInput>({
+// .default() があると入力型と出力型が異なるため、両方を渡す
+type CreatePostFormInput = z.input<typeof CreatePostSchema>;
+type CreatePostFormOutput = z.output<typeof CreatePostSchema>;
+
+export function CreatePostForm() {
+  const form = useForm<CreatePostFormInput, unknown, CreatePostFormOutput>({
     resolver: zodResolver(CreatePostSchema),
-    defaultValues: { status: 'draft', tags: [] },
+    defaultValues: { title: '', status: 'draft', tags: [] },
   });
-  // フォームの型とバリデーションが CreatePostSchema から自動導出
+
+  return (
+    <form onSubmit={form.handleSubmit((values) => console.log(values))}>
+      <input {...form.register('title')} />
+      <button type="submit">作成</button>
+    </form>
+  );
 }
+```
+
+```ts
+// lib/api/posts.ts
+import { api } from '@/lib/api-client';
+import { PostSchema, type Post } from '@/lib/schemas/post';
 
 // APIレスポンス検証でも同じスキーマを再利用
-async function fetchPost(id: string): Promise<Post> {
-  const json = await api.GET('/posts/{id}', { params: { path: { id } } });
-  return PostSchema.parse(json.data);  // ランタイム検証 + transform 適用
+export async function fetchPost(id: string): Promise<Post> {
+  const { data, error } = await api.GET('/posts/{id}', { params: { path: { id } } });
+  if (error) throw new Error('記事を取得できませんでした');
+  return PostSchema.parse(data);  // ランタイム検証 + transform 適用
+}
+```
+
+```ts
+// lib/dto/user.ts — DB の行をレスポンスに出すときの漏洩対策
+import { z } from 'zod';
+
+const PublicUserSchema = z.object({ id: z.uuid(), name: z.string() });
+type PublicUser = z.infer<typeof PublicUserSchema>;
+
+type UserRow = { id: string; name: string; passwordHash: string };
+
+// Good: 返すフィールドだけで DTO を明示的に組み立てる
+export function toPublicUser(row: UserRow): PublicUser {
+  return { id: row.id, name: row.name };
 }
 
+// Good: z.object は未知のキーを既定で取り除く（passwordHash は結果に残らない）
+export function toPublicUserByParse(row: UserRow): PublicUser {
+  return PublicUserSchema.parse(row);
+}
+
+// Bad: satisfies は型を確かめるだけ。変数には余剰プロパティチェックも働かず、passwordHash もそのまま返る
+export function toPublicUserUnsafe(row: UserRow) {
+  return row satisfies PublicUser;
+}
+```
+
+```ts
 // Bad: 型定義とバリデーションを別々に管理
+import { z } from 'zod';
+
 interface Post { title: string; status: string }  // Zod スキーマとズレが生じやすい
 const titleSchema = z.string().min(1);              // 型と分離して管理
 ```
@@ -409,12 +479,14 @@ const titleSchema = z.string().min(1);              // 型と分離して管理
 
 **出典**:
 - [Zod: Type Inference](https://zod.dev/?id=type-inference) (Zod公式)
+- [Zod: Defining schemas](https://zod.dev/api) (Zod公式、`z.object` は既定で未知のキーを strip する) ※2026-10-25 確認
+- [Zod 4: Migration guide](https://zod.dev/v4/changelog) (Zod公式、`.transform()` が `ZodPipe` を返す) ※2026-10-25 確認
 - [React Hook Form: Zod Resolver](https://react-hook-form.com/docs/useform#resolver) (React Hook Form公式)
-- [hono/zod-openapiでレスポンススキーマを静的に検証する方法](https://qiita.com/natsugure/items/4b592c94752a473160e7) (Qiita、`@hono/zod-openapi` のレスポンススキーマがランタイム未検証である実例と `satisfies`/`typedJson()` による対策) ※2026-08-21 fetch
+- [hono/zod-openapiでレスポンススキーマを静的に検証する方法](https://qiita.com/natsugure/items/4b592c94752a473160e7) (Qiita、`@hono/zod-openapi` のレスポンススキーマがランタイム未検証である実例と、静的な型チェックとしての `satisfies` / `typedJson()`) ※2026-08-21 fetch
 
-**バージョン**: Zod 3+
+**バージョン**: Zod 4+
 **確信度**: 高
-**最終更新**: 2026-08-21
+**最終更新**: 2026-10-25
 
 ---
 
@@ -426,24 +498,25 @@ OpenAPI スペックや GraphQL スキーマを経由したコード生成では
 
 **根拠**:
 - OpenAPI コード生成は「スキーマ更新 → 生成 → コミット → レビュー」のサイクルが必要で間接コストが高い
-- tRPC は Next.js/バックエンド共存（モノレポ）を前提とするが、oRPC は分離構成でも使える
+- 型の共有・配布方法で選ぶ。tRPC はサーバーのルーター型をクライアントが import する方式で、モノレポは必須ではないが、別リポジトリではバックエンドの型をプライベートパッケージとして配布することになり、クライアントとサーバーの整合の保証も弱まる（tRPC 公式 FAQ）。oRPC の contract-first では、スキーマ付きの contract をサーバー実装から独立した共有パッケージにでき、サーバーは `implement(contract)` で実装し、クライアントは contract の型だけを参照する
 - バックエンドの `contract` オブジェクトをそのまま型として参照するため、型の二重管理がなくなる
-- React Query (`useQuery`, `useMutation`) に対応したアダプターが提供されており、既存プロジェクトへの導入がしやすい
+- TanStack Query 向けの `@orpc/tanstack-query` が `queryOptions` / `mutationOptions` を生成するので、既存の `useQuery` / `useMutation` にそのまま渡せる
 
 **コード例**:
-```typescript
-// === バックエンド ===
-// src/api/contract.ts
+```ts
+// === 共有パッケージ ===
+// shared/contract.ts
 import { oc } from '@orpc/contract';
 import { z } from 'zod';
 
 const UserSchema = z.object({
   id: z.string(),
   name: z.string(),
-  email: z.string().email(),
+  email: z.email(),
 });
 
-export const contract = oc.router({
+// contract は普通のオブジェクトでネストする
+export const contract = {
   user: {
     find: oc
       .input(UserSchema.pick({ id: true }))
@@ -451,21 +524,37 @@ export const contract = oc.router({
     list: oc
       .output(z.array(UserSchema)),
   },
-});
+};
+// サーバー側は `import { implement } from '@orpc/server'` の implement(contract) で実装する
+```
 
+```ts
 // === フロントエンド ===
 // lib/orpc-client.ts
-import { createORPCReact } from '@orpc/react-query';
+import { createORPCClient } from '@orpc/client';
+import { RPCLink } from '@orpc/client/fetch';
+import type { ContractRouterClient } from '@orpc/contract';
+import { createTanstackQueryUtils } from '@orpc/tanstack-query';
 import type { contract } from 'shared/contract';
 
-export const orpc = createORPCReact<typeof contract>({
-  baseUrl: '/api',
+const link = new RPCLink({
+  url: `${typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'}/rpc`,
 });
 
-function UserProfile({ id }: { id: string }) {
-  const { data: user } = orpc.user.find.useQuery({
-    input: { id },
-  });
+const client: ContractRouterClient<typeof contract> = createORPCClient(link);
+
+export const orpc = createTanstackQueryUtils(client);
+```
+
+```tsx
+// components/user-profile.tsx（QueryClientProvider の内側で使う）
+'use client';
+
+import { useQuery } from '@tanstack/react-query';
+import { orpc } from '@/lib/orpc-client';
+
+export function UserProfile({ id }: { id: string }) {
+  const { data: user } = useQuery(orpc.user.find.queryOptions({ input: { id } }));
 
   return <div>{user?.name}</div>;
 }
@@ -473,10 +562,15 @@ function UserProfile({ id }: { id: string }) {
 
 **出典**:
 - [oRPC でコード生成なしの型安全API通信を実現する](https://zenn.dev/dress_code/articles/9040b2e3532693) (Zenn dress_code / 2026-05)
+- [oRPC v1: Define Contract](https://v1.orpc.dev/docs/contract-first/define-contract) (oRPC公式) ※2026-10-25 確認
+- [oRPC v1: Implement Contract](https://v1.orpc.dev/docs/contract-first/implement-contract) (oRPC公式、`implement(contract)`) ※2026-10-25 確認
+- [oRPC v1: Client-Side Clients](https://v1.orpc.dev/docs/client/client-side) (oRPC公式、`createORPCClient` / `RPCLink` / `ContractRouterClient`) ※2026-10-25 確認
+- [oRPC v1: TanStack Query](https://v1.orpc.dev/docs/integrations/tanstack-query) (oRPC公式、`createTanstackQueryUtils` / `queryOptions`) ※2026-10-25 確認
+- [tRPC FAQ](https://trpc.io/docs/faq) (tRPC公式、"a monorepo is not mandatory") ※2026-10-25 確認
 
-**バージョン**: @orpc/contract 0.x, @orpc/react-query 0.x
+**バージョン**: @orpc/contract 1.x, @orpc/client 1.x, @orpc/tanstack-query 1.x（2026-10 時点の npm latest は 1.16.1。2.0 は beta）
 **確信度**: 中
-**最終更新**: 2026-05-07
+**最終更新**: 2026-10-25
 
 ---
 

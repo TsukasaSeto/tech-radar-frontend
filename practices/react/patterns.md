@@ -157,60 +157,31 @@ function FloatingWidget() {
 
 Next.js App Router などでは、コンポーネントをデフォルトで Server Component として設計し、
 インタラクティブ性が必要な最小限の部分のみを Client Component に切り出す。
-`"use client"` ディレクティブは境界の葉（leaf）に近いコンポーネントに限定し、
-境界より上にあるコンポーネントツリー全体がクライアントバンドルに含まれることを防ぐ。
+`"use client"` ディレクティブは境界の葉（leaf）に近いモジュールに限定する。
+詳しい説明とコード例は [`nextjs/server-components.md`](../nextjs/server-components.md) #2 を正本とする。
 
 **根拠**:
 - Server Components はバンドルサイズに影響しない（サーバーのみで実行）
-- `"use client"` は宣言されたコンポーネントとその子を全てクライアントバンドルに含める
+- 境界はコンポーネントツリーではなくモジュールの依存関係で決まる。`"use client"` を書いたモジュールと、そこから import されるモジュールがクライアントバンドルに入る。`children` や props として渡された Server Component はサーバーで実行されたまま
 - データフェッチを Server Component に集中させることでウォーターフォールを回避できる
 
-**コード例**:
-```tsx
-// Good: Server Component がデータ取得、Client Component はインタラクションのみ
-// app/dashboard/page.tsx (Server Component)
-async function DashboardPage() {
-  const data = await fetchDashboardData(); // サーバーサイドで解決
-  return (
-    <div>
-      <h1>Dashboard</h1>
-      <StaticSummary data={data} />      {/* Server Component */}
-      <InteractiveChart data={data} />   {/* Client Component */}
-    </div>
-  );
-}
-
-// components/InteractiveChart.tsx
-'use client'; // ここだけ Client Component
-import { useState } from 'react';
-
-export function InteractiveChart({ data }: { data: ChartData }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  return <Chart data={data} activeIndex={activeIndex} onChange={setActiveIndex} />;
-}
-
-// Bad: ページトップに 'use client' を置くとツリー全体がクライアント化
-'use client';
-async function DashboardPage() { // Server Componentの利点がゼロになる
-  ...
-}
-```
+**コード例**: [`nextjs/server-components.md`](../nextjs/server-components.md) #2 を参照
 
 **出典**:
 - [Next.js Docs: Server and Client Components](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns) (Next.js公式)
-- [React Docs: "use client"](https://react.dev/reference/rsc/use-client) (React公式)
+- [React Docs: "use client"](https://react.dev/reference/rsc/use-client) (React公式、境界はモジュールの依存関係で決まり、children として渡した Server Component はサーバーで実行される) ※2026-10-25 確認
 
 **バージョン**: React 19+, Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 6. `"use client"` ディレクティブは境界の葉ノードに最小化し、Serverコンポーネントを Props で貫通させる
 
-`"use client"` 境界の中に Server Component を直接ネストすることはできないが、
-`children` や他の props として渡す（Props drilling）ことで Server Component の出力を
-Client Component ツリー内に埋め込める。これにより `"use client"` の影響範囲を限定できる。
+Client Component のモジュールから Server Component を import すると、そのコンポーネントはクライアントのモジュールとして扱われる（サーバー専用の処理を含めばビルドエラーになる）。
+Server Component の出力を Client Component の中に置きたいときは、`children` や他の props として渡す。これにより `"use client"` の影響範囲を限定できる。
+このファイルでは Context Provider をツリー上位に置く場合の形だけを扱い、合成パターン全般は [`nextjs/server-components.md`](../nextjs/server-components.md) #4 を正本とする。
 
 **根拠**:
 - `children` として渡された Server Component はサーバー側でレンダリングされ、クライアントバンドルに含まれない
@@ -243,21 +214,23 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   );
 }
 
-// Bad: Client Component 内で直接 Server Component をインポートする
+// Bad: Client Component のモジュールで Server Component を import する
 'use client';
-import { HeavyServerComponent } from './HeavyServerComponent'; // エラーになる
+import { HeavyServerComponent } from './HeavyServerComponent';
 export function ClientWrapper() {
-  return <HeavyServerComponent />; // Server Component を直接ネストは不可
+  // HeavyServerComponent はクライアントのモジュールとして扱われ、バンドルに入る。
+  // DB アクセスや server-only モジュールを含んでいればビルドエラーになる
+  return <HeavyServerComponent />;
 }
 ```
 
 **出典**:
 - [Next.js Docs: Composing Client and Server Components](https://nextjs.org/docs/app/building-your-application/rendering/composition-patterns#supported-pattern-passing-server-components-to-client-components-as-props) (Next.js公式)
-- [React Docs: "use client"](https://react.dev/reference/rsc/use-client) (React公式)
+- [React Docs: "use client"](https://react.dev/reference/rsc/use-client) (React公式、境界はモジュールの依存関係で決まり、children として渡した Server Component はサーバーで実行される) ※2026-10-25 確認
 
 **バージョン**: React 19+, Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

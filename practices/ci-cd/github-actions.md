@@ -7,11 +7,12 @@
 ### 1. 標準パイプラインを `ci.yml` 1 本に集約する
 
 `typecheck` / `lint` / `test` / `build` の 4 ステップを `.github/workflows/ci.yml` に集約し、PR で必ず実行する。
-ワークフローを細分化しすぎず、最小限のジョブで保守性を保つ。
+ワークフローを細分化しすぎず、最小限のジョブで保守性を保つ。短いチェックは 1 ジョブの中で順に実行し、checkout と依存インストールを 1 回で済ませる（Rule #14）。
 
 **根拠**:
 - 細かい workflow file が増えると保守不能になる（同じセットアップを毎回書く）
 - 1 ファイルで全ジョブを管理すると node セットアップ・cache キーなどの共通化が容易
+- ジョブを分けるとジョブ数だけ checkout と依存インストールが重複し、課金も 1 分未満切り上げでジョブごとに積み上がる（Rule #12）
 - ジョブ間の依存（`needs:`）で並列化と直列化を制御できる
 - failed run の調査も 1 ファイル内なら追いやすい
 
@@ -20,12 +21,17 @@
 ```yaml
 # .github/actions/setup/action.yml — Install pnpm, Node, deps
 name: Setup
+description: Install pnpm, Node.js and dependencies
 runs:
   using: composite
   steps:
-    - uses: pnpm/action-setup@v3
-    - uses: actions/setup-node@v4
-      with: { node-version: '20', cache: pnpm }
+    - uses: actions/setup-node@v7
+      with: { node-version: 24 }
+    # 実運用ではサードパーティ action を SHA でピン留めする（Rule #9）
+    # pnpm/setup は pnpm v11+ 専用。pnpm のバージョンは package.json の packageManager から読む
+    # setup-node の cache: pnpm は pnpm が先に PATH にないと失敗するため、store のキャッシュは pnpm/setup 側で行う
+    - uses: pnpm/setup@v3
+      with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次で明示する
     - shell: bash
       run: pnpm install --frozen-lockfile
 ```
@@ -38,25 +44,31 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  typecheck: { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm typecheck} ] }
-  lint:      { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm lint} ] }
-  test:      { runs-on: ubuntu-latest, steps: [ {uses: actions/checkout@v4}, {uses: ./.github/actions/setup}, {run: pnpm test --reporter=verbose} ] }
-  build:
+  # Good: 4 ステップを 1 ジョブで順に実行し、セットアップを 1 回にまとめる
+  # Bad: typecheck / lint / test / build を別ジョブにして、セットアップを 4 回繰り返す
+  verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
       - uses: ./.github/actions/setup
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test --reporter=verbose
       - run: pnpm build
         env:
           NEXT_PUBLIC_APP_URL: https://example.com
 ```
 
-Composite Action を使わずに setup ステップを各ジョブで直書きすると、`pnpm/action-setup` / `actions/setup-node` / `pnpm install` の 3 ステップが 4 ジョブで重複し、保守性が落ちる。`actions/cache` を使う場合も Composite Action 内に取り込む。
+テストやビルドが長くなり、並列化で縮む時間が重複するセットアップ（checkout + install）の時間を上回ったときだけ、そのジョブを分ける（シャーディングは Rule #10）。分けた場合も setup は Composite Action を使い、`actions/setup-node` / `pnpm/setup` / `pnpm install` の 3 ステップを各ジョブに直書きしない。`actions/cache` を使う場合も Composite Action 内に取り込む。
 
 **判断軸**:
 - ワークフローは「トリガー × デプロイ先」で分ける
@@ -64,15 +76,19 @@ Composite Action を使わずに setup ステップを各ジョブで直書き�
   - `deploy-staging.yml`: staging デプロイ（main ブランチ）
   - `release.yml`: タグ作成・本番リリース
   - `nightly.yml`: スケジュールジョブ（依存監査・E2E 等）
-- 同じトリガーで複数 workflow を分けない（並列実行の依存管理が困難）
+- 同じトリガーで複数 workflow を分けない（並列実行の依存管理が困難）。ただし次の場合は別 workflow にしてよい
+  - 必要な `permissions` が違う（例: PR にコメントする `bundle-size.yml`（Rule #5）は `pull-requests: write` が要るが、`ci.yml` は `contents: read` だけで済む）
+  - トリガーの `types` や `paths` が違う（例: PR タイトルの lint は `edited` でも動かす `lint-pr-title.yml`（`practices/dx/code-review.md` #1））
+  - 秘密情報を扱う処理を信頼できないコードの実行から分離する（Rule #6 の二分割パターン）
 
 **出典**:
 - [GitHub Actions: Workflow syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions) (GitHub Docs)
 - [GitHub: Composite actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action) (GitHub Docs)
+- [pnpm/setup](https://github.com/pnpm/setup) (pnpm 公式、v3 は pnpm v11+ 専用。`cache` / `install` / `node-version-file` 入力。pnpm 10 以前は `pnpm/action-setup` を使う) ※2026-10-25 確認
 
-**バージョン**: GitHub Actions
+**バージョン**: GitHub Actions（例は Node 24、pnpm 11、actions/checkout v7 / actions/setup-node v7 / pnpm/setup v3）
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -84,7 +100,9 @@ PR で連続 push した時に古い CI run をキャンセルする `concurrenc
 **根拠**:
 - PR で 5 回連続 push すると最初の 4 回の CI run は無意味（最終結果しか見ない）
 - `concurrency.cancel-in-progress: true` で自動的に古い run をキャンセル
-- main ブランチや release タグでは cancel しない（履歴として全 run が必要）
+- main ブランチや release タグでは実行中の run をキャンセルしない
+- `cancel-in-progress: false` でも、同じグループで待機（pending）できるのは既定で 1 件だけ。新しい run が来ると既存の pending は置き換えられる（キャンセルされる）ため、「全 run が順に実行される」わけではない
+- 全 run を順に実行したい場合は `queue: max` を指定する（pending を最大 100 件まで保持し、超えた分はキャンセル。`cancel-in-progress: true` との併用は workflow の検証エラーになる）
 - GitHub Actions の billing は run-minute 課金なので、cancel は直接コスト削減
 
 **設定例**:
@@ -108,7 +126,7 @@ group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
 
 # パターン 3: deployment 排他制御（同じ環境への並行デプロイを防止）
 group: deploy-${{ inputs.environment }}
-cancel-in-progress: false  # キャンセルせずに wait
+cancel-in-progress: false  # 実行中のデプロイは止めない。待機できるのは最新の 1 件だけ
 ```
 
 **ジョブレベルの concurrency**:
@@ -117,14 +135,17 @@ jobs:
   deploy:
     concurrency:
       group: deploy-production
-      cancel-in-progress: false  # production デプロイは順次実行
+      cancel-in-progress: false  # 実行中の production デプロイは中断しない
+      # 既定（queue: single）では、待機中の古いデプロイは新しい run に置き換わり、最新だけが続けて実行される
+      # 全コミットを順にデプロイしたい場合だけ queue: max にする（最大 100 件。cancel-in-progress: true とは併用不可）
     runs-on: ubuntu-latest
     steps:
       - run: ./deploy.sh
 ```
 
 **よくある失敗**:
-- 全 workflow で `cancel-in-progress: true` → main ブランチでの run が他 PR にキャンセルされる
+- main への push にも `cancel-in-progress: true` を適用 → 連続 push で実行中の検証がキャンセルされ、どのコミットで壊れたか追えなくなる
+- `cancel-in-progress: false` なら全 run が順に実行されると思い込む → 待機できるのは 1 件だけで、間の run はキャンセルされる
 - group キーが PR 単位でない → 別 PR が同じグループに入ってお互いキャンセル
 - production デプロイで cancel → 中途半端なデプロイ状態が残る
 
@@ -132,17 +153,18 @@ jobs:
 | シチュエーション | cancel-in-progress |
 |---|---|
 | PR の検証（typecheck / test 等） | `true` |
-| main ブランチへの merge 後の検証 | `false`（履歴を残す） |
+| main ブランチへの merge 後の検証 | `false`（実行中は止めない。全 run を残すなら `queue: max`） |
 | production デプロイ | `false`（中断しない） |
 | preview deploy | `true`（最新のみ） |
 | release ワークフロー（タグ作成） | `false` |
 
 **出典**:
 - [GitHub: Workflow concurrency](https://docs.github.com/en/actions/using-jobs/using-concurrency) (GitHub Docs)
+- [Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) (GitHub Docs、pending は既定で 1 件・`queue: max` は最大 100 件・`cancel-in-progress: true` と併用不可) ※2026-10-25 確認
 
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -154,57 +176,36 @@ jobs:
 **根拠**:
 - `pnpm install --frozen-lockfile` も 30-60 秒かかる。キャッシュで 5 秒に短縮
 - Next.js は `.next/cache` に webpack / babel / SWC のキャッシュを保存。これがあると build 時間が半分以下
-- `actions/setup-node` の `cache:` は依存パッケージのみ。Next.js キャッシュは別途設定
+- `actions/setup-node` の `cache:`（pnpm 11 で `pnpm/setup` を使う場合はその `cache: true`）は依存パッケージのみ。Next.js キャッシュは別途設定
 - Turborepo / Nx を使う場合は Turbo / Nx のリモートキャッシュも併用（[build-cache.md](./build-cache.md) 参照）
 
-**設定例**:
+**設定例**（依存は setup 系 action のキャッシュ、それ以外は `actions/cache` で保存する）:
 ```yaml
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
 
-      - uses: pnpm/action-setup@v3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/setup@v3                # 実運用では SHA でピン留めする（Rule #9）
         with:
-          node-version: '20'
-          cache: pnpm                      # ← pnpm store のキャッシュ
+          node-version-file: false
+          cache: true                      # ← pnpm store のキャッシュ
+          install: false
 
-      # Next.js キャッシュ
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-${{ hashFiles('**/*.[jt]s', '**/*.[jt]sx') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('**/pnpm-lock.yaml') }}-
-
+      # Next.js の .next/cache は build-cache.md #2 の actions/cache ステップをここに置く
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
 ```
 
-**キャッシュキー設計の判断軸**:
-
-| 構成要素 | 例 | 意味 |
-|---|---|---|
-| OS | `${{ runner.os }}` | OS が違うとバイナリ互換性なし |
-| 依存変更 | `hashFiles('pnpm-lock.yaml')` | lockfile が変わったら別キャッシュ |
-| ソース変更 | `hashFiles('**/*.{ts,tsx}')` | ソース変更で Next.js キャッシュをセグメント化 |
-
-**`restore-keys` でフォールバック**:
-```yaml
-key: ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-${{ hashFiles('src/**/*') }}
-restore-keys: |
-  ${{ runner.os }}-nextjs-${{ hashFiles('pnpm-lock.yaml') }}-
-  ${{ runner.os }}-nextjs-
-```
-
-完全一致が無くても、最も近い古いキャッシュを取得して部分再利用できる。
+Next.js キャッシュの `path` / `key` / `restore-keys` は `practices/ci-cd/build-cache.md` #2、キャッシュキーの設計（lockfile ハッシュ + ソースハッシュ、`hashFiles` のパターンの書き方）は同 #3、TypeScript / ESLint のインクリメンタルキャッシュは同 #4 を参照。
 
 **Playwright ブラウザのキャッシュ**:
 ```yaml
-- uses: actions/cache@v4
+- uses: actions/cache@v6
   id: playwright-cache
   with:
     path: ~/.cache/ms-playwright
@@ -212,26 +213,6 @@ restore-keys: |
 
 - if: steps.playwright-cache.outputs.cache-hit != 'true'
   run: pnpm exec playwright install --with-deps
-```
-
-**ESLint / TypeScript のインクリメンタル**:
-```yaml
-- uses: actions/cache@v4
-  with:
-    path: |
-      .eslintcache
-      .tsbuildinfo
-    key: ${{ runner.os }}-lint-${{ hashFiles('**/*.{ts,tsx}') }}
-```
-
-```json
-// tsconfig.json
-{
-  "compilerOptions": {
-    "incremental": true,
-    "tsBuildInfoFile": ".tsbuildinfo"
-  }
-}
 ```
 
 **キャッシュサイズの上限**:
@@ -242,9 +223,9 @@ restore-keys: |
 - [GitHub: Caching dependencies](https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows) (GitHub Docs)
 - [Next.js Docs: CI build caching](https://nextjs.org/docs/app/building-your-application/deploying/ci-build-caching) (Next.js 公式)
 
-**バージョン**: actions/cache v4
+**バージョン**: actions/cache v6 / actions/setup-node v7
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -254,10 +235,11 @@ restore-keys: |
 ただし「すべての OS × すべての Node バージョン」は CI 時間を浪費するため、PR では最小構成・main / nightly で全構成にする。
 
 **根拠**:
-- ライブラリは複数 Node.js バージョン（18, 20, 22）でテストすべき
+- ライブラリはサポート期間内の複数 Node.js バージョン（例: 22 / 24）でテストすべき
 - アプリは LTS 1 バージョンに固定するのが現実的
 - Windows / Linux でテストすると path 区切り・改行コード差で発見できるバグがある
-- 並列ジョブ数は GitHub Actions の billing に影響（Linux 1/Win 2/Mac 10 倍）
+- 並列ジョブ数は GitHub Actions の billing に影響（private リポジトリの標準 runner は 1 分あたり Linux 2-core $0.006 / Windows $0.010 / macOS $0.062。macOS は Linux の約 10 倍）
+- `matrix.include` に `condition:` のようなキーを書いても、matrix の変数が 1 つ増えるだけで条件にはならない。どこからも参照されないため、追加した OS・バージョンのジョブが全 PR で静かに実行される。イベントで構成を変えるときは `fromJSON` で matrix 自体を切り替える
 
 **Matrix 設定**:
 ```yaml
@@ -266,35 +248,33 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        node: [20]
-        include:
-          # main ブランチや nightly で別 OS / バージョンを追加
-          - os: macos-latest
-            node: 20
-            condition: ${{ github.ref == 'refs/heads/main' }}
-          - os: windows-latest
-            node: 20
-            condition: ${{ github.ref == 'refs/heads/main' }}
-          - os: ubuntu-latest
-            node: 22
-            condition: ${{ github.event_name == 'schedule' }}
+        # Bad: include の要素に condition: ${{ github.ref == 'refs/heads/main' }} を書く（条件として評価されない）
+        # Good: イベントに応じて matrix の値そのものを切り替える
+        # PR では Linux のみ、main への push と nightly（schedule）では macOS / Windows を追加する
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest","macos-latest","windows-latest"]') }}
+        # nightly だけ Node 22 も検証する
+        node: ${{ fromJSON(github.event_name == 'schedule' && '[22, 24]' || '[24]') }}
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
         with: { node-version: '${{ matrix.node }}' }
+      - uses: pnpm/setup@v3                # 実運用では SHA でピン留めする（Rule #9）
+        with: { node-version-file: false, cache: true, install: false }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 ```
 
 テストスイートの並列分割（シャーディング）による高速化は Rule #10 を参照。
 
-**コスト計算（公式 GitHub Actions）**:
-- Linux runner: 1 倍
-- Windows runner: 2 倍
-- macOS runner: 10 倍（M1 ベース）
+**コスト計算（GitHub 公式の runner 単価、private リポジトリ）**:
+- Linux 2-core: $0.006 / 分
+- Windows 2-core: $0.010 / 分（Linux の約 1.7 倍）
+- macOS 3/4-core: $0.062 / 分（Linux の約 10 倍）
+- 公開リポジトリの標準 runner は無料。課金はジョブごとに 1 分未満を切り上げる（Rule #12）
+- `pnpm/setup@v3` は pnpm v11 の Intel macOS（`darwin-x64`）向けバイナリがないため、Intel の macOS runner では pnpm v12 以降が必要
 
 「全 OS でテスト」は明確な理由がある時だけ。フロントエンドアプリは通常 Linux のみで十分。
 
@@ -306,10 +286,11 @@ jobs:
 **出典**:
 - [GitHub: Using a matrix](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs) (GitHub Docs)
 - [GitHub Actions: Billing](https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions) (GitHub Docs)
+- [Actions runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing) (GitHub Docs、runner 種別ごとの 1 分あたり単価とジョブ単位の切り上げ) ※2026-10-25 確認
 
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -324,19 +305,14 @@ CI 結果（テストカバレッジ・bundle size 差分・Lighthouse スコア
 - 数値の経緯がコメント履歴として残り、後から「なぜここで悪化したか」を追える
 - bundle size の悪化検出は performance regression を未然に防ぐ最も効果的な防衛策
 
+PR にコメントするジョブには `permissions: pull-requests: write`（checkout するなら `contents: read` も）を明記する。Rule #6 のとおりトップレベルを `permissions: {}` や read-only にしていると、書かない限り 403 になる。以下はステップの抜粋で、サードパーティ action は実運用では SHA でピン留めする（Rule #9）。
+
 **Bundle Size Analyzer**:
-```yaml
-# .github/workflows/bundle-size.yml
-- name: Compare bundle sizes
-  uses: vio/bundle-stats-action@v1
-  with:
-    workflow-job-name: build
-    package-name: '@example/web'
-    annotations: true  # PR コメントに自動投稿
-```
+- `vio/bundle-stats-action` は最終リリースが 2022 年の v1.3.4 で、`runs.using: node16` のまま（Rule #15）。入力も `webpack-stats-path`（webpack の stats ファイル）を前提とするため、採用する場合は保守状況と入力を action.yml で確認する。ここでは次の自前投稿を基本にする
 
 **自前で bundle size を投稿**:
 ```yaml
+# .github/workflows/bundle-size.yml（ジョブに permissions: { contents: read, pull-requests: write }）
 - name: Build
   run: pnpm build
 
@@ -347,7 +323,7 @@ CI 結果（テストカバレッジ・bundle size 差分・Lighthouse スコア
     echo "size_kb=$SIZE" >> $GITHUB_OUTPUT
 
 - name: Comment PR
-  uses: actions/github-script@v7
+  uses: actions/github-script@v9
   with:
     script: |
       const size = ${{ steps.size.outputs.size_kb }};
@@ -363,7 +339,7 @@ CI 結果（テストカバレッジ・bundle size 差分・Lighthouse スコア
 **Lighthouse CI**:
 ```yaml
 - name: Lighthouse CI
-  uses: treosh/lighthouse-ci-action@v11
+  uses: treosh/lighthouse-ci-action@v12
   with:
     urls: |
       ${{ steps.deploy.outputs.preview-url }}
@@ -389,16 +365,20 @@ module.exports = {
 };
 ```
 
-**Test Coverage**:
+**Test Coverage**（Vitest の場合）:
 ```yaml
 - name: Test with coverage
-  run: pnpm test --coverage --reporter=json-summary
+  # Bad: --reporter=json-summary はテスト reporter の指定になり、カバレッジの出力形式は変わらない
+  # Good: カバレッジの形式は --coverage.reporter で指定する（json-summary と、ファイル別表示用の json）
+  run: pnpm vitest run --coverage --coverage.reporter=json-summary --coverage.reporter=json
 
 - name: Coverage report
-  uses: ArtiomTr/jest-coverage-report-action@v2
+  if: always()
+  # Jest 用の ArtiomTr/jest-coverage-report-action ではなく、Vitest の出力を読む action を使う
+  uses: davelosert/vitest-coverage-report-action@v2
   with:
-    coverage-file: ./coverage/coverage-summary.json
-    base-coverage-file: ./coverage-base.json  # main ブランチの基準
+    json-summary-path: ./coverage/coverage-summary.json
+    json-final-path: ./coverage/coverage-final.json
 ```
 
 **よくある PR コメント追加項目**:
@@ -413,7 +393,7 @@ module.exports = {
 **コメント更新（再 push 時）**:
 ```yaml
 - name: Comment PR
-  uses: marocchino/sticky-pull-request-comment@v2
+  uses: marocchino/sticky-pull-request-comment@v3
   with:
     header: bundle-size                # 同じ header で更新（コメント増殖を防止）
     message: |
@@ -424,12 +404,13 @@ module.exports = {
 
 **出典**:
 - [Lighthouse CI Action](https://github.com/treosh/lighthouse-ci-action) (treosh)
-- [Bundle Stats Action](https://github.com/vio/bundle-stats-action) (vio)
+- [Bundle Stats Action](https://github.com/vio/bundle-stats-action) (vio、action.yml で入力と `node16` ランタイムを確認) ※2026-10-25 確認
 - [sticky-pull-request-comment](https://github.com/marocchino/sticky-pull-request-comment) (marocchino)
+- [vitest-coverage-report-action](https://github.com/davelosert/vitest-coverage-report-action) (davelosert、Vitest の `json-summary` / `json` を読む) ※2026-10-25 確認
 
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -455,11 +436,12 @@ on:
 jobs:
   comment:
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.head.sha }}  # ← フォーク側コードを取得
+          # checkout v7 以降はこの組み合わせを既定で拒否する。allow-unsafe-pr-checkout: true で解除できるが、解除しない
       - run: pnpm build  # ← 信頼できないコードを secrets のある環境で実行 ← 危険
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -471,13 +453,18 @@ name: Build (Untrusted)
 on:
   pull_request:   # ← pull_request_target ではなく pull_request を使う
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - run: pnpm install --frozen-lockfile && pnpm build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup   # Rule #1 の Composite Action（pnpm + Node + install）
+      - run: pnpm build
+      - uses: actions/upload-artifact@v7
         with:
           name: build-result
           path: ./dist
@@ -490,19 +477,26 @@ on:
     workflows: ["Build (Untrusted)"]
     types: [completed]
 
+permissions: {}
+
 jobs:
   comment:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read          # 別 run の artifact を取得するのに必要
+      pull-requests: write   # PR へのコメント
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: build-result
           run-id: ${{ github.event.workflow_run.id }}
-      - uses: actions/github-script@v7
+          github-token: ${{ secrets.GITHUB_TOKEN }}  # 別 run から取得するときは必須（省略すると現在の run を探す）
+      - uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}  # ← secrets はここだけで使う
           script: |
-            // PR にコメントを投稿する処理
+            // PR にコメントを投稿する処理（artifact の中身は信頼できない入力として扱い、実行しない）
 ```
 
 **判断軸（いつ二分割が必要か）**:
@@ -511,11 +505,11 @@ jobs:
 | 外部フォークの PR で secrets を使いたい | 二分割パターン必須 |
 | 自分のブランチからの PR のみ | `pull_request` トリガーで OK |
 | Bot PR (Renovate/Dependabot) | secrets 露出しないよう `pull_request` のまま |
-| ラベル起動（trusted PR のみ） | `pull_request_target` + `if: github.actor == 'dependabot[bot]'` で制限可 |
+| ラベル起動（trusted PR のみ） | `pull_request_target` + `if: github.event.pull_request.user.login == 'dependabot[bot]'` で制限可 |
 
 **Dependabot PR に Claude Code Action で AI レビューを行う場合の安全パターン**:
 
-`pull_request_target` + `github.actor == 'dependabot[bot]'` 条件で、外部コードの任意実行なしに Dependabot PR へのコメント権限を取得できる。AI エージェントには `--allowedTools` で権限を最小化し、任意シェルコマンド実行を防ぐ。
+`pull_request_target` + PR 作成者（`github.event.pull_request.user.login`）が `dependabot[bot]` という条件で、外部コードの任意実行なしに Dependabot PR へのコメント権限を取得できる。`github.actor` は「その run を起こした人」で、PR 作成者とは限らない（人が再実行すると変わる）ため、作成者で判定する。AI エージェントには `claude_args` の `--allowedTools` で権限を最小化し、任意シェルコマンド実行を防ぐ。
 
 ```yaml
 # .github/workflows/dependabot-review.yml
@@ -527,24 +521,38 @@ permissions: {}   # デフォルトで全権限を拒否
 
 jobs:
   review:
-    # Dependabot PR のみに限定
-    if: github.actor == 'dependabot[bot]'
+    # Dependabot が作成した PR のみに限定
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
+      id-token: write        # claude-code-action が GitHub App のトークンを取得するのに使う
     steps:
-      - uses: anthropics/claude-code-action@v1
+      # pull_request_target の既定はベースブランチの checkout（PR 側のコードは取得しない）
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: anthropics/claude-code-action@v1   # 実運用では SHA でピン留めする（Rule #9）
         with:
-          # ツールを最小限に制限 — 任意シェル実行を禁止
-          allowed_tools: "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob,WebFetch"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Bot が起こしたイベントは既定で拒否されるため、Dependabot だけ明示的に許可する
+          allowed_bots: 'dependabot[bot]'
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            この依存更新 PR の差分を読み、破壊的変更の有無と確認すべき点を gh pr comment で報告してください。
+          # v1 に allowed_tools 入力はない。ツールの制限は claude_args の --allowedTools で渡す
+          # WebFetch は許可しない（リリースノート等に仕込まれたプロンプトインジェクションの経路になる）
+          claude_args: |
+            --allowedTools "Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Read,Grep,Glob"
 ```
 
 キーポイント:
 - `permissions: {}` をワークフロー冒頭に置き、すべての権限をデフォルト拒否にする
-- `github.actor == 'dependabot[bot]'` で Dependabot 以外のトリガーを排除
+- `github.event.pull_request.user.login == 'dependabot[bot]'` で Dependabot 以外が作成した PR を排除し、`allowed_bots` で Dependabot だけを許可する
 - `--allowedTools` の `:` 区切りサブコマンド制限で、任意 `bash` 実行を防ぐ（`Bash` だけ許可すると全シェルコマンドが実行可能になる）
+- `pull_request_target` のジョブは secrets を持つ。PR 本文や依存の changelog は外部から書き込めるため、外部へ通信するツール（`WebFetch` 等）を渡さず、出力先も PR コメントに限る
+- PR 側のコードを checkout して Claude を動かす構成にはしない。非対話の Claude Code（`claude -p`。claude-code-action も内部で非対話実行する）は、リポジトリの `.claude/settings.json` の hooks や `.mcp.json` のサーバーを信頼確認なしで実行するため、PR に仕込まれたそれらが secrets を持つジョブでの任意コード実行の経路になる（`practices/ai-agent/claude-code.md` #11・#13）
 - **`schedule` トリガーで毎朝 Claude Code を自律実行させる場合も同じ最小権限原則が要る**: `prompt` に「PRにコメントして」と書くだけでは投稿権限は付与されない。`--allowedTools` で `Bash(gh pr comment:*)` 等を明示しないと、実行はされてもコメント投稿だけ失敗する。また `ANTHROPIC_API_KEY` を secrets に残したまま OAuth（サブスクリプション）トークンに切り替えると、意図せず両方の課金経路が併存するため、切り替え時は旧 secrets を削除する
 
 **出典（cron/自律実行での追加知見）**:
@@ -558,7 +566,7 @@ jobs:
 - [ ] `GITHUB_TOKEN` のデフォルト権限をリポジトリ設定で `read-only` に制限しているか
 - [ ] ワークフローのトップレベルに `permissions: {}` を置き、ジョブ単位で必要な権限のみ付与しているか
 - [ ] AI エージェント（Claude Code Action 等）に `--allowedTools` でツールを制限しているか
-- [ ] サードパーティ Action は `uses: actions/checkout@v4` のようなタグではなくコミット SHA にピン留めしているか（タグは改ざん可能）
+- [ ] サードパーティ Action は `uses: some-org/some-action@v1` のようなタグではなくコミット SHA にピン留めしているか（タグは改ざん可能）
 - [ ] 長期間有効な PAT を secrets に保存していない場合、GitHub Apps または OIDC に置き換えているか
 
 **出典引用**:
@@ -577,10 +585,13 @@ jobs:
 - [DependabotのPRをClaude Codeに自動レビューさせるGitHub Actions](https://zenn.dev/mandenaren/articles/dependabot_auto_review) (Zenn、`permissions: {}` デフォルト拒否と `--allowedTools` 制限の実装例) ※2026-05-29に実際にfetch成功
 - [GitHub ActionsにClaude Codeを組み込んで、PRに自動コードレビューを付ける](https://zenn.dev/virtualcraft/articles/claude-code-github-actions-review) (Zenn jmurayama) ※2026-07-08に実際にfetch成功
 - [APIキーなしでClaude CodeをGitHub Actionsで動かして、毎朝勝手に働かせてみた](https://qiita.com/ktdatascience/items/40d86c446779975615c1) (Qiita ktdatascience) ※2026-07-08に実際にfetch成功
+- [anthropics/claude-code-action action.yml（v1）](https://github.com/anthropics/claude-code-action/blob/v1/action.yml) (Anthropic 公式、`prompt` / `claude_args` / `allowed_bots` の入力。`allowed_tools` は存在しない) ※2026-10-25 確認
+- [actions/download-artifact action.yml（v8）](https://github.com/actions/download-artifact/blob/v8/action.yml) (GitHub 公式、別 run・別リポジトリから取得するときは `github-token` が必須) ※2026-10-25 確認
+- [actions/checkout README（v7）](https://github.com/actions/checkout/blob/v7/README.md) (GitHub 公式、`pull_request_target` / `workflow_run` でのフォーク PR checkout を既定で拒否) ※2026-10-25 確認
 
-**バージョン**: GitHub Actions
+**バージョン**: GitHub Actions / actions/checkout v7 / anthropics/claude-code-action v1
 **確信度**: 高
-**最終更新**: 2026-07-08
+**最終更新**: 2026-10-25
 
 ---
 
@@ -615,7 +626,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6   # 実運用では SHA でピン留めする（Rule #9）
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -629,21 +640,28 @@ jobs:
       id-token: write    # OIDC トークン発行に必要
       contents: read
     steps:
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6   # 実運用では SHA でピン留めする（Rule #9）
         with:
           role-to-assume: ${{ vars.OIDC_ROLE_ARN }}
           aws-region: ap-northeast-1
 ```
 
-**AWS IAM ロール信頼ポリシー（最小権限設定）**:
+**AWS IAM ロール信頼ポリシー（最小権限設定。`Statement` 配列の要素 1 つ分）**:
+
+`aud` を `sts.amazonaws.com` に固定し、`sub` はリポジトリの形式に合わせる。2026-07-15 より後に作成された、または immutable subject claim に opt-in したリポジトリでは `sub` にオーナー ID / リポジトリ ID が入る（GitHub Enterprise Server は対象外）。移行中は新旧の形式を両方列挙し（値の配列は OR で評価される）、切り替えを確認したら旧形式を消す。
+
 ```json
 {
   "Effect": "Allow",
   "Principal": { "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com" },
   "Action": "sts:AssumeRoleWithWebIdentity",
   "Condition": {
-    "StringLike": {
-      "token.actions.githubusercontent.com:sub": "repo:my-org/my-repo:ref:refs/heads/main"
+    "StringEquals": {
+      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+      "token.actions.githubusercontent.com:sub": [
+        "repo:my-org/my-repo:ref:refs/heads/main",
+        "repo:my-org@123456/my-repo@456789:ref:refs/heads/main"
+      ]
     }
   }
 }
@@ -681,8 +699,13 @@ resource "aws_iam_role" "github_actions_deploy" {
       Principal = { Federated = aws_iam_openid_connect_provider.github.arn }
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
-        StringLike = {
-          "token.actions.githubusercontent.com:sub" = "repo:my-org/my-repo:ref:refs/heads/main"
+        StringEquals = {
+          "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          # 旧形式（名前ベース）と immutable subject（ID 付き）の両方。移行が済んだら旧形式を消す
+          "token.actions.githubusercontent.com:sub" = [
+            "repo:my-org/my-repo:ref:refs/heads/main",
+            "repo:my-org@123456/my-repo@456789:ref:refs/heads/main",
+          ]
         }
       }
     }]
@@ -695,7 +718,7 @@ resource "aws_iam_role" "github_actions_deploy" {
 - [ ] `role-to-assume` に IAM ロール ARN（`vars.OIDC_ROLE_ARN` 等）を設定
 - [ ] `aws-access-key-id` / `aws-secret-access-key` の指定を削除
 - [ ] AWS 側で GitHub OIDC プロバイダーを作成（アカウントに1回）
-- [ ] IAM ロールの信頼ポリシーで `sub` 条件をリポジトリ・ブランチに絞る（`*` は禁止）
+- [ ] IAM ロールの信頼ポリシーで `aud` を `sts.amazonaws.com` に固定し、`sub` 条件をリポジトリ・ブランチに絞る（`*` は禁止。immutable subject の形式も確認する）
 - [ ] 古い AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY を secrets から削除
 
 **アンチパターン**:
@@ -772,19 +795,20 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [Docker Hub gets OIDC federation for GitHub Actions, retiring the PAT-in-a-secret pattern](https://dev.to/leobaniak/docker-hub-gets-oidc-federation-for-github-actions-retiring-the-pat-in-a-secret-pattern-1392) (dev.to leobaniak、Docker Hub版OIDC federationの`permissions.id-token:write`+`docker/login-action`構成) ※2026-08-01に実際にfetch成功
 - [Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action) (Vercel Changelog公式、`vercel/vcr-action/login@v1`によるVCR版OIDCログイン) ※2026-09-26に実際にfetch成功
 - [Vercel wants static credentials gone. Its own GitHub Actions deploy still needs one.](https://dev.to/leobaniak/vercel-wants-static-credentials-gone-its-own-github-actions-deploy-still-needs-one-1gj6) (dev.to leobaniak、OIDC 未対応デプロイ先での暫定緩和策: 保護 environment・期限設定・fork 隔離) ※2026-10-24 fetch
+- [Configuring OpenID Connect in Amazon Web Services](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws) (GitHub Docs、信頼ポリシーの `aud` / `sub` 条件と immutable subject の形式・適用条件) ※2026-10-25 確認
 
 > "It exchanges the workflow's OIDC token for a short-lived Vercel access token, then uses that token to log in to vcr.vercel.com."
 > ([Push images to Vercel Container Registry from GitHub Actions](https://vercel.com/changelog/vcr-login-github-action), セクション本文) ※2026-09-26に実際にfetch成功
 
-**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
+**バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+（例は v6）, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
 **確信度**: 高
-**最終更新**: 2026-10-24
+**最終更新**: 2026-10-25
 
 ---
 
 ### 8. `actions/checkout` に `persist-credentials: false` を設定し、トークンの自動永続化を無効にする
 
-デフォルトでは `actions/checkout` は GitHub トークンを `$RUNNER_TEMP/git-credentials-<UUID>.config` ファイルに書き込んで永続化する。
+デフォルトでは `actions/checkout` は GitHub トークンを `$RUNNER_TEMP/git-credentials-<UUID>.config` ファイルに書き込んで永続化する（v6 以降。v5 以前は `.git/config` に直接書き込む）。
 後続ステップでサードパーティアクションや侵害されたスクリプトが実行された場合、このファイルからトークンを奪取できてしまう。
 `persist-credentials: false` でトークン永続化を無効にし、認証が必要な場合のみ `gh auth setup-git` で都度設定する。
 
@@ -792,58 +816,65 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - デフォルト (`persist-credentials: true`) では Base64 エンコードされたトークンが git 認証設定ファイルに書き込まれ、後続の全ステップからアクセス可能
 - Rule #6 の pull_request_target サプライチェーンリスクと組み合わせると、外部 PR のスクリプトがトークンを奪取する攻撃経路になる
 - `persist-credentials: false` を設定することでトークンが git 設定ファイルに保存されなくなる
-- `gh auth setup-git` は git コマンド実行時にのみトークンを参照し、永続ファイルを作成しない
+- `gh auth setup-git` は git の credential helper として `gh` を登録するだけで、トークン自体はファイルに書かない。git が認証を求めた時点で、そのステップの環境変数 `GH_TOKEN` からトークンを読む。そのため `GH_TOKEN` は setup のステップだけでなく、`git push` するステップにも渡す
 - `ghasec`・`zizmor`・`ghalint` 等の静的解析ツールで全 workflow の設定漏れを自動検出できる。`zizmor` は `persist-credentials` 漏れだけでなく、`${{ github.event.pull_request.title }}` のような信頼できない式を `run:` に直接展開してしまうテンプレートインジェクション、過剰な `permissions`、SHA 未固定のアクション参照もあわせて検出する
-- `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に `git remote set-url` で認証を明示的に張り直すと安全
+- `claude-code-action` はジョブ内で実行中、自分専用の一時トークンに git 認証設定を書き換える。そのため `gh auth setup-git` を先に実行していても、`claude-code-action` の後段に `git push` ステップを置くと認証設定が上書きされ、push がサイレントに失敗しうる。push 直前に remote URL をトークンを含まない形に戻し、push のステップに限って credential helper（`gh auth setup-git` + `GH_TOKEN`）で認証する。`https://x-access-token:<token>@...` を `git remote set-url` で URL に埋め込むと、トークンが `.git/config` に残り、このルールの趣旨（永続化しない）に反する
 - `claude-code-action` の認証は `anthropic_api_key`（従量課金）以外に、`claude setup-token` で発行した `CLAUDE_CODE_OAUTH_TOKEN` を使う方法もある。Claude の Pro/Max サブスクリプション認証で動作し、実行ログの `total_cost_usd` が `0` になることで API キー課金が発生していないことを確認できる
 
 **コード例**:
 ```yaml
 # Bad: デフォルト（トークンが $RUNNER_TEMP に永続化される）
-- uses: actions/checkout@v4
+- uses: actions/checkout@v7
 
-# Good: persist-credentials を無効化 + SHA ピニング（Rule #6 推奨事項）
-- uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+# Good: persist-credentials を無効化 + SHA ピニング（Rule #9: バージョンコメントを付ける）
+- uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
   with:
     persist-credentials: false
 
-# 認証が必要な git 操作がある場合は gh auth setup-git で設定
+# 認証が必要な git 操作がある場合は gh auth setup-git で設定（push するジョブには permissions: contents: write）
 - name: Setup git credentials
-  run: gh auth setup-git  # 実行時のみトークンを参照、永続ファイルは作成しない
+  run: gh auth setup-git  # credential helper を登録するだけで、トークンはファイルに書かない
   env:
     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 - name: Push changes
-  run: git push origin main  # gh auth setup-git 後は認証済みで動作する
+  run: git push origin main
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # credential helper は push 時にこのステップの GH_TOKEN を読む
 
 # claude-code-action の後段で push する場合は、認証設定の上書きに注意
-- uses: anthropics/claude-code-action@v1
+- uses: anthropics/claude-code-action@v1   # 実運用では SHA でピン留めする（Rule #9）
   with:
     anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
 - name: Push changes after claude-code-action
   run: |
-    # claude-code-action が git 認証設定を専用トークンで上書きしているため張り直す
-    git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+    # Bad: git remote set-url origin "https://x-access-token:${TOKEN}@github.com/..."（トークンが .git/config に残る）
+    # Good: トークンを含まない URL に戻し、このステップの GH_TOKEN を credential helper 経由で使う
+    git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+    gh auth setup-git
     git push origin main
   env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
 
 **`zizmor` での自動検知例**:
 ```yaml
 # .github/workflows/zizmor.yml
 - name: Run zizmor
-  uses: zizmorcore/zizmor-action@v1
+  uses: zizmorcore/zizmor-action@v0.8.0   # 実運用では SHA でピン留めする（Rule #9）
 ```
 ```yaml
 # Bad: PR タイトルを run: に直接展開（テンプレートインジェクション、zizmor が検出）
-- run: echo "PR Title is: ${{ github.event.pull_request.title }}"
+- run: |
+    echo "PR Title is: ${{ github.event.pull_request.title }}"
 
 # Good: 環境変数経由でシェルに渡す（式展開ではなく変数参照にする）
+# run: の値に ": " を含むときは、プレーンスカラーだと YAML の構文エラーになるので run: | で書く
 - env:
     PR_TITLE: ${{ github.event.pull_request.title }}
-  run: echo "PR Title is: $PR_TITLE"
+  run: |
+    echo "PR Title is: $PR_TITLE"
 ```
 
 **出典引用**:
@@ -866,9 +897,9 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [GitHub Actions専用セキュリティスキャナ「zizmor」でワークフローの脆弱性を自動検知する](https://qiita.com/divertissement215/items/46dc02f4ae8d65291dc6) (Qiita、`zizmor` の具体的な導入手順とテンプレートインジェクション修正例) ※2026-07-25に実際にfetch成功
 - [GitHub ActionsのPR自動レビューを公式claude-code-actionで組む(APIキー課金なし)](https://qiita.com/itaraiguma/items/3a723688a2fe571c33ec) (Qiita itaraiguma、`claude setup-token` による `CLAUDE_CODE_OAUTH_TOKEN` 発行とサブスク課金の実行ログ検証) ※2026-08-01に実際にfetch成功
 
-**バージョン**: actions/checkout v4+ / anthropics/claude-code-action v1 / zizmor
+**バージョン**: actions/checkout v4+（`$RUNNER_TEMP` への保存は v6+。例は v7）/ anthropics/claude-code-action v1 / zizmor
 **確信度**: 高
-**最終更新**: 2026-08-01
+**最終更新**: 2026-10-25
 
 ---
 
@@ -882,27 +913,33 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - フローティングタグは書き換え可能。コミット SHA は不変であり、サードパーティアクションの改ざんを検知できる
 - バージョンコメントがないと fork リポジトリの不審なコミットと区別できない
 - SmartRound の供給チェーン監査基盤でも「アクションのコミット SHA 参照」を必須チェック項目として実装している
-- `pinact v4` の `--verify-comment` オプションで CI 上の SHA とバージョンコメントの整合性を自動検証できる
+- `pinact v4` 以降の `--verify-comment` オプションで CI 上の SHA とバージョンコメントの整合性を自動検証できる
 - SHA ピン留めで守れるのは「参照先コミットの差し替え」だけ。Action が実行時にダウンロードするバイナリ、可変タグで参照するコンテナイメージ、composite action 内部のタグ参照は対象外のため、バイナリはチェックサム検証・イメージは `@sha256:` ダイジェスト指定とし、組織設定の「Enforce SHA Pinning」ポリシーで composite 内の `uses:` までタグ参照を拒否する
+- 本リポジトリの practices にあるコード例は、可読性のため `@v7` のようなタグ表記にしている。実運用では本ルールに従い SHA + バージョンコメントに置き換える（Rule #16 の lockfile に onboard 済みの workflow は、タグ表記のままでも実行時はロック済みのコミットが使われる）
 
 **コード例**:
 ```yaml
 # Good: 40文字 SHA + バージョンコメント（書き換え不可・可読性維持）
 steps:
-  - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
     with:
       persist-credentials: false
-  - uses: actions/setup-node@49933ea5288caeca5a7e7b5f82c67a9e37f3c69b  # v4.4.0
+  - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
     with:
-      node-version: '22'
+      node-version: 24
 
 # Bad: フローティングタグ（タグ書き換えリスク）
-  - uses: actions/checkout@v4
+  - uses: actions/checkout@v7
 ```
 
-**pinact 設定例（pinact.yaml）**:
+**pinact 設定例（`.pinact.yaml`）**:
+
+pinact が自動で読む設定ファイルは `.pinact.yaml` / `.github/pinact.yaml` / `.pinact.yml` / `.github/pinact.yml` で、ルートの `pinact.yaml` は読まれない（読まれないと `min_age` が静かに効かない）。`version`（スキーマバージョン）も必須。
+
 ```yaml
-# 最低 7 日以上経過したコミットのみ許可（直後のマルウェア混入を防ぐ）
+# .pinact.yaml
+version: 3
+# 最低 7 日以上経過したコミットのみ許可（直後のマルウェア混入を防ぐ。pinact v4.0.0+）
 min_age:
   value: 7
 # 特定の条件下でスキップするルール（組織内アクション等）
@@ -921,13 +958,14 @@ rules:
 
 **出典**:
 - [GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f) (Zenn nishino_hiroki、SHA Pinning の守備範囲外: 実行時取得バイナリ・可変タグのコンテナ・composite 内参照) ※2026-10-10に実際にfetch成功
+- [pinact: Configuration File](https://github.com/suzuki-shunsuke/pinact/blob/main/docs/config.md) (pinact 公式、自動検出される設定ファイル名・`version: 3`・`min_age` / `rules`) ※2026-10-25 確認
 
 > "問題は、Action が動き始めてから外から何か実行ファイルを取得するような場合です。"
 > ([GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f), セクション "SHA Pinning で守れないもの") ※2026-10-10に実際にfetch成功
 
-**バージョン**: GitHub Actions 全バージョン
+**バージョン**: GitHub Actions 全バージョン / pinact v4+（設定スキーマ v3）
 **確信度**: 高
-**最終更新**: 2026-10-10
+**最終更新**: 2026-10-25
 
 ---
 
@@ -948,29 +986,42 @@ rules:
 ```yaml
 jobs:
   e2e:
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        shard: [1/4, 2/4, 3/4, 4/4]  # 4並列で実行時間を 1/4 に
+        # Bad: shard: [1/4, 2/4, ...] を artifact 名に使うと "/" が禁止文字で upload が失敗する
+        shardIndex: [1, 2, 3, 4]  # 4並列で実行時間を 1/4 に
+        shardTotal: [4]
     steps:
-      - uses: actions/checkout@v4
-      - run: npx playwright test --shard=${{ matrix.shard }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup   # Rule #1 の Composite Action
+      - run: pnpm exec playwright install --with-deps
+      # blob reporter で出力し、後段のジョブで merge-reports する
+      - run: pnpm exec playwright test --shard=${{ matrix.shardIndex }}/${{ matrix.shardTotal }} --reporter=blob
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
         with:
-          name: blob-report-${{ matrix.shard }}
+          name: blob-report-${{ matrix.shardIndex }}
           path: blob-report/
           retention-days: 1
 ```
+
+シャードごとの blob レポートは、`needs: [e2e]` のジョブで `actions/download-artifact`（`pattern: blob-report-*`、`merge-multiple: true`）でまとめて取得し、`npx playwright merge-reports --reporter html ./all-blob-reports` で 1 つの HTML レポートにする（Playwright 公式の Sharding ページの手順）。
 
 **paths-filter で条件実行**:
 ```yaml
 jobs:
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read   # pull_request では REST API で変更ファイルを取得するため必要
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
       backend: ${{ steps.filter.outputs.backend }}
     steps:
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4   # 実運用では SHA でピン留めする（Rule #9）
         id: filter
         with:
           filters: |
@@ -986,7 +1037,9 @@ jobs:
     if: ${{ needs.changes.outputs.frontend == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: ./.github/actions/setup
       - run: pnpm test
 ```
 
@@ -1006,13 +1059,13 @@ jobs:
 
 **出典**:
 - [CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques) (Zenn) ※2026-06-04 fetch
-- [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式、テスト並列分割)
+- [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式、テスト並列分割。`shardIndex` / `shardTotal` の matrix・blob レポートの upload と merge-reports) ※2026-10-25 確認
 - [Playwright の E2E CI を4分割し、3時間13分から25分に短縮した](https://zenn.dev/thaddeusjiang/articles/ci-e2e-runtime-optimization) (Zenn、3時間13分→25分の実測改善、Vite preview サーバー化とヘルスチェック導入を含む) ※2026-08-21 fetch
 - [Next.jsのDockerビルド時間を約19分短縮した話](https://zenn.dev/rb_engineering/articles/b642bdb5206cb9) (Zenn、QEMU エミュレーションからネイティブ ARM64 runner への切り替えで `next build` を含むビルド&プッシュが24m43s→5m35sに短縮) ※2026-09-11 fetch
 
-**バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v3
+**バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v4
 **確信度**: 中(コミュニティ記事、実績多数)
-**最終更新**: 2026-09-11
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1032,7 +1085,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      # AWS の認証（Rule #7 の OIDC）は省略。サードパーティ action は実運用では SHA でピン留めする（Rule #9）
 
       # 独立した2つのECSデプロイステップを同一ジョブ内で並列実行
       - parallel:
@@ -1072,7 +1127,7 @@ jobs:
 
 **バージョン**: GitHub Actions（2026-06-25 以降、`background`/`wait`/`wait-all`/`cancel`/`parallel` GA）
 **確信度**: 高（公式 changelog + 実測ベンチマーク）
-**最終更新**: 2026-07-11
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1082,17 +1137,23 @@ GitHub Actions の課金は「ジョブ単位」で発生し、実行時間は**
 
 **根拠**:
 - 実処理が数秒でも、ワークフローを分割している数だけ「1分」が積み上がる（例: 4 ワークフローがそれぞれ 3 秒の curl を実行 → 実処理合計 12 秒でも課金は 1分 × 4 = 4分）
-- 無料枠（月 2,000 分）を使い切ると、GitHub は新規ジョブの起動を静かにブロックする。メール通知等の明示的な警告なしに失敗するため、無関係な他のスケジュールジョブ（バックアップ・デプロイ等）も巻き添えで停止し、気づくまで数日かかることがある
+- 課金対象は private リポジトリでの GitHub ホステッド runner の利用で、公開リポジトリの標準 runner と self-hosted runner は無料。無料枠（GitHub Free は月 2,000 分）を使い切ったときの挙動は支払方法と予算の設定で変わる。支払方法が未登録なら以降の実行はブロックされ、登録済みなら超過分が課金される（予算で上限をかけられる）。使用量が 90% / 100% に達するとメールで通知されるが、見落とすと無関係なスケジュールジョブ（バックアップ・デプロイ等）も巻き添えで止まり、気づくまで時間がかかる
 - 同じ処理を行うなら、ワークフロー／ジョブを分割せず 1 ジョブ内に複数ステップとしてまとめる方が、切り上げ回数を減らせる
 - 組織全体で無料枠が尽きかけている場合は「実行時間を削る」前に効く順にコストを絞る: (1) `paths` フィルタとジョブのゲーティングでトリガー条件自体を絞る（最も効果が大きい）、(2) 課金単位（ジョブ単位・1分未満切り上げ）に処理の粒度を合わせて端数の無駄を減らす、(3) それでも足りない場合にキャッシュ・並列化で実処理時間を削る、という順で着手する
 - Settings 側の自動実行（dependency graph の自動ジョブ等）も無料枠を消費するため、必要な場合のみワークフローから明示的に呼び出す形に倒し、常時自動発火は無効化する
 
 **コード例（課金分の再現計算）**:
 ```javascript
-const secs = Math.max(0, (Date.parse(r.updated_at) - started) / 1000);
-if (secs < 8 && r.conclusion === "failure") continue;
-const m = Math.max(1, Math.ceil(secs / 60)); // 1分未満切り上げを再現
-minutes += m;
+// jobs: GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs のレスポンスの jobs 配列
+// Bad: run の updated_at から run 単位で 1 回だけ切り上げる（ジョブ数ぶんの切り上げが消えて過小に見積もる）
+// Good: ジョブごとに 1 分未満を切り上げてから合算する
+function billableMinutes(jobs) {
+  return jobs
+    .filter((job) => job.started_at && job.completed_at)
+    .map((job) => (Date.parse(job.completed_at) - Date.parse(job.started_at)) / 1000)
+    .filter((secs) => secs > 0)
+    .reduce((sum, secs) => sum + Math.ceil(secs / 60), 0);
+}
 ```
 
 **コード例（組織全体の消費内訳を可視化する）**:
@@ -1118,10 +1179,12 @@ gh api "repos/{owner}/{repo}/actions/runs?created=2026-08-01..2026-08-10&per_pag
 **出典**:
 - [GitHub Actionsの無料枠が「3秒のcurl」で溶けた話 — 課金はジョブ単位・1分未満切り上げ](https://qiita.com/my-agent-works/items/8d99600d1185938a375d) (Qiita、無料枠2,000分の36%を12秒相当の処理で消費した実例と静的失敗の挙動) ※2026-08-15に実際にfetch成功
 - [GitHub Actions の無料枠が枯れた日：org 全体の分を数え直す](https://zenn.dev/propagandist/articles/0025-github-actions-org-minutes-budget) (Zenn、PROPAGANDIST CORPORATION所属著者、org全体の消費内訳可視化と3段階の絞り込み戦略) ※2026-08-18 fetch
+- [Actions runner pricing](https://docs.github.com/en/billing/reference/actions-runner-pricing) (GitHub Docs、「GitHub rounds the minutes and partial minutes each job uses up to the nearest whole minute.」) ※2026-10-25 確認
+- [GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions) (GitHub Docs、公開リポジトリは無料・支払方法の有無による超過時の挙動・90% / 100% の通知) ※2026-10-25 確認
 
-**バージョン**: GitHub Actions（全プラン共通の課金モデル）
-**確信度**: 中
-**最終更新**: 2026-08-18
+**バージョン**: GitHub Actions（private リポジトリの GitHub ホステッド runner の課金モデル）
+**確信度**: 高
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1148,8 +1211,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # 実運用では actions を SHA でピン留めする（Rule #9）
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v7
         with: { node-version: 24 }
       - run: npm ci && npm run build
       # output: "export" の静的書き出しが前提。SSR アプリは `npm start` などで起動する
@@ -1170,7 +1234,7 @@ jobs:
 
 **バージョン**: axe-core（WCAG 2.2 AA ルールセット）
 **確信度**: 中（axe-core 自体は業界標準だが、記事の具体的な実装は単独ソース）
-**最終更新**: 2026-09-19
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1179,7 +1243,7 @@ jobs:
 AIコーディングエージェントの普及でPR・コミットの生成速度が上がり、検証（CI）がボトルネックになるケースが増えている。対処の優先順位は「まず全体をブロックする小さなゲートジョブ（lint・typecheck・変更検知等）を軽量化し、その後にテストシャーディングへ進む」。ゲートジョブが遅いままシャード数だけ増やしても、律速要因はゲート側に残る。
 
 **根拠**:
-- 後続の並列ジョブはすべてゲートジョブの完了を待つため、ゲートの所要時間はそのままクリティカルパスに乗る。シャード数を増やしても待ち時間は短くならず、待機を含めたランナー時間はシャード数ぶん積み上がる（例: 8 シャードが 26 秒のゲートを待つと、壁時計では 26 秒だがランナー時間では約 8 倍を消費する）
+- 後続の並列ジョブはすべてゲートジョブの完了を待つため、ゲートの所要時間はそのままクリティカルパスに乗る。シャード数を増やしてもこの待ち時間は短くならない（例: 8 シャードが 26 秒のゲートを待つと、8 本すべての結果が 26 秒ずつ遅れる）。`needs` で待っているジョブは起動前なので runner 時間は消費しない。ゲートが増やすのは壁時計の遅延（フィードバックが届くまでの時間）であり、runner 消費が増えるのはシャードごとに重複するセットアップのほう（次項以降）
 - 変更検知・チェックアウトの浅い取得（`fetch-depth: 1` やsparse/blobless checkout）でゲートジョブ自体の所要時間を削減できる
 - 静的チェック（lint/typecheck/format/依存監査）は互いに依存しないが、短いチェックごとにジョブを分ける（matrix で展開するのも同じ）とチェックアウト・依存インストールがジョブ数だけ重複する。1 ジョブの中で順に実行してセットアップを 1 回にまとめる（課金面は Rule #12、同一ジョブ内の並列化は Rule #11、テストシャーディングは Rule #10 を参照）
 - セットアップコスト（依存インストール・キャッシュ復元）を十分削減できてから初めてテストシャーディングの効果が最大化される。セットアップが遅いままシャード数を増やすと、シャードごとに重複するセットアップコストが積み上がる
@@ -1193,9 +1257,9 @@ jobs:
   fast-checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 1 }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+        with: { fetch-depth: 1, persist-credentials: false }
+      - uses: actions/setup-node@v7
         with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npm run lint
@@ -1217,7 +1281,7 @@ jobs:
 
 **バージョン**: GitHub Actions（全プラン共通）
 **確信度**: 高（Linear公式ブログ + dev.to、異なる著者2記事・コード例あり）
-**最終更新**: 2026-09-22
+**最終更新**: 2026-10-25
 
 ---
 

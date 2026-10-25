@@ -5,9 +5,9 @@
 ### 1. Testing Library の `getByRole` を優先してクエリを選択する
 
 要素の取得は `getByRole`、`getByLabelText`、`getByText` の順で優先する。
-`getByTestId` は最後の手段とする。
+`getByTestId` は最後の手段とする。クエリの優先順位はこのルールを正とし、ロールとアクセシブルネームの検証という a11y 側の観点は #5 で扱う。
 
-**根拠**::
+**根拠**:
 - `getByRole` はアクセシビリティツリーを使うため、アクセシブルなUIを自然と促進する
 - ロールで取得するとリファクタリング（クラス名変更・マークアップ変更）に強い
 - `data-testid` は実装詳細への依存であり、本番コードを汚染する
@@ -46,7 +46,7 @@ const closeButton = screen.getByRole('button', { name: '閉じる' });
 
 **バージョン**: @testing-library/react 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -115,15 +115,15 @@ describe('SearchInput', () => {
 - 非同期処理完了前にアサートすると「まだ表示されていない要素」を探してテストが落ちる
 - `findBy*` は内部で `waitFor` を使い要素が現れるまで待機する
 - `waitFor` で複数のアサーションをまとめると再試行が最小限になる
-- `act()` は React の state 更新・副作用が完了するまで待機するヘルパーで、`waitFor` とは目的が異なる：`act()` は同期的な React 更新を確定させる用途、`waitFor` は非同期でアサーションが通るまでリトライする用途
+- `act()` はアサーションの前に保留中の React 更新（state 更新・副作用）を反映させるヘルパーで、`waitFor` とは目的が異なる：`act()` は自分で起こした更新を確定させる用途、`waitFor` は非同期でアサーションが通るまでリトライする用途。React 公式は `await act(async () => ...)` の形で使うことを推奨している（同期版は将来削除予定）。Testing Library の `render` や `userEvent` などは内部で `act()` に包まれているので、通常は直接呼ばなくてよい
 - `fetch` リクエストやタイマー等の非 React API は `act()` だけでは待機できない。これらは mock と組み合わせて使う
 
 **コード例**:
 ```tsx
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { server } from '@/mocks/server';  // MSW
-import { rest } from 'msw';
+import { http, HttpResponse } from 'msw/http';  // msw 2.x は 'msw' から import する
+import { server } from '@/mocks/server';  // MSW の設定は #4
 
 describe('UserList', () => {
   it('should display users after loading', async () => {
@@ -142,8 +142,8 @@ describe('UserList', () => {
 
   it('should show error message on fetch failure', async () => {
     server.use(
-      rest.get('/api/users', (req, res, ctx) => {
-        return res(ctx.status(500));
+      http.get('/api/users', () => {
+        return new HttpResponse(null, { status: 500 });
       })
     );
 
@@ -159,7 +159,7 @@ describe('UserList', () => {
 
 **コード例（act vs waitFor）**:
 ```tsx
-// act(): React の state 更新を確定させる（カスタムフックのテストで多用）
+// act(): 自分で起こした React の state 更新を確定させる（renderHook の result.current を直接操作する場合など）
 it('should increment counter', async () => {
   const { result } = renderHook(() => useCounter());
   await act(async () => {
@@ -183,10 +183,11 @@ it('should display fetched message', async () => {
 **出典**:
 - [Testing Library: Async Utilities](https://testing-library.com/docs/dom-testing-library/api-async) (Testing Library公式)
 - [act vs waitFor](https://dev.to/hmcodes/act-vs-waitfor-5713) (dev.to、`act()` と `waitFor()` の目的の違いと使い分けルール) ※2026-05-25に実際にfetch成功
+- [React Docs: act](https://react.dev/reference/react/act) (React公式、"We recommend using `act` with `await` and an `async` function.") ※2026-10-25 確認
 
-**バージョン**: @testing-library/react 14+
+**バージョン**: @testing-library/react 14+, msw 3+（2.x は import 元だけが異なる）
 **確信度**: 高
-**最終更新**: 2026-05-25
+**最終更新**: 2026-10-25
 
 ---
 
@@ -194,16 +195,18 @@ it('should display fetched message', async () => {
 
 APIリクエストのモックは `msw` を使い、ネットワークレベルでインターセプトする。
 `fetch` や `axios` のモジュールモックは避ける。
+MSW のセットアップ（ハンドラ定義・`setupServer`・テストのライフサイクル・`server.use()` による上書き）はこのルールを正とする。ハンドラをテスト・開発サーバー・Storybook で共有する方針は `practices/testing/test-strategy.md` #6 を参照。
 
 **根拠**:
 - MSW はネットワーク層でモックするため、fetch・axios・ky などのHTTPクライアントを問わない
 - テストとブラウザ（開発環境）で同じモックハンドラを再利用できる
 - モジュールのモックより実際のHTTPリクエストに近い動作をテストできる
+- msw 3.x では `http` / `HttpResponse` の import 元が `msw/http` に、`listen()` のオプション `onUnhandledRequest` が `onUnhandledFrame` に変わった（`setupServer` は引き続き `msw/node`）。2.x を使っている場合は `msw` から import し、`onUnhandledRequest` を使う。3.x は Node.js 22 以上が必要
 
 **コード例**:
 ```ts
 // src/mocks/handlers.ts
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse } from 'msw/http';
 
 export const handlers = [
   http.get('/api/users', () => {
@@ -225,15 +228,17 @@ import { handlers } from './handlers';
 
 export const server = setupServer(...handlers);
 
-// vitest.setup.ts
+// vitest.setup.ts（vitest.config.ts の test.setupFiles に登録する）
+import { beforeAll, afterEach, afterAll } from 'vitest';
 import { server } from '@/mocks/server';
 
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
+beforeAll(() => server.listen({ onUnhandledFrame: 'error' }));  // msw 2.x は onUnhandledRequest
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
 // テスト内での上書き
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse } from 'msw/http';
+import { server } from '@/mocks/server';
 
 it('should handle 404', async () => {
   server.use(
@@ -247,21 +252,23 @@ it('should handle 404', async () => {
 
 **出典**:
 - [MSW Docs: Getting Started](https://mswjs.io/docs/getting-started) (MSW公式)
+- [MSW Docs: Migrating from 2.x to 3.x](https://mswjs.io/docs/migrations/2.x-to-3.x) (MSW公式、`msw/http` などのエントリポイントへの移動、`onUnhandledFrame` への改名、Node.js 22 以上) ※2026-10-25 確認
+- [MSW Docs: Node.js integration](https://mswjs.io/docs/integrations/node) (MSW公式、`setupServer` と Vitest のライフサイクル) ※2026-10-25 確認
 
-**バージョン**: msw 2+
+**バージョン**: msw 3+（2.x は上記の import 元とオプション名を読み替える）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
-### 5. Accessibility Query の優先順位を守り、アクセシビリティを担保する
+### 5. Accessibility Query でロールとアクセシブルネームを検証し、セマンティクスの一部を確認する
 
-Testing Library のクエリ選択はアクセシビリティツリーを優先し、
-`getByRole` → `getByLabelText` → `getByPlaceholderText` → `getByText` の順序を厳守する。
-このルールに従うことで、テストがアクセシビリティ検証を兼ねる「二重の安全網」になる。
+クエリの優先順位は #1 を正とする。このルールでは、ロールとアクセシブルネーム（`name` オプション）で要素を取得するテストが、
+セマンティクス（ロール・名前・見出しレベルなど）の一部を確認する手段を兼ねるという観点を扱う。
+ただし a11y を保証するものではない。キーボード操作・フォーカス管理・コントラストはクエリでは検証できないので、別の検査と併用する（`practices/web-standards/accessibility.md` #2 / #3 / #5 / #11）。
 
 **根拠**:
-- `getByRole` が通過することはスクリーンリーダーが認識できることを意味し、a11y を自動的に保証する
+- `getByRole` が通過すれば、その要素がアクセシビリティツリー上で期待したロールと名前を持つことは確認できる。キーボードで操作できるか、フォーカスが正しく移るかまでは分からない
 - ロールと名前（`name` オプション）の組み合わせは ARIA 仕様の正確な反映であり、HTML 構造の変更に対して安定している
 - `getByTestId` に頼るコンポーネントは `aria-label` や `role` が欠落している可能性があり、アクセシビリティ負債を生む
 
@@ -303,7 +310,7 @@ it('should render product card with accessible elements', () => {
 // Bad: testid や class に頼る
 it('bad example', () => {
   render(<ProductCard product={mockProduct} />);
-  expect(screen.getByTestId('product-card')).toBeInTheDocument(); // a11y 担保なし
+  expect(screen.getByTestId('product-card')).toBeInTheDocument(); // ロール・名前を何も確認していない
   expect(document.querySelector('.add-to-cart-btn')).toBeInTheDocument(); // 実装詳細
 });
 ```
@@ -314,7 +321,7 @@ it('bad example', () => {
 
 **バージョン**: @testing-library/react 14+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -384,8 +391,8 @@ test('does not work', async () => {
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**確信度**: 中（出典は 1 冊の Zenn book のみ）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -399,7 +406,7 @@ Playwright のコンポーネントテスト（Component Testing）は 1.62 で�
 - `fixtures.mount()` は gallery に遷移して story id でマウントし、story のルート要素にスコープした `Locator` を返す設計になっている
 - 1.62.0 自体にリグレッションが報告されているため、導入時は `1.62.1` 以降を明示的に指定する
 - story は「コンポーネントの 1 つの状態」を表す単位であり、ハードコードした props・モックデータ・Provider・必要なコールバックを 1 か所に束ねる。テストは story を指定して `mount()` するだけになるため、テストごとに JSX を書き直す必要がなくなり、同じ状態を複数テストで再利用できる
-- Storybook が「人が目視で確認する」用途なのに対し、Playwright の CT は「実ブラウザで自動検証する」用途。同じ story 概念でも役割が異なるため、どちらかで代替しようとしない
+- 使い分けは機能ごとに決める。カタログ（人が目視で確認する）は Storybook、操作テスト（実ブラウザでの自動検証）は Playwright CT か、Storybook のストーリーをそのまま Vitest で実行する `@storybook/addon-vitest`（#8）のどちらか、視覚差分は `toHaveScreenshot()`（`practices/testing/e2e-testing.md` #5）か Storybook 連携の VRT のどちらか。同じ状態定義を Playwright の story と Storybook のストーリーに二重に書かないよう、操作テストの置き場所はどちらか一方に寄せる
 
 **コード例**:
 ```typescript
@@ -472,7 +479,7 @@ test('button becomes enabled after input', async ({ mount }) => {
 
 **バージョン**: Playwright 1.62.1+
 **確信度**: 高（異なる著者による2記事＋コード例でパターン2を満たすため 2026-08-28 に「中」から格上げ）
-**最終更新**: 2026-08-28
+**最終更新**: 2026-10-25
 
 ---
 
@@ -483,13 +490,14 @@ Storybook のストーリーファイルは UI カタログであると同時に
 **根拠**:
 - ストーリー自体がテストのソースになるため、コンポーネントの見た目パターンを追加するたびに個別の `*.test.tsx` を書く二重メンテナンスを避けられる
 - Vitest browser mode は実ブラウザ（Playwright provider）で実行されるため、jsdom 未対応の CSS・レイアウト依存挙動を含めて検証できる
-- 既存ルール7（async Server Component のテストツール振り分け）とは直交する — こちらは「同期コンポーネントのストーリーをテスト化する」手段であり、`experimentalRSC` は「async Server Component をモックする」手段
+- 既存ルール6（async Server Component のテストツール振り分け）とは直交する — こちらは「同期コンポーネントのストーリーをテスト化する」手段であり、`experimentalRSC` は「async Server Component をモックする」手段
+- Vitest 4 以降、Playwright provider は別パッケージ `@vitest/browser-playwright` から関数として import し、`provider: playwright()` の形で渡す（Vitest 3 までの `provider: 'playwright'` という文字列指定や `@vitest/browser/providers/playwright` からの import は使わない）
 
 **コード例**:
 ```ts
 // vitest.config.ts
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
-import { playwright } from '@vitest/browser/providers/playwright';
+import { playwright } from '@vitest/browser-playwright';
 import path from 'node:path';
 
 export default {
@@ -512,6 +520,9 @@ export default {
 > "ストーリーを書けば、それがそのままブラウザ実行のテストになる"
 > ([StorybookのストーリーをそのままVitestのテストにする](https://zenn.dev/hirodeath/articles/storybook-vitest-browser-mode), セクション "構成の概要") ※2026-09-03に実際にfetch成功
 
-**バージョン**: Storybook 9+ (`@storybook/addon-vitest`), Vitest 3+ (browser mode)
+**出典**:
+- [Vitest Docs: Browser Mode](https://vitest.dev/guide/browser/) (Vitest公式、`import { playwright } from '@vitest/browser-playwright'` と `provider: playwright()`) ※2026-10-25 確認
+
+**バージョン**: Storybook 9+ (`@storybook/addon-vitest`), Vitest 4+ (browser mode, `@vitest/browser-playwright`)
 **確信度**: 中（公式ツールのバージョン固有機能を検証した単独記事、パターン1c採用）
-**最終更新**: 2026-09-03
+**最終更新**: 2026-10-25

@@ -4,8 +4,8 @@
 
 ### 1. テストピラミッドを意識してテストを配置する
 
-ユニットテストを最も多く、E2E テストを最も少なく配置する。
-コストと信頼性のバランスをテストレイヤーで最適化する。
+E2E テストを最も少なくし、遅く不安定なテストに偏らないよう、コストと信頼性のバランスをテストレイヤーで最適化する。
+ユニットと統合（コンポーネント）テストのどちらを最も厚くするか（ピラミッド / トロフィー / ダイヤモンド）はプロジェクトの性質で決まるので、選び方は #5 を正とする。下の比率は目安で、固定の目標にはしない。
 
 **根拠**:
 - ユニットテストは高速・低コスト・安定しているため大量に書ける
@@ -15,7 +15,7 @@
 
 **コード例**:
 ```
-テストピラミッド:
+テストピラミッド（比率は目安。統合を最も厚くする形は #5）:
 
        /\
       /E2E\     少: 重要なユーザージャーニーのみ (5〜10%)
@@ -58,7 +58,6 @@ export default defineConfig({
 
 **出典**:
 - [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (Martin Fowler)
-- [Write tests. Not too many. Mostly integration.](https://kentcdodds.com/blog/write-tests) (Kent C. Dodds)
 - [「E2Eテストは最小化すべき」の常識を疑う。AI前提のIT/ST/E2Eの役割分担と実運用フローの再設計](https://zenn.dev/sompojapan_dx/articles/7a2de003e25e5f) (Zenn、AI時代のE2Eコスト構造変化・IT/ST/E2E役割分担・運用ガードレール設計) ※2026-06-09に実際にfetch成功
 
 > "AIにより『仕様＋デザインからテスト観点・雛形を生成』でき、失敗原因の切り分けもAIが提示できるようになりました"
@@ -66,7 +65,7 @@ export default defineConfig({
 
 **バージョン**: Vitest 1+, Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-06-09
+**最終更新**: 2026-10-25
 
 ---
 
@@ -120,8 +119,8 @@ it('should format date as YYYY-MM-DD', () => {
 - [Measuring Code Coverage](https://martinfowler.com/bliki/TestCoverage.html) (Martin Fowler)
 
 **バージョン**: Vitest 1+
-**確信度**: 高
-**最終更新**: 2026-05-05
+**確信度**: 中（権威ある 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -156,11 +155,8 @@ export default defineConfig({
 
 // src/test/setup.ts
 import '@testing-library/jest-dom';
-import { server } from '@/mocks/server';
-
-beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+// MSW を使う場合は、このファイルに server.listen / resetHandlers / close を書く
+// （書き方は practices/testing/component-testing.md #4）
 
 // package.json scripts
 // "test": "vitest",
@@ -175,7 +171,7 @@ afterAll(() => server.close());
 
 **バージョン**: Vitest 1+, Next.js 13+（`resolve.tsconfigPaths` は Vite 8+）
 **確信度**: 高
-**最終更新**: 2026-09-24
+**最終更新**: 2026-10-25
 
 ---
 
@@ -225,8 +221,8 @@ it('should render user greeting', () => {
 
 ### 5. テストピラミッドとテストダイヤモンドをフロントエンド文脈で使い分ける
 
-従来のテストピラミッド（ユニット > 統合 > E2E）に加え、フロントエンドではコンポーネント統合テストを厚くした
-「テストダイヤモンド」モデルが有効な場合がある。プロジェクトの特性に応じて戦略を選択する。
+従来のテストピラミッド（ユニット > 統合 > E2E）に加え、フロントエンドではコンポーネント統合テストを最も厚くするモデルが有効な場合がある。プロジェクトの特性に応じて戦略を選択する。テスト戦略の形の選び方はこのルールを正とする（#1 は各レイヤーのコスト特性を扱う）。
+統合を最も厚くする形には、静的解析を土台に含める Kent C. Dodds の「テストトロフィー」と、「テストダイヤモンド」という呼び方がある。どちらも「ユニットより統合を厚く、E2E は最少」という点は同じで、SPA の文脈ではトロフィーと呼ばれることが多い（下の追加根拠）。比率は目安で、固定の目標にはしない。
 
 **根拠**:
 - フロントエンドのビジネスロジックは UIコンポーネントに分散しているため、コンポーネント統合テストが最もROIが高い
@@ -243,9 +239,9 @@ it('should render user greeting', () => {
    /------------\
   /  Unit Tests  \
  /-----------------\
- 比率: Unit 70% / Integ 20% / E2E 10%
+ 比率の目安: Unit 70% / Integ 20% / E2E 10%
 
-テストダイヤモンド（フロントエンド推奨モデル）:
+統合を最も厚くするモデル（トロフィー / ダイヤモンド。フロントエンド推奨）:
      /------\
     / Comp.   \   ← コンポーネント統合テストを最も厚く
    /  Integ.   \
@@ -253,10 +249,10 @@ it('should render user greeting', () => {
  /  Unit Tests   \  ← 純粋関数・hooks のユニットテスト
 /-----------------\
       /E2E\        ← 最重要フローのみ
-比率: Unit 30% / Component Integ 50% / E2E 20%
+比率の目安: Unit 30% / Component Integ 50% / E2E 20%
 
 判断基準:
-- SPAでビジネスロジックがUIに密結合 → ダイヤモンド型
+- SPAでビジネスロジックがUIに密結合 → 統合を最も厚くする（トロフィー / ダイヤモンド型）
 - ライブラリ・ユーティリティ中心     → ピラミッド型
 - BFF/フルスタック構成               → ハイブリッド
 ```
@@ -287,10 +283,11 @@ it('should complete checkout flow end-to-end', async () => {
 **出典**:
 - [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html) (Martin Fowler)
 - [Static vs Unit vs Integration vs E2E Testing](https://kentcdodds.com/blog/unit-vs-integration-vs-e2e-tests) (Kent C. Dodds)
+- [Write tests. Not too many. Mostly integration.](https://kentcdodds.com/blog/write-tests) (Kent C. Dodds、統合テストを最も厚くする考え方)
 
 **バージョン**: Vitest 2+, @testing-library/react 14+
 **確信度**: 中
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -298,16 +295,18 @@ it('should complete checkout flow end-to-end', async () => {
 
 MSW（Mock Service Worker）のハンドラをテスト・開発サーバー・Storybook で共有する単一モック戦略を採用する。
 環境ごとにモックを重複定義するアンチパターンを排除し、モックの一貫性を保つ。
+Vitest 側のセットアップ（`setupServer` のライフサイクル、`server.use()` によるテストごとの上書き、msw 2.x と 3.x の違い）は `practices/testing/component-testing.md` #4 を正とする。このルールでは、同じハンドラを開発サーバーと Storybook にも配る構成を扱う。
 
 **根拠**:
 - テスト・開発・Storybook でモックを共有することで、「テストは通るがブラウザで壊れる」問題を防ぐ
-- MSW 2.x の `http` ハンドラはリクエスト/レスポンスの型安全なインターセプトをサポートする
-- `server.use()` によるテストごとのハンドラ上書きで、エラーケース・ローディング状態を細かくテストできる
+- MSW の `http` ハンドラはリクエスト/レスポンスの型安全なインターセプトをサポートする
+- ハンドラ定義を 1 か所に置き、Node.js 用（`msw/node` の `setupServer`）とブラウザ用（`msw/browser` の `setupWorker`）の両方から読み込む
 
 **コード例**:
 ```ts
-// src/mocks/handlers/users.ts - 共通ハンドラ定義
-import { http, HttpResponse, delay } from 'msw';
+// src/mocks/handlers/users.ts - 共通ハンドラ定義（msw 3.x。2.x は 'msw' から import する）
+import { http, HttpResponse } from 'msw/http';
+import { delay } from 'msw/utils/delay';
 
 export const userHandlers = [
   // 正常系
@@ -332,25 +331,10 @@ import { setupWorker } from 'msw/browser';
 import { userHandlers } from './handlers/users';
 export const worker = setupWorker(...userHandlers);
 
-// src/mocks/server.ts - Node.js 用（Vitest）
+// src/mocks/server.ts - Node.js 用（Vitest。ライフサイクルと server.use() は component-testing.md #4）
 import { setupServer } from 'msw/node';
 import { userHandlers } from './handlers/users';
 export const server = setupServer(...userHandlers);
-
-// テストでのエラーケース上書き
-it('should show error state when API fails', async () => {
-  server.use(
-    http.get('/api/users', () => {
-      return HttpResponse.json(
-        { message: 'Internal Server Error' },
-        { status: 500 }
-      );
-    })
-  );
-
-  render(<UserList />);
-  await expect(screen.findByRole('alert')).resolves.toHaveTextContent('エラーが発生しました');
-});
 
 // Storybook での利用（.storybook/preview.ts）
 // import { initialize, mswLoader } from 'msw-storybook-addon';
@@ -362,10 +346,11 @@ it('should show error state when API fails', async () => {
 - [MSW Docs: Integrations](https://mswjs.io/docs/integrations) (MSW公式)
 - [MSW Docs: Network behavior](https://mswjs.io/docs/network-behavior) (MSW公式)
 - [Storybook: Mock Service Worker Addon](https://storybook.js.org/addons/msw-storybook-addon) (Storybook公式)
+- [MSW Docs: delay](https://mswjs.io/docs/api/delay) (MSW公式、3.x の `import { delay } from 'msw/utils/delay'`) ※2026-10-25 確認
 
-**バージョン**: msw 2+, Vitest 2+
+**バージョン**: msw 3+（2.x は import 元を `msw` に読み替える）, Vitest 2+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -376,18 +361,18 @@ it('should show error state when API fails', async () => {
 
 2026年の現場調査記事として、アーキテクチャに応じたモデル選択を詳細に解説: モノリス→ピラミッド、SPA→トロフィー（統合テストを最も厚く）、マイクロサービス→ダイヤモンド、という対応を明示。また「カバレッジ目標の廃止」についても補強情報を提供：カバレッジとバグ検出率の相関は不明瞭であり、代わりに DORA メトリクス（変更失敗率・MTTR）を品質指標として使うことが推奨されている。「フレーキーテストは別パイプラインに分離してデプロイブロッカーにしない」という運用パターンも実務的な知見として確認された。
 
-**確信度**: 既存（中）→ 高（2026年実務調査で実証済み）
+**確信度**: 既存（中）→ 中（1 記事の現場調査のため据え置き）
 
 ---
 
 ### 7. LLM機能は継続的評価パイプラインでテストする
 
-LLM（大規模言語モデル）を活用する機能は、ユニットテストでは品質を保証できない。
-本番データサンプルを使った自動評価パイプラインを構築し、
+LLM（大規模言語モデル）を活用する機能は、ユニットテストだけでは品質を保証できない。
+構造的な判定を決定的なテストで検証したうえで、本番データサンプルを使った自動評価パイプラインを構築し、
 精度・一貫性をメトリクスで継続監視する。
 
 **根拠**:
-- LLMの出力は非決定的（同じ入力でも異なる出力）であり、`expect(output).toBe(expected)` 形式のユニットテストが成立しない
+- LLMの出力は非決定的（同じ入力でも異なる出力）であり、自然言語の出力そのものに `expect(output).toBe(expected)` で一致を求めるテストは成立しない。一方、出力から取り出した構造的な判定（分類ラベル、pass / fail など）は `toBe` で検証できる（下の追加根拠の Golden Case）。構造判定の決定的なテストと、品質の統計的な評価（このパイプライン）を併用する
 - モデルのバージョン更新・プロンプト変更・コンテキスト変化で挙動が変わるため、継続的な評価が必要
 - 50〜200件の本番データサンプルに対して精度・関連性・安全性などのスコアを計算し、閾値を下回ったらアラートを出すパターンが有効
 - 人間によるラベリングコストが高い場合は LLM-as-a-judge（評価用 LLM が採点）で自動評価できる
@@ -457,7 +442,12 @@ jobs:
   evaluate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
       - name: Run evaluation
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -468,8 +458,8 @@ jobs:
 - [Why Unit Tests Aren't Enough for LLM Features](https://dev.to/benchwright/why-unit-tests-arent-enough-for-llm-features-18m6) (dev.to benchwright / 2026-05) ※2026-05-06に実際にfetch成功
 
 **バージョン**: Node.js 20+, @anthropic-ai/sdk 0.30+
-**確信度**: 高
-**最終更新**: 2026-05-06
+**確信度**: 中（ブログ記事 2 本。本ルールの dev.to と追加根拠の Zenn）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -532,8 +522,8 @@ AI エージェントを E2E テスト実行者として活用する「エージ
 > ([Agentic Testing: Where Agents Fit in the E2E Testing Stack](https://slack.engineering/agentic-testing-where-agents-fit-in-the-e2e-testing-stack/), セクション "Where Agentic Testing Fits in the Testing Pyramid") ※2026-06-11に実際にfetch成功
 
 **バージョン**: Playwright MCP + 各 LLM API（LLM 依存のため固定なし）
-**確信度**: 高
-**最終更新**: 2026-06-11
+**確信度**: 中（Slack Engineering の 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -607,7 +597,7 @@ python mirror_audit.py tests/ --max-mirror-ratio 0.30 || {
 **根拠**:
 - 個別の値でのユニットテストは「その値では正しい」ことしか保証しない。境界値の丸め処理などは入力値の組み合わせ次第で非対称な挙動を生みやすい
 - 「どのコンポーネントが挙動を決定する責任を持つか」を明確化しないまま複数の正しい関数を組み合わせると、責任の所在があいまいな箇所（丸め処理など）が意図せず他のロジックを支配してしまう
-- 実例では `Math.round` が常に切り上げ方向に丸めるため増減ボタンの挙動が非対称になっていたが、個別の値をアサートするユニットテストは21本すべてグリーンのまま検出できず、手動テストで発覚した
+- 実例では増減量の決定を `Math.round` に委ねていたため増減ボタンの挙動が非対称になっていたが、個別の値をアサートするユニットテストは21本すべてグリーンのまま検出できず、手動テストで発覚した。`Math.round` は最も近い整数に丸め、端数がちょうど .5 のときは常に +∞ 方向に丸める（`Math.round(2.5)` は 3、`Math.round(-2.5)` は -2）ので、増やす方向と減らす方向で結果が対称にならない
 
 **コード例**:
 ```ts
@@ -624,7 +614,8 @@ import fc from 'fast-check';
 
 test('increment/decrement は可逆（round-trip）である', () => {
   fc.assert(
-    fc.property(fc.float({ min: 0, max: 200 }), (weight) => {
+    // fc.float は min / max を指定しても既定で NaN を生成するので、noNaN: true を付ける
+    fc.property(fc.float({ min: 0, max: 200, noNaN: true }), (weight) => {
       const step = getWeightStep(availablePlates);
       expect(decrement(increment(weight, step), step)).toBeCloseTo(weight);
     })
@@ -647,9 +638,11 @@ function increment(value: number, step: number) {
 
 **出典**:
 - [テストが21本すべて通るのに、機能が壊れていた](https://zenn.dev/matsutake_prgrm/articles/unit-tests-pass-but-broken) (Zenn) ※2026-08-07に実際にfetch成功
+- [fast-check: Number arbitraries](https://fast-check.dev/docs/core-blocks/arbitraries/primitives/number/) (fast-check 公式、`fc.float` の `noNaN` は既定 `false`) ※2026-10-25 確認
+- [MDN: Math.round()](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round) (MDN Web Docs、.5 は +∞ 方向に丸める)
 
-**バージョン**: フレームワーク非依存（テスト設計原則）
+**バージョン**: フレームワーク非依存（テスト設計原則）。コード例は fast-check 3+
 **確信度**: 低（1記事の主張、パターン1c：単独ソース）
-**最終更新**: 2026-08-07
+**最終更新**: 2026-10-25
 
 ---

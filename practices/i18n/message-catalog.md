@@ -17,27 +17,49 @@ JavaScript 側で if-else しない。
 - ゼロの扱いも言語で分かれる（英語は 0 を複数扱い、フランス語は 0 を単数扱いにする等）。`plural` カテゴリを対象言語ごとに正しく網羅しないと、未対応カテゴリが `other` へ静かにフォールバックし不自然な文言のまま気づかれずに残る
 
 **コード例（ICU MessageFormat）**:
+next-intl はキーの `.` を入れ子のアクセスに使うので、キー自体には `.` を入れず、入れ子のオブジェクトで書く（#2 の階層 namespace と同じ形）。
+
 ```json
 // messages/en.json
 {
-  "inbox.unread": "{count, plural, =0 {No unread} =1 {1 unread message} other {# unread messages}}",
-  "greeting.user": "Hello, {name}!",
-  "greeting.gender": "{gender, select, female {She wrote} male {He wrote} other {They wrote}} this article.",
-  "delete.confirm": "Delete {count, plural, =1 {this item} other {these # items}}?",
-  "date.format": "Published on {date, date, long}",
-  "price.format": "{price, number, ::currency/USD}"
+  "inbox": {
+    "unread": "{count, plural, =0 {No unread} =1 {1 unread message} other {# unread messages}}"
+  },
+  "greeting": {
+    "user": "Hello, {name}!",
+    "gender": "{gender, select, female {She wrote} male {He wrote} other {They wrote}} this article."
+  },
+  "delete": {
+    "confirm": "Delete {count, plural, =1 {this item} other {these # items}}?"
+  },
+  "date": {
+    "format": "Published on {date, date, long}"
+  },
+  "price": {
+    "format": "{price, number, ::currency/USD}"
+  }
 }
 ```
 
 ```json
 // messages/ja.json
 {
-  "inbox.unread": "{count, plural, =0 {未読なし} other {未読 #件}}",
-  "greeting.user": "{name}さん、こんにちは！",
-  "greeting.gender": "{gender, select, other {この人が}}この記事を書きました。",
-  "delete.confirm": "{count, plural, other {これら #件}}を削除しますか？",
-  "date.format": "{date, date, long} 公開",
-  "price.format": "{price, number, ::currency/JPY}"
+  "inbox": {
+    "unread": "{count, plural, =0 {未読なし} other {未読 #件}}"
+  },
+  "greeting": {
+    "user": "{name}さん、こんにちは！",
+    "gender": "{gender, select, other {この人が}}この記事を書きました。"
+  },
+  "delete": {
+    "confirm": "{count, plural, other {これら #件}}を削除しますか？"
+  },
+  "date": {
+    "format": "{date, date, long} 公開"
+  },
+  "price": {
+    "format": "{price, number, ::currency/JPY}"
+  }
 }
 ```
 
@@ -91,14 +113,14 @@ t('messages.unread', { count });
 
 **出典**:
 - [ICU MessageFormat](https://unicode-org.github.io/icu/userguide/format_parse/messages/) (Unicode)
-- [next-intl: Messages](https://next-intl-docs.vercel.app/docs/usage/messages) (next-intl)
+- [next-intl: Messages](https://next-intl.dev/docs/usage/messages) (next-intl 公式、namespace のキーに `.` は使えず、入れ子の表現に使われること) ※2026-10-25 確認
 - [FormatJS: ICU Message Syntax](https://formatjs.io/docs/core-concepts/icu-syntax) (FormatJS)
 - [Unicode CLDR: Plural Rules](https://cldr.unicode.org/index/cldr-spec/plural-rules) (Unicode CLDR)
 - [Zero is singular in French, and five other translation bugs that never throw](https://dev.to/catidegla/zero-is-singular-in-french-and-five-other-translation-bugs-that-never-throw-2gpi) (dev.to、ゼロの単複判定・空文字列がフォールバックを迂回する事例等、実運用で踏みやすい6つの落とし穴) ※2026-09-10 fetch
 
 **バージョン**: ICU MessageFormat 標準, next-intl 3+
 **確信度**: 高
-**最終更新**: 2026-09-10
+**最終更新**: 2026-10-25
 
 ---
 
@@ -224,7 +246,7 @@ i18n/
 **根拠**:
 - 翻訳者は技術者ではない。直接 JSON を編集させると JSON 構文エラーが頻発
 - CAT ツール（Crowdin / Lokalise / Phrase / Localazy）は翻訳メモリ・用語集・進捗管理を提供
-- ツール側で承認された翻訳が PR で自動的に降りてくる運用が業界標準
+- ツール側で承認された翻訳が PR で自動的に降りてくる運用が業界標準（承認済みだけを取り込むには `export_only_approved` を有効にする。既定では未承認の訳も取り込まれる）
 - ARB / XLIFF など標準フォーマットを使えばツール乗り換えコストが下がる
 
 **主要な選択肢**:
@@ -264,17 +286,24 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    # 翻訳ブランチへの push と PR 作成に必要（リポジトリ設定で「GitHub Actions による PR の作成」も許可しておく）
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: crowdin/github-action@v1
+      - uses: actions/checkout@v7
+      # 実運用では SHA でピン留めする（practices/ci-cd/github-actions.md #9）
+      - uses: crowdin/github-action@v3
         with:
           upload_sources: true
           download_translations: true
+          export_only_approved: true  # 承認済みの訳だけを取り込む（未承認の文字列は原文で埋まる）
           create_pull_request: true
           localization_branch_name: i18n/crowdin
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # PR の作成に使う
           CROWDIN_PROJECT_ID: ${{ secrets.CROWDIN_PROJECT_ID }}
-          CROWDIN_API_TOKEN: ${{ secrets.CROWDIN_API_TOKEN }}
+          CROWDIN_API_TOKEN: ${{ secrets.CROWDIN_API_TOKEN }}  # crowdin.yml の api_token_env と同じ名前
 ```
 
 **翻訳ワークフロー**:
@@ -293,26 +322,31 @@ jobs:
 
 **翻訳者向けコメントの埋め込み**（ICU メッセージのコメント）:
 ```json
-// 多くのツールが拡張属性として扱う
+// 多くのツールが拡張属性として扱う（キーは #1 と同じく入れ子で書く）
 {
-  "products.detail.addToCart": {
-    "defaultMessage": "Add to Cart",
-    "description": "Button label on product detail page",
-    "screenshots": ["https://figma.com/proto/..."],
-    "maxLength": 20
+  "products": {
+    "detail": {
+      "addToCart": {
+        "defaultMessage": "Add to Cart",
+        "description": "Button label on product detail page",
+        "screenshots": ["https://figma.com/proto/..."],
+        "maxLength": 20
+      }
+    }
   }
 }
 ```
 
 **出典**:
 - [Crowdin Docs](https://support.crowdin.com/) (Crowdin)
+- [crowdin/github-action](https://github.com/crowdin/github-action) (Crowdin 公式、`GITHUB_TOKEN` に contents / pull-requests の write 権限が必要なこと、`export_only_approved` の既定が `false` であること、最新メジャーが v3 であること) ※2026-10-25 確認
 - [Lokalise Docs](https://docs.lokalise.com/) (Lokalise)
 - [Tolgee](https://tolgee.io/) (Tolgee)
 - [FormatJS: Translation Management](https://formatjs.io/docs/getting-started/message-distribution) (FormatJS)
 
-**バージョン**: パターン（ツール依存）
+**バージョン**: パターン（ツール依存）。例は crowdin/github-action v3
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -324,22 +358,24 @@ jobs:
 **根拠**:
 - メッセージキーの typo は実行時まで気付かない（i18n ライブラリは undefined キーをサイレントに `key` 表示する）
 - `next-intl` / `react-i18next` のどちらも TypeScript declaration で型補完できる
-- 不要になったキーを検出する `unused messages` linter でメッセージファイルが肥大化するのを防ぐ
+- 不要になったキーを検出するツール（未使用キーの検出）でメッセージファイルが肥大化するのを防ぐ
 - 型生成は CI に組み込めば翻訳ファイル変更時に自動更新できる
 
-**next-intl での型補完**:
+**next-intl での型補完（next-intl 4+）**:
 ```ts
-// global.d.ts または next-intl.d.ts
-import { type messages } from './i18n/messages/en.json';
-
-type Messages = typeof messages;
+// global.ts（tsconfig の resolveJsonModule が有効であること。Next.js の既定の tsconfig では有効）
+import { routing } from './i18n/routing';
+import messages from './i18n/messages/en.json';  // JSON は default import で読む
 
 declare module 'next-intl' {
   interface AppConfig {
-    Messages: Messages;
+    Locale: (typeof routing.locales)[number];
+    Messages: typeof messages;
   }
 }
 ```
+
+next-intl 3 系では `AppConfig` がなく、`declare global { interface IntlMessages extends Messages {} }`（`type Messages = typeof messages`）で拡張する。
 
 これで以下のように補完が効く:
 ```tsx
@@ -360,19 +396,21 @@ import * as m from '$paraglide/messages';
 
 **未使用メッセージ検出**:
 ```bash
-# next-intl
-npx next-intl-cli detect-unused
+# next-intl / react-intl / i18next: @lingual/i18n-check（next-intl 対応は experimental）
+# -s: 基準ロケール、--locales: 翻訳ファイルのディレクトリ、-u: 解析するソースのディレクトリ
+npx @lingual/i18n-check --locales messages -s en -f next-intl -u src
 
-# react-i18next
-npx i18next-parser --check
-
-# 自前スクリプト
-npm run build  # bundle 内のメッセージキー使用を検証
+# react-i18next: i18next-cli（i18next-parser は 2025-09 から deprecated で、後継は i18next-cli）
+# 未使用キーがあると非ゼロで終了するので CI のチェックにできる
+npx i18next-cli status --unused
 ```
 
 **実装例（自前スクリプト）**:
+
+`t('...')` の文字列を拾うだけの簡易版で、`useTranslations('home')` / `getTranslations('home')` の namespace を解決しない。`home.title` を `t('title')` で使っていても未使用と判定するので、結果は確認用の候補一覧として扱い、そのまま削除の判断に使わない（削除の判断には namespace を解決する上記のツールを使う）。
+
 ```ts
-// scripts/check-i18n.ts
+// scripts/check-i18n.ts（Node.js 22+。fs/promises の glob を使う）
 import { readFile, glob } from 'node:fs/promises';
 
 const messages = JSON.parse(await readFile('messages/en.json', 'utf-8'));
@@ -424,6 +462,13 @@ function isValidLocale(tag: string): boolean {
 - [next-intl: TypeScript integration](https://next-intl-docs.vercel.app/docs/workflows/typescript) (next-intl)
 - [react-i18next: TypeScript](https://react.i18next.com/latest/typescript) (i18next)
 - [paraglide-js](https://inlang.com/m/gerre34r/library-inlang-paraglideJs) (inlang)
+- [next-intl: TypeScript augmentation](https://next-intl.dev/docs/workflows/typescript) (next-intl 公式、`AppConfig` の `Locale` / `Messages` と JSON の default import) ※2026-10-25 確認
+- [i18next-cli](https://github.com/i18next/i18next-cli) (i18next 公式、`status --unused` が未使用キーで非ゼロ終了すること。npm の i18next-parser は "Project is deprecated, use i18next-cli instead") ※2026-10-25 確認
+- [@lingual/i18n-check](https://github.com/lingualdev/i18n-check) (README、`-u` / `-f next-intl` による未使用キー検出) ※2026-10-25 確認
+
+**バージョン**: TypeScript 5+, next-intl 4+（`AppConfig`。3 系は `IntlMessages`）
+**確信度**: 高
+**最終更新**: 2026-10-25
 
 ---
 
@@ -431,36 +476,70 @@ function isValidLocale(tag: string): boolean {
 
 LLM による自動翻訳はメッセージ内の `{name}` のような変数プレースホルダーや ICU 複数形構文まで「言葉らしきもの」として書き換えてしまうことがある。
 また翻訳漏れのキーは実行時にエラーにならず、対象ロケールのユーザー体験だけが静かに劣化する。
-どちらも人間のレビューだけに頼らず、正規表現によるプレースホルダー照合とロケール間キー差分の両方を CI で機械的に検証する。
+どちらも人間のレビューだけに頼らず、プレースホルダー（ICU メッセージは構文解析した引数）の照合とロケール間キー差分の両方を CI で機械的に検証する。
 
 **根拠**:
 - LLM は `{name}` → `{nombre}` のように変数名自体を翻訳したり、ICU 複数形構文 `{count, plural, one {...} other {...}}` を壊したりすることがある
 - 欠落した翻訳キーはビルドを通過し、実行時にも例外を投げないため気付かれにくい（Rule #4 の「型レベル検証」はキー存在チェックが中心で、ロケール間の翻訳内容の整合性までは検証しない）
 - 「ロケールのドリフトをビルド失敗として扱う」ことが最もレバレッジの高い対策として紹介されている
+- ICU メッセージは正規表現では照合できない。`{count, plural, one {# apple} other {# apples}}` のような入れ子は、正規表現だと訳文ごと 1 つのトークンとして取り込まれ、正しく訳しても不一致になる。`@formatjs/icu-messageformat-parser` で構文木にしてから、引数名と型を比べる（plural / select の分岐キーは言語ごとに違ってよいので比べない）
 
 **コード例**:
 ```javascript
-// プレースホルダー整合性チェック（翻訳前後で構文が変化していないか）
-const PLACEHOLDER = /\{\{?[^}]+\}?\}|%\{[^}]+\}|%[sd]|<\/?[^>]+>/g;
+// プレースホルダー整合性チェック（ICU メッセージ。翻訳前後で引数・型・タグが変わっていないか）
+import { parse, TYPE } from '@formatjs/icu-messageformat-parser';
 
-function placeholders(str) {
-  return (str.match(PLACEHOLDER) ?? []).sort();
+// 引数名と型（argument / number / date / time / plural / select）とタグ名を集める。
+// plural / select の分岐キー（one / many / other など）は言語ごとに違ってよいので比べない
+function signature(message) {
+  const found = new Set();
+  const walk = (elements) => {
+    for (const el of elements) {
+      if (el.type === TYPE.literal || el.type === TYPE.pound) continue;
+      if (el.type === TYPE.tag) {
+        found.add(`<${el.value}>`);
+        walk(el.children);
+        continue;
+      }
+      found.add(`${el.value}:${TYPE[el.type]}`);
+      if (el.type === TYPE.plural || el.type === TYPE.select) {
+        for (const option of Object.values(el.options)) walk(option.value);
+      }
+    }
+  };
+  walk(parse(message));  // LLM が構文を壊していればここで例外になる
+  return [...found].sort();
 }
 
 function validate(source, translated, key) {
-  const a = placeholders(source);
-  const b = placeholders(translated);
+  const a = signature(source);
+  let b;
+  try {
+    b = signature(translated);
+  } catch (err) {
+    throw new Error(`ICU syntax error in "${key}": ${err.message}`);
+  }
   if (JSON.stringify(a) !== JSON.stringify(b)) {
     throw new Error(`Placeholder mismatch in "${key}": ${a} vs ${b}`);
   }
 }
+
+// OK:   '{count, plural, one {# apple} other {# apples}}' と '{count, plural, one {# pomme} many {# de pommes} other {# pommes}}'
+// NG:   'Hello, {name}!' と 'Hola, {nombre}!'（name:argument vs nombre:argument）
 ```
 
+i18next の `{{name}}` のように入れ子にならない書式だけを扱う場合は、正規表現での照合でもよい。
+
 ```bash
-# ロケール間のキー差分をCIで検知する（欠落があれば出力される→ fail させる）
-comm -23 \
+# ロケール間のキー差分をCIで検知する。comm は差分を出力しても終了コードが 0 なので、出力の有無で fail させる
+missing=$(comm -23 \
   <(jq -r 'paths(scalars) | join(".")' locales/en.json | sort) \
-  <(jq -r 'paths(scalars) | join(".")' locales/es.json | sort)
+  <(jq -r 'paths(scalars) | join(".")' locales/es.json | sort))
+if [ -n "$missing" ]; then
+  echo "es.json に無いキー:"
+  echo "$missing"
+  exit 1
+fi
 ```
 
 **出典引用**:
@@ -470,10 +549,6 @@ comm -23 \
 > "The single highest-leverage move: make locale drift fail the build."
 > ([How to keep locale JSON files in sync (next-intl, i18next, or anything else)](https://dev.to/pakvothe/how-to-keep-locale-json-files-in-sync-next-intl-i18next-or-anything-else-17i6), セクション本文) ※2026-07-22に実際にfetch成功
 
-**バージョン**: ライブラリ非依存（next-intl / react-i18next / react-intl 等）
+**バージョン**: ライブラリ非依存（next-intl / react-i18next / react-intl 等）。ICU の解析は `@formatjs/icu-messageformat-parser`
 **確信度**: 中（非公式・単一著者の2記事+コード例のため。異なる著者による裏付けは未確認）
-**最終更新**: 2026-07-22
-
-**バージョン**: TypeScript 5+, next-intl 3+
-**確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

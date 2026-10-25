@@ -6,20 +6,36 @@
 
 `web-vitals` ライブラリを使い、実際のユーザー環境での Core Web Vitals を
 継続的に計測してアナリティクスエンドポイントに送信する。
+Next.js App Router では組み込みの `useReportWebVitals`（`next/web-vitals`）を `'use client'` の専用コンポーネントで呼び、
+root layout は Server Component のまま、そのコンポーネントを置くだけにする。
+RUM の計測と送信はこのルールを正本とする（閾値は `performance/core-web-vitals.md` を参照）。
 
 **根拠**:
-- Lab データ（Lighthouse 等）は実際のユーザー体験を反映しない場合がある
+- Lab データ（Lighthouse 等）は原因の特定に使い、実ユーザーの体験と SEO 評価は Field データ（RUM / CrUX）で判断する
 - `web-vitals` は Chrome が Core Web Vitals の計測に使うものと同じロジックを使用する
 - `rating` フィールドで「good / needs-improvement / poor」の三段階で評価できる
-- `navigator.sendBeacon` を使うことでページ離脱時にもデータが確実に送信される
+- `navigator.sendBeacon` はページ離脱時にも送信をキューに積める。ただしキューに積めなかったときは `false` を返す（キューに積めるデータは合計 64KiB まで）ので、戻り値を見て `fetch` の `keepalive` に切り替える
+- 指標ごとに送らず、Set などに溜めて `visibilitychange` で `document.visibilityState === 'hidden'` になったときにまとめて送ると、離脱時の送信漏れを防ぎつつリクエスト数を減らせる（web-vitals README のバッチ送信パターン）
+- `useReportWebVitals` に渡す関数の参照が変わると、それまでの指標が再度渡されて重複送信になる。モジュールのトップレベルで定義した関数を渡す
+- 送信データにデバイス種別などのセグメント情報を含めると「モバイルの特定ルートで INP が悪化している」といった絞り込みができる。ページはルートテンプレートに正規化してから集計する（#3）
+- 遅い原因の診断情報（attribution ビルド）は #4、JS ブロッキングの特定は #5 を参照
 
 **コード例**:
 ```ts
 // lib/web-vitals.ts
 import { onCLS, onFCP, onINP, onLCP, onTTFB } from 'web-vitals';
-import type { Metric } from 'web-vitals';
 
-function sendToAnalytics(metric: Metric) {
+// web-vitals と next/web-vitals のどちらの Metric も渡せるよう、送信に使う項目だけを受け取る
+export type ReportableMetric = {
+  name: string;
+  value: number;
+  rating: 'good' | 'needs-improvement' | 'poor';
+  delta: number;
+  id: string;
+  navigationType?: string;
+};
+
+export function sendToAnalytics(metric: ReportableMetric) {
   const body = JSON.stringify({
     name: metric.name,
     value: metric.value,         // 実測値（ms または スコア）
@@ -33,21 +49,18 @@ function sendToAnalytics(metric: Metric) {
     version: process.env.NEXT_PUBLIC_APP_VERSION,
   });
 
-  // sendBeacon: ページ離脱時でも確実に送信される
-  if (navigator.sendBeacon) {
-    navigator.sendBeacon('/api/vitals', body);
-  } else {
-    // フォールバック（keep-alive で接続を維持）
-    fetch('/api/vitals', {
-      method: 'POST',
-      body,
-      headers: { 'Content-Type': 'application/json' },
-      keepalive: true,
-    });
-  }
+  // sendBeacon はキューに積めなかったとき false を返すので、そのときは fetch（keepalive）で送る
+  if (navigator.sendBeacon?.('/api/vitals', body)) return;
+
+  fetch('/api/vitals', {
+    method: 'POST',
+    body,
+    headers: { 'Content-Type': 'application/json' },
+    keepalive: true,
+  });
 }
 
-// 全ての Core Web Vitals を計測
+// Next.js 以外（Vite などの SPA）では、ページ読み込みごとに 1 回だけ呼ぶ
 export function measureWebVitals() {
   onCLS(sendToAnalytics);   // Cumulative Layout Shift
   onFCP(sendToAnalytics);   // First Contentful Paint
@@ -58,30 +71,45 @@ export function measureWebVitals() {
 ```
 
 ```tsx
-// app/layout.tsx での初期化
+// app/_components/web-vitals.tsx — Next.js App Router
 'use client';
-import { useEffect } from 'react';
-import { measureWebVitals } from '@/lib/web-vitals';
 
-export function WebVitalsReporter() {
-  useEffect(() => {
-    measureWebVitals();
-  }, []);
+import { useReportWebVitals } from 'next/web-vitals';
+import { sendToAnalytics } from '@/lib/web-vitals';
+
+export function WebVitals() {
+  // 参照が変わらないモジュールトップレベルの関数を渡す（重複送信を防ぐ）
+  useReportWebVitals(sendToAnalytics);
   return null;
 }
+```
 
-// または Next.js の組み込み計測（シンプルな場合）
-// app/layout.tsx
-export { reportWebVitals } from 'next/dist/pages/_app';
+```tsx
+// app/layout.tsx — Server Component のまま、クライアント境界は WebVitals だけにする
+import type { ReactNode } from 'react';
+import { WebVitals } from './_components/web-vitals';
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="ja">
+      <body>
+        <WebVitals />
+        {children}
+      </body>
+    </html>
+  );
+}
 ```
 
 **出典**:
-- [web-vitals GitHub](https://github.com/GoogleChrome/web-vitals) (GoogleChrome / GitHub)
+- [web-vitals GitHub](https://github.com/GoogleChrome/web-vitals) (GoogleChrome / GitHub) ※2026-10-25 確認（バッチ送信パターン）
 - [web.dev: User-centric performance metrics](https://web.dev/articles/user-centric-performance-metrics) (web.dev)
+- [Next.js Docs: useReportWebVitals](https://nextjs.org/docs/app/api-reference/functions/use-report-web-vitals) (Next.js公式) ※2026-10-25 確認
+- [MDN: Navigator.sendBeacon()](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/sendBeacon) (MDN) ※2026-10-25 確認
 
-**バージョン**: web-vitals 4+
+**バージョン**: web-vitals 4+, Next.js 16（App Router の `useReportWebVitals`）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -98,8 +126,11 @@ export { reportWebVitals } from 'next/dist/pages/_app';
 
 **コード例**:
 ```ts
-// lib/web-vitals.ts
+// lib/web-vitals-sampling.ts
 import { onCLS, onINP, onLCP } from 'web-vitals';
+import type { Metric } from 'web-vitals';
+import { datadogRum } from '@datadog/browser-rum';
+import { sendToAnalytics } from '@/lib/web-vitals'; // #1 の送信関数
 
 // サンプリングレート: 本番 10%、ステージング 100%
 const SAMPLE_RATE = process.env.NODE_ENV === 'production' ? 0.1 : 1.0;
@@ -112,8 +143,6 @@ function shouldSample(): boolean {
 const isSampled = shouldSample();
 
 function sendToAnalyticsIfSampled(metric: Metric) {
-  if (!isSampled) return;
-
   // critical ページは常に計測
   const criticalPaths = ['/checkout', '/payment', '/login'];
   const isCriticalPage = criticalPaths.some(path =>
@@ -130,8 +159,6 @@ onINP(sendToAnalyticsIfSampled);
 onCLS(sendToAnalyticsIfSampled);
 
 // Datadog RUM のサンプリング設定
-import { datadogRum } from '@datadog/browser-rum';
-
 datadogRum.init({
   applicationId: process.env.NEXT_PUBLIC_DD_APPLICATION_ID!,
   clientToken: process.env.NEXT_PUBLIC_DD_CLIENT_TOKEN!,
@@ -152,7 +179,7 @@ datadogRum.init({
 
 **バージョン**: web-vitals 4+, @datadog/browser-rum 5+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -166,11 +193,13 @@ Google が Core Web Vitals を判定する基準もp75。
 - Google の CrUX（Chrome UX Report）と PageSpeed Insights は p75 を基準に評価する
 - p75 の改善が検索ランキングへの影響に直結する
 - 「good」の割合をKPIとするのも有効（全セッションの何%が good 以上か）
+- ページのタグは `/products/123` のような生のパスではなく `/products/[id]` のようなルートテンプレートに正規化する。生のパスはタグの種類が際限なく増え、集計コストと p75 の母数の両方が崩れる
 
 **コード例**:
 ```ts
 // app/api/vitals/route.ts - Web Vitals 収集 API
 import { NextRequest } from 'next/server';
+import { sendMetricToDatadog } from '@/lib/datadog'; // Datadog への送信ラッパー（各自の実装）
 
 interface VitalReport {
   name: string;
@@ -181,16 +210,28 @@ interface VitalReport {
   version?: string;
 }
 
+// 数値や UUID のセグメントを [id] に置き換え、ルート単位に集約する（生のパスはタグのカーディナリティが爆発する）
+function toRouteTemplate(pathname: string): string {
+  return pathname
+    .split('/')
+    .map((segment) =>
+      /^\d+$/.test(segment) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(segment)
+        ? '[id]'
+        : segment,
+    )
+    .join('/');
+}
+
 export async function POST(request: NextRequest) {
   const vital = await request.json() as VitalReport;
 
   // Datadog カスタムメトリクスとして送信（p75 計算はDatadog側で実施）
   await sendMetricToDatadog({
     metric: `web_vitals.${vital.name.toLowerCase()}`,
-    value: vital.vital.value,
+    value: vital.value,
     tags: [
       `rating:${vital.rating}`,
-      `page:${vital.page}`,
+      `page:${toRouteTemplate(vital.page)}`,
       `version:${vital.version ?? 'unknown'}`,
     ],
     type: 'distribution',  // distribution 型でパーセンタイルを計算可能
@@ -209,7 +250,7 @@ export async function POST(request: NextRequest) {
 
 **バージョン**: web-vitals 4+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -270,7 +311,7 @@ onINP(({ name, value, rating, attribution }) => {
 - Long Animation Frames（LoAF）API は Long Tasks API の後継で、レンダリングまで含めたブロッキングを計測できる
 - `web-vitals` attribution ビルドの `longAnimationFrameEntries` で INP との相関を確認できる
 - LoAF エントリには `scripts` 配列が含まれ、どのスクリプトがブロッキングしたかのソースURLと実行時間を提供する
-- Chrome 123+ でサポートされ、`durationThreshold` を `50` に設定するとフレームドロップ相当のブロッキングを捕捉できる
+- Chrome 123+ でサポートされる。`PerformanceObserver` の `durationThreshold` は Event Timing（`PerformanceEventTiming`）用のオプションで LoAF には効かないため、報告対象はコード例のように `duration` で間引く
 
 **コード例**:
 ```ts
@@ -324,10 +365,11 @@ observer.observe({ type: 'longtask' }); // LoAF に移行することを推奨
 **出典**:  
 - [Long Animation Frames API](https://developer.chrome.com/docs/web-platform/long-animation-frames) (Chrome Developers / 2024)
 - [web-vitals: longAnimationFrameEntries](https://github.com/GoogleChrome/web-vitals/blob/main/README.md#attribution) (GoogleChrome / GitHub)
+- [MDN: PerformanceObserver.observe()](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver/observe) (MDN、`durationThreshold` の適用対象) ※2026-10-25 確認
 
 **バージョン**: Chrome 123+, web-vitals 4+（attribution ビルド）
 **確信度**: 中
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

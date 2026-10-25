@@ -4,13 +4,14 @@
 
 ### 1. `interface` より `type` を基本とし、拡張が必要な場合に `interface` を選ぶ
 
-オブジェクト型の定義には `type` を基本として使用する。
+これはこのリポジトリのチーム規約で、公式の推奨ではない。公式 Handbook は「ほとんどの場合は好みで選んでよく、迷ったら `type` の機能が必要になるまで `interface` を使う」としている。
+規約としては、オブジェクト型の定義には `type` を基本として使用する。
 ただし、外部ライブラリの型をマージ（Declaration Merging）する必要がある場合や、
 クラスが実装する契約を表す場合は `interface` を使用する。
-プロジェクト内で一方に統一し、混在させない。
+どちらを基本にするにせよ、プロジェクト内で一方に統一し、混在させない。
 
 **根拠**:
-- `type` は Union 型・交差型・条件型など表現力が高い
+- `type` は Union 型・交差型・条件型など表現力が高く、Union を多用するコードでは書き方を 1 つに揃えやすい（このリポジトリが `type` を基本にする理由）
 - `interface` の Declaration Merging はサードパーティ型の拡張に有効
 - 統一することで読み手の認知負荷を下げる
 
@@ -36,11 +37,11 @@ type UserProfile = { name: string }; // 重複・混在
 ```
 
 **出典**:
-- [TypeScript Handbook: Differences Between Type Aliases and Interfaces](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#differences-between-type-aliases-and-interfaces) (TypeScript公式)
+- [TypeScript Handbook: Differences Between Type Aliases and Interfaces](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#differences-between-type-aliases-and-interfaces) (TypeScript公式、「好みで選んでよく、迷ったら interface から」) ※2026-10-25 確認
 
 **バージョン**: TypeScript 4.0+
-**確信度**: 高
-**最終更新**: 2026-05-05
+**確信度**: 中（チーム規約。公式は好みでよいとしている）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -190,9 +191,9 @@ async function fetchUser(id: string): Promise<FetchUserResult> {
 > "A null return collapses all failure modes into one type, forcing the caller to guess what went wrong or log generic errors."
 > ([TypeScript Strict Null Checks in 2026](https://dev.to/jsmanifest/typescript-strict-null-checks-in-2026-real-world-patterns-for-handling-undefined-without-the-eoh), セクション "Discriminated Unions") ※2026-08-05に実際にfetch成功
 
-**バージョン**: TypeScript 2.0+
+**バージョン**: TypeScript 2.0+（`?.` / `??` は 3.7+）
 **確信度**: 高
-**最終更新**: 2026-08-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -427,6 +428,8 @@ export const env = {
 
 **確信度**: 既存（高）→ 高（業務適用実績の定量的エビデンス付き）
 
+---
+
 ### 9. Branded Types でプリミティブ型の混同を防ぐ（phantom string literal パターン）
 
 同じプリミティブ型（`string`、`number` など）を用途別に区別するため、
@@ -448,9 +451,15 @@ type Brand<T, K extends string> = T & { readonly __brand: K };
 type UserId = Brand<string, "UserId">;
 type OrgId  = Brand<string, "OrgId">;
 
-// ファクトリ関数（バリデーション付き）
-const asUserId = (s: string): UserId => s as UserId;
-const asOrgId  = (s: string): OrgId  => s as OrgId;
+// ファクトリ関数（形式を検証してからブランドを付ける。キャストはここだけに閉じ込める）
+const asUserId = (s: string): UserId => {
+  if (!s.startsWith("u-")) throw new Error(`Invalid UserId: ${s}`);
+  return s as UserId;
+};
+const asOrgId = (s: string): OrgId => {
+  if (!s.startsWith("o-")) throw new Error(`Invalid OrgId: ${s}`);
+  return s as OrgId;
+};
 
 function createOrder(userId: UserId, orgId: OrgId) { /* ... */ }
 
@@ -470,8 +479,8 @@ type UserIdBrand = BrandOf<UserId>; // "UserId"
 - [Opaque Types Without unique symbol: A Lighter Branded Types Pattern](https://dev.to/gabrielanhaia/opaque-types-without-unique-symbol-a-lighter-branded-types-pattern-2ohf) (dev.to gabrielanhaia / 2026-05) ※2026-05-07に実際にfetch成功
 
 **バージョン**: TypeScript 4.0+（`Brand` 型ヘルパー） / TypeScript 5.0+（`BrandOf` の `infer _` 構文）
-**確信度**: 高
-**最終更新**: 2026-05-07
+**確信度**: 中（出典は 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -481,10 +490,11 @@ type UserIdBrand = BrandOf<UserId>; // "UserId"
 TypeScript の関数オーバーロード（複数の `function` シグネチャ）の代わりに、
 `kind` 判別子を持つ Union 型の引数（Discriminated Param）を使う。
 `Parameters<>` で型が正しく反映され、ランタイムの `switch` と型の絞り込みが一致する。
+ただし実装側の型安全には限界がある。`switch` の各 case で `args` は絞り込まれるが、戻り値の型 `QueryResult<A>` は TypeScript が case ごとに解決できないので、`as QueryResult<A>` のキャストが必要になる。得られるのは「呼び出し側の正確な型推論」で、実装側はキャストを書く責任が残るというトレードオフになる。
 
 **根拠**:
 - 関数オーバーロードは実装シグネチャが Union になるため、実装内での型絞り込みが手動になる
-- Discriminated Param は `switch (args.kind)` で TypeScript が自動的に型を絞り込む
+- Discriminated Param は `switch (args.kind)` で TypeScript が引数の型を自動的に絞り込む（戻り値は上のとおりキャストが要る）
 - `Parameters<typeof query>` が実際の引数型 Union を正確に反映するため、高階関数で扱いやすい
 - オーバーロード数が増えるほど保守コストが上がるが、判別子 Union は case 追加が型安全に行える
 
@@ -503,6 +513,7 @@ type QueryResult<A extends QueryArgs> =
   never;
 
 function query<A extends QueryArgs>(args: A): QueryResult<A> {
+  // 引数は case ごとに絞り込まれるが、戻り値の QueryResult<A> は解決されないためキャストが要る
   switch (args.kind) {
     case "byId":     return fetchById(args.id) as QueryResult<A>;
     case "byIds":    return fetchByIds(args.ids) as QueryResult<A>;
@@ -530,8 +541,8 @@ function query(arg: string | string[] | { role: string }): User | User[] {
 - [Function Overloads in 2026: Use a Discriminated Param Instead](https://dev.to/gabrielanhaia/function-overloads-in-2026-use-a-discriminated-param-instead-56gb) (dev.to gabrielanhaia / 2026-05) ※2026-05-07に実際にfetch成功
 
 **バージョン**: TypeScript 4.7+
-**確信度**: 高
-**最終更新**: 2026-05-07
+**確信度**: 中（出典は 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 

@@ -116,15 +116,21 @@ function identity(value: unknown): string {
   return String(value);
 }
 
-// Bad: Union 型で十分
-function process<T extends string | number>(value: T): T {
-  return value;
+// Bad: 型パラメータが引数の 1 箇所にしか出てこない（Union 型で十分）
+function format<T extends string | number>(value: T): string {
+  return String(value);
 }
 
 // Good: Union 型で表現
-function process(value: string | number): string | number {
+function format(value: string | number): string {
+  return String(value);
+}
+
+// Good: 型パラメータが入力と出力の 2 箇所に出てきて、型を連動させる
+function process<T extends string | number>(value: T): T {
   return value;
 }
+const s = process('a'); // 'a'（Union 版の (value: string | number) => string | number では string | number に広がる）
 
 // Good: ジェネリクスが真に有用なケース（入出力の型が連動する）
 function mapRecord<K extends string, V, U>(
@@ -142,15 +148,16 @@ function mapRecord<K extends string, V, U>(
 
 **バージョン**: TypeScript 4.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 4. 条件型（Conditional Types）は複雑にしすぎない
 
 `T extends U ? X : Y` の条件型は型レベルのプログラミングを可能にするが、
-深いネストは型エラーメッセージを解読不能にする。
-標準ユーティリティ型で代替できる場合はそちらを優先する。
+名前のない分岐を入れ子にすると型エラーメッセージを解読不能にする。
+段数そのものではなく、各分岐の意図が読めるか・名前の付いた型に分割できるかで判断する。
+標準ユーティリティ型で代替できる場合はそちらを優先し、標準型と同名の型を再定義しない。
 
 **根拠**:
 - 条件型のネストはデバッグが困難になる
@@ -159,21 +166,24 @@ function mapRecord<K extends string, V, U>(
 
 **コード例**:
 ```tsx
-// Bad: 深すぎる条件型
-type DeepReadonly<T> = T extends (infer U)[]
-  ? DeepReadonlyArray<U>
-  : T extends object
-  ? DeepReadonlyObject<T>
+// Bad: 名前のない分岐を入れ子にして、何を判定しているか読み取りにくい
+type Unwrap<T> = T extends Promise<infer U>
+  ? U extends (infer V)[]
+    ? V extends object ? Readonly<V> : V
+    : U
   : T;
 // このような実装は型エラー時のデバッグが難しい
 
-// Good: まず標準ユーティリティ型で実現できないか確認
+// Good: まず標準ユーティリティ型で実現できないか確認（NonNullable なども自前で再定義しない）
 type ReadonlyUser = Readonly<User>;
 type PartialConfig = Partial<Config>;
+type RequiredValue = NonNullable<string | null | undefined>; // string
 
-// 条件型が必要な場合は1段階までにとどめる
-type Nullable<T> = T | null;
-type NonNullable<T> = T extends null | undefined ? never : T; // 標準に存在
+// Good: 条件型が必要な場合は、分岐ごとに名前の付いた型に分けて組み合わせる
+type PromiseValue<T> = T extends Promise<infer U> ? U : T;
+type ElementOrSelf<T> = T extends readonly (infer U)[] ? U : T;
+type Item<T> = ElementOrSelf<PromiseValue<T>>; // Item<Promise<User[]>> は User
+// 判別子ごとに結果を対応させる平坦な条件型（type-design.md #10 の QueryResult）も、各行の意図が読めるなら段数が多くてよい
 ```
 
 **出典**:
@@ -181,7 +191,7 @@ type NonNullable<T> = T extends null | undefined ? never : T; // 標準に存在
 
 **バージョン**: TypeScript 2.8+
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -204,7 +214,7 @@ type ElementOf<T> = T extends (infer U)[] ? U : never;
 type StrEl = ElementOf<string[]>; // string
 type NumEl = ElementOf<number[]>; // number
 
-// Promiseの解決型を抽出（Awaited の自前実装）
+// Promiseの解決型を抽出（1 段だけ外す。ネストした Promise まで再帰的に外す標準の Awaited とは別物）
 type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
 type Resolved = UnwrapPromise<Promise<{ id: string }>>; // { id: string }
 
@@ -222,7 +232,7 @@ type ButtonProps = PropsOf<typeof Button>; // Button コンポーネントの pr
 
 **バージョン**: TypeScript 2.8+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

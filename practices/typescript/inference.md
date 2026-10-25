@@ -47,7 +47,7 @@ function getConfig() {
 
 ### 2. 関数のパラメータには型注釈を付ける（境界では明示）
 
-関数のパラメータは TypeScript が推論できないため必ず型を明示する。
+関数宣言のパラメータは、コールバックのように文脈から型が決まる場合（コンテキストによる型付け）を除いて推論されないため、必ず型を明示する。
 外部に公開する関数（エクスポートする関数）の戻り値も明示的に型付けする。
 
 **根拠**:
@@ -81,7 +81,7 @@ function processItems<T>(
 
 **バージョン**: TypeScript 4.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -121,9 +121,9 @@ type QueryParams = Parameters<typeof createQueryString>[0];
 **出典**:
 - [TypeScript Handbook: Utility Types - ReturnType](https://www.typescriptlang.org/docs/handbook/utility-types.html#returntypetype) (TypeScript公式)
 
-**バージョン**: TypeScript 2.8+
+**バージョン**: TypeScript 2.8+（コード例の `Awaited` は 4.5+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -145,20 +145,26 @@ function handleEvent(event: unknown) {
   console.log(e.clientX); // ランタイムエラーの危険
 }
 
-// Good: ユーザー定義型ガード
-function isMouseEvent(event: unknown): event is MouseEvent {
-  return (
-    typeof event === 'object' &&
-    event !== null &&
-    'clientX' in event &&
-    'clientY' in event
-  );
-}
-
+// Good: 実際のイベントオブジェクトなら instanceof で判定する
 function handleEvent(event: unknown) {
-  if (isMouseEvent(event)) {
+  if (event instanceof MouseEvent) {
     console.log(event.clientX); // 安全
   }
+}
+
+// Good: 構造で判定するユーザー定義型ガードは、プロパティの有無だけでなく値の型まで確かめる
+// （'clientX' in value だけだと { clientX: 'x', clientY: null } も通ってしまう）
+type Point = { clientX: number; clientY: number };
+
+function isPoint(value: unknown): value is Point {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'clientX' in value &&
+    'clientY' in value &&
+    typeof value.clientX === 'number' &&
+    typeof value.clientY === 'number'
+  );
 }
 
 // Good: instanceof による絞り込み
@@ -174,53 +180,62 @@ function handleError(err: unknown) {
 **出典**:
 - [TypeScript Handbook: Narrowing](https://www.typescriptlang.org/docs/handbook/2/narrowing.html) (TypeScript公式)
 
-**バージョン**: TypeScript 4.0+
+**バージョン**: TypeScript 4.0+（`in` で絞り込んだ後に `value.clientX` を参照できるのは 4.9+）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 5. `Array.filter` に型述語を渡して絞り込み結果の型を正確にする
 
-`array.filter(x => x !== null)` の結果型は TypeScript 5.4 以前では `(T | null)[]` のまま narrowing されない。
-型述語 `(x): x is T` を filter のコールバックに使うことで、戻り値の配列要素型を正確に絞り込める。
-null/undefined の除去・Discriminated Union の特定メンバー抽出などで必須のパターン。
+TypeScript 5.5 以降は、`filter(x => x !== null)` のような単純な比較なら型述語が推論され、結果は `number[]` になる。
+5.4 以前と、5.5 以降でも推論されないケース（truthiness 判定 `x => !!x`、戻り値を `boolean` と注釈した判定関数、複数の `return` を持つ関数など）では、型述語 `(x): x is T` を明示して戻り値の配列要素型を絞り込む。
+再利用する判定関数は、型述語を明示しておくと推論の条件に左右されない。
 
 **根拠**:
-- TypeScript のコントロールフロー解析は `Array.filter` のコールバック内まで追従しない（TS 5.4 以前）
-- 型述語なしで filter した配列は後続の `map` などで型エラーが頻発する
-- TS 5.5 以降は一部自動推論が改善されたが、複雑な述語には型述語が引き続き必要（TypeScript公式 Narrowing.md より）
+- TS 5.4 以前のコントロールフロー解析は `Array.filter` のコールバックから型述語を推論しない
+- 型述語が推論されるのは、戻り値の注釈がなく、`return` が 1 つで、引数を変更せず、引数の絞り込みに結び付いた `boolean` を返す関数に限られる（TS 5.5 リリースノート）
+- truthiness 判定は `0` や `''` も除外するので「`true` なら `T`、`false` なら `T` ではない」が成り立たず、型述語は推論されない。意図せず `0` を落とすバグにもなる
 
 **コード例**:
 ```tsx
-// Bad: filter 後も null が型に残る
 const items: (number | null)[] = [1, null, 2, null, 3];
+
+// TS 5.5+: 単純な比較なら型述語が推論される
 const nums = items.filter(x => x !== null);
-// 型: (number | null)[] ← narrowing されない
-nums.map(x => x.toFixed(2)); // エラー: null の可能性がある
+// 型: number[]（5.4 以前は (number | null)[] のまま）
 
-// Good: 型述語で戻り値型を narrowing
-const nums = items.filter((x): x is number => x !== null);
+// Bad: 戻り値を boolean と注釈した判定関数は型述語として扱われない
+function isPresent(x: number | null): boolean {
+  return x !== null;
+}
+const a = items.filter(isPresent);
+// 型: (number | null)[]
+
+// Good: 再利用する判定関数は型述語を明示する
+function isNumber(x: number | null): x is number {
+  return x !== null;
+}
+const b = items.filter(isNumber);
 // 型: number[]
-nums.map(x => x.toFixed(2)); // OK
 
-// 実用例: Discriminated Union のフィルタリング
-type Event =
-  | { type: 'click'; target: Element }
-  | { type: 'keydown'; key: string };
-const events: Event[] = getEvents();
-const clicks = events.filter(
-  (e): e is Extract<Event, { type: 'click' }> => e.type === 'click'
-);
-// clicks: { type: 'click'; target: Element }[]
+// Bad: truthiness 判定では推論されず、0 も除外される
+const scores: (number | undefined)[] = [0, 80, undefined];
+const truthy = scores.filter(s => !!s);
+// 型: (number | undefined)[]、値: [80]
+
+// Good: 意図どおりの比較を書く（TS 5.5+ では型述語が推論される）
+const defined = scores.filter(s => s !== undefined);
+// 型: number[]、値: [0, 80]
 ```
 
 **出典**:
 - [TypeScript Handbook: Narrowing - Using type predicates](https://raw.githubusercontent.com/microsoft/TypeScript-Website/v2/packages/documentation/copy/en/handbook-v2/Narrowing.md) (microsoft/TypeScript-Website / v2ブランチ) ※2026-05-06に実際にfetch成功
+- [TypeScript 5.5 Release Notes: Inferred Type Predicates](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-5.html#inferred-type-predicates) (TypeScript公式、型述語が推論される条件と truthiness 判定の例) ※2026-10-25 確認
 
-**バージョン**: TypeScript 2.0+（型述語）
+**バージョン**: TypeScript 2.0+（型述語）/ 5.5+（型述語の推論）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

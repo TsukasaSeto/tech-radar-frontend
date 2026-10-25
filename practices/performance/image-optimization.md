@@ -8,7 +8,7 @@
 自動的なフォーマット変換・リサイズ・遅延読み込みが適用される。
 
 **根拠**:
-- WebP / AVIF への自動変換でファイルサイズを 30〜50% 削減できる
+- WebP への自動変換でファイルサイズを 30〜50% 削減できる（AVIF は `images.formats` で有効化した場合。#5 参照）
 - ビューポートに基づいた `srcset` で適切なサイズの画像が配信される
 - デフォルトで遅延読み込み（loading="lazy"）が適用される
 
@@ -35,7 +35,7 @@ import Image from 'next/image';
   width={1200}
   height={630}
   sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-  priority  // ファーストビューの画像は priority を付ける
+  loading="eager"  // ファーストビューの LCP 画像は lazy にしない（v15 以前は priority。core-web-vitals.md #1）
 />
 
 // Good: fill で親要素を埋める（aspect-ratio と組み合わせる）
@@ -65,30 +65,34 @@ const nextConfig = {
 
 **出典**:
 - [Next.js Docs: Image Optimization](https://nextjs.org/docs/app/building-your-application/optimizing/images) (Next.js公式)
-- [Next.js Docs: Image Component API](https://nextjs.org/docs/app/api-reference/components/image) (Next.js公式)
+- [Next.js Docs: Image Component API](https://nextjs.org/docs/app/api-reference/components/image) (Next.js公式、v16 で `priority` が非推奨になり `preload` を追加、`formats` の既定は `['image/webp']`) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 13+（`next.config.ts` は 15+、`priority` は 16 で非推奨）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. `sizes` 属性を正確に指定してレスポンシブ画像を最適化する
 
 `next/image` の `sizes` 属性はブラウザが適切な解像度の画像を選択するために使う。
+`sizes` が必要なのは、`fill` を使う画像と、CSS で表示幅が変わる画像。`width` を指定した固定サイズの画像は `sizes` がなくても 1x / 2x の `srcset` が生成されるので不要。
 不正確な `sizes` は必要以上に大きな画像をダウンロードさせる。
 `display:none` で隠す重複画像（PC 用 / モバイル用の二重配置）は、非表示側に最小の派生を選ばせる `sizes` を渡し、LCP 画像から `loading="lazy"` を外す前に非表示コピーの有無を確認する。
 
 **根拠**:
-- `sizes` を省略すると常に `100vw` として扱われ、不必要に大きな画像が配信される
+- `fill` の画像や CSS で幅が変わる画像で `sizes` を省略すると、ブラウザは表示幅を `100vw` とみなし、不必要に大きな画像が配信される（`fill` の場合は `deviceSizes` だけから `srcset` が作られる）
 - `loading="lazy"` は `display:none` の画像の読み込みも抑止していた。LCP 画像を eager にすると非表示側の複製も（大きなサイズで）読み込まれるため、非表示側には最小の派生を選ばせる `sizes` を渡す
 - 正確な `sizes` によって、モバイルでは小さな画像が配信されデータ転送量が削減される
 - レスポンシブレイアウトに合わせた `sizes` の記述が LCP 改善に直結する
 
 **コード例**:
 ```tsx
-// Bad: sizes を省略（常に全幅として扱われる）
-<Image src="/card.jpg" alt="カード" width={400} height={300} />
+// Bad: CSS で幅が変わるのに sizes を省略（width 基準の 1x / 2x の srcset しか作られず、実際の表示幅に合った派生を選べない）
+<Image src="/card.jpg" alt="カード" width={600} height={400} className="w-full md:w-1/2" />
+
+// OK: 表示幅が width のまま固定なら sizes は不要（1x / 2x の srcset が生成される）
+<Image src="/avatar.jpg" alt="アバター" width={64} height={64} />
 
 // Good: 実際の表示幅に合わせた sizes を指定
 
@@ -123,17 +127,18 @@ const nextConfig = {
 - [web.dev: Responsive images](https://web.dev/responsive-images/) (web.dev)
 - [LCP の画像を eager にしたら、隠れている側の画像も読み込まれた](https://zenn.dev/kodomo_news/articles/243-eager-lcp-image-loads-hidden-twin) (Zenn、非表示複製と lazy の関係) ※2026-10-16 fetch
   > "これは `loading="lazy"` が付いていたから成り立っていたことで、eager にすると `display:none` の側の画像も読み込まれます。" (セクション "外れた前提")
+- [Next.js Docs: Image Component - sizes](https://nextjs.org/docs/app/api-reference/components/image#sizes) (Next.js公式、"Without `sizes`, on an image with a `width`: Next.js generates a limited `srcset` (e.g. 1x, 2x), suitable for fixed-size images.") ※2026-10-25 確認
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-10-16
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. OGP 画像は `next/og` で動的生成する
 
 Open Graph 画像（OGP）はページごとに動的生成する必要がある場合、
-`next/og`（ImageResponse API）を使いエッジで生成する。なお Node.js ランタイムの `ImageResponse` 実装は、Next.js `>=16.2.0 <16.3.6` で Critical の RCE（GHSA-vcvr-r3jv-pc5j）の影響を受けるため、16.x では 16.3.6 以降に上げる（15.x は RCE の対象外で 15.5.26 は hardening のみ。Edge の `ImageResponse` 実装は影響を受けない）。
+`next/og`（ImageResponse API）を使いエッジで生成する。なお Node.js ランタイムの `ImageResponse` 実装は、Next.js `>=16.2.0 <16.3.6` で Critical の RCE（GHSA-vcvr-r3jv-pc5j）の影響を受けるため、16.x では 16.3.6 以降に上げる（15.x は RCE の対象外で 15.5.26 は hardening のみ。Edge の `ImageResponse` 実装は影響を受けない）。その後 2026-09-30 のセキュリティリリースで 16.3.8 / 15.5.27 が出ているので、実際に上げる先は #7 の版にする。
 
 **根拠**:
 - エッジランタイムで実行されるためレイテンシが低い
@@ -176,8 +181,10 @@ export async function GET(req: NextRequest) {
 }
 
 // app/blog/[slug]/page.tsx で OGP メタデータを設定
-export async function generateMetadata({ params }: { params: { slug: string } }) {
-  const post = await fetchPost(params.slug);
+// Next.js 15 以降の params は Promise（16 で同期アクセスは廃止）
+export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const post = await fetchPost(slug);
   const ogUrl = new URL('/og', process.env.NEXT_PUBLIC_APP_URL);
   ogUrl.searchParams.set('title', post.title);
   ogUrl.searchParams.set('description', post.excerpt);
@@ -193,13 +200,14 @@ export async function generateMetadata({ params }: { params: { slug: string } })
 **出典**:
 - [Next.js Docs: OG Image Generation](https://nextjs.org/docs/app/building-your-application/optimizing/metadata#dynamic-image-generation) (Next.js公式)
 - [Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026) (Next.js公式ブログ、Node.js `ImageResponse` のRCE脆弱性GHSA-vcvr-r3jv-pc5jと修正版16.3.6/15.5.26) ※2026-09-22に実際にfetch成功
+- [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js公式ブログ、v16.3.8 / v15.5.27) ※2026-10-25 確認
 
 > "The issue affects the Node.js `ImageResponse` implementation in `next/og`. Under specific conditions, improper escaping in SVG output generated by Satori could lead to remote code execution due to vulnerabilities in other upstream dependencies... Applications using the Edge `ImageResponse` implementation are not affected."
 > ([Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026), セクション "Impact") ※2026-09-22に実際にfetch成功
 
-**バージョン**: Next.js 13+（Node.js ランタイムで `ImageResponse` を使う 16.x は 16.3.6+）
+**バージョン**: Next.js 15+（`params` が Promise。`next/og` 自体は 14+）。Node.js ランタイムで `ImageResponse` を使う 16.x は 16.3.6+（最新パッチは #7 の 16.3.8+）
 **確信度**: 高
-**最終更新**: 2026-09-22
+**最終更新**: 2026-10-25
 
 ---
 
@@ -240,8 +248,9 @@ Next.js を使わない環境（静的HTML・その他フレームワーク）�
     alt="ヒーロー"
     width="1200"
     height="630"
-    loading="lazy"
   />
+  <!-- ファーストビューのヒーロー画像（LCP 候補）なので loading="lazy" は付けない（web-standards/html.md #12）。
+       ファーストビュー外の画像なら loading="lazy" を付ける -->
 </picture>
 
 <!-- art direction: モバイルとデスクトップで異なる構図の画像を使い分ける -->
@@ -266,7 +275,7 @@ Next.js を使わない環境（静的HTML・その他フレームワーク）�
 
 **バージョン**: HTML5（全モダンブラウザ対応）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -279,14 +288,14 @@ JPEG / PNG を新規に使用するのは最終手段とする。
 - AVIF は JPEG 比で平均 50% 以上のファイルサイズ削減が見込める（WebP 比でも 20〜30%）
 - Chrome・Firefox・Safari（16.4+）など主要ブラウザで対応済み（2024年時点でカバレッジ 90%+）
 - ファイルサイズ削減はLCPの改善、通信コスト削減、Core Web Vitals スコア向上に直結する
-- Next.js は `<Image>` コンポーネントで自動的に AVIF を配信するため追加設定不要
+- Next.js の `<Image>` は既定では WebP しか生成しない（`images.formats` の既定は `['image/webp']`）。AVIF を配信するには `formats` に `'image/avif'` を明示する
 
 **コード例**:
 ```tsx
-// Next.js: Image コンポーネントは自動的に AVIF を優先配信
+// Next.js: Image コンポーネントは Accept ヘッダーを見て、formats の中から最初に一致した形式で配信する
 import Image from 'next/image';
 
-// AVIF 対応ブラウザには .avif、非対応には .webp、最終的には元フォーマットを配信
+// 下の formats 設定があれば AVIF 対応ブラウザには AVIF、非対応には WebP、どちらも非対応なら元フォーマットを配信
 <Image
   src="/product.jpg"  // 元ファイルは JPEG でも Next.js が自動変換
   alt="商品"
@@ -294,12 +303,12 @@ import Image from 'next/image';
   height={600}
 />
 
-// next.config.ts: フォーマット優先順位のカスタマイズ
+// next.config.ts: AVIF を有効にする（既定は ['image/webp'] で AVIF は配信されない）
 const nextConfig = {
   images: {
-    formats: ['image/avif', 'image/webp'],  // デフォルト設定（AVIF優先）
-    // AVIF は WebP より圧縮率が高いが、エンコードに時間がかかるため
-    // トラフィックが多いサイトでは CDN でのキャッシュが重要
+    formats: ['image/avif', 'image/webp'],  // 配列の順で優先（AVIF 優先、WebP にフォールバック）
+    // AVIF は WebP より圧縮率が高いが、エンコードに時間がかかり（公式は約 50% 長いとしている）、
+    // 形式ごとに別々にキャッシュされるため、トラフィックが多いサイトでは CDN でのキャッシュが重要
   },
 };
 
@@ -328,10 +337,11 @@ for (const imagePath of images) {
 **出典**:
 - [web.dev: Use AVIF images](https://web.dev/articles/avif) (web.dev / 2023)
 - [MDN: AVIF image format](https://developer.mozilla.org/en-US/docs/Web/Media/Formats/Image_types#avif_image) (MDN Web Docs)
+- [Next.js Docs: Image Component - formats](https://nextjs.org/docs/app/api-reference/components/image#formats) (Next.js公式、既定は `formats: ['image/webp']`、AVIF は明示的に有効化する) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+（自動対応）、sharp 0.32+
+**バージョン**: Next.js 13+（AVIF は `images.formats` で有効化）、sharp 0.32+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

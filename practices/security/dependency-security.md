@@ -1,7 +1,7 @@
 # 依存セキュリティのベストプラクティス
 
-> **役割分担**: このファイルは **脆弱性スキャン / supply chain attack 対策 / 緊急アップデート / SBOM** を扱う。
-> **lockfile 戦略 / packageManager 固定 / 通常の更新ポリシー**は [`dx/dependency-management.md`](../dx/dependency-management.md) を参照。
+> **役割分担**: このファイルは **脆弱性スキャン / supply chain attack 対策 / 更新ポリシー（Renovate / Dependabot の自動マージ範囲と緊急アップデート） / SBOM** を扱う。
+> **lockfile 戦略 / packageManager 固定 / range 指定とメジャー更新の進め方**は [`dx/dependency-management.md`](../dx/dependency-management.md) を参照。
 > 「正しく固定する」は dx 側、「壊れた依存を検知・封じ込める」は security 側 という分担。
 
 npm エコシステムは supply chain attack の最大の標的。lockfile・脆弱性監査・自動更新・SBOM の 4 点セットで運用する。
@@ -32,11 +32,13 @@ jobs:
   audit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: pnpm }
+      - uses: actions/checkout@v7
+      # pnpm 11 以降は pnpm/setup。版は package.json の packageManager から読む
+      # サードパーティ action は実運用では SHA でピン留めする（practices/ci-cd/github-actions.md #9）
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/setup@v3
+        with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次で明示する
       - run: pnpm install --frozen-lockfile
 
       # high 以上で fail
@@ -131,17 +133,29 @@ git diff package-lock.json
 **出典（追加）**:
 - [KEV 30%・EPSS 35%――脆弱性優先度付けスコアの重み設計と、その理由](https://zenn.dev/lumen/articles/vuln-priority-weights-kev-epss) (Zenn、KEV/EPSS を重み付けした優先度スコアの計算式) ※2026-08-18 fetch
 - [cve-lite-cliを利用してローカルで完結するフロントエンドの脆弱性管理](https://qiita.com/t_o_d/items/cd1dfcec670345495d2b) (Qiita、CI不要のローカル完結スキャン＋EPSS優先度付け＋コピペ修正コマンド) ※2026-09-19 fetch
+- [pnpm/setup](https://github.com/pnpm/setup) (pnpm 公式、`pnpm/setup@v3` は pnpm 11 以降向け、`install: false`) ※2026-10-25 確認
 
-**バージョン**: npm 8+, pnpm 8+
+**バージョン**: npm 8+, pnpm 8+（CI 例は pnpm 11+ / Node.js 24）
 **確信度**: 高
-**最終更新**: 2026-09-19
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. Renovate / Dependabot で自動 PR、定期マージサイクルを確立する
 
 依存更新は人手で追わず Renovate または Dependabot の自動 PR で行う。
-patch / minor は自動マージ、major は手動レビュー、というルールで運用する。
+通常の更新は「更新タイプ × 本番依存か開発依存か」で自動マージの範囲を決め、公開から一定期間たった版だけを取り込む。セキュリティ修正はスケジュールと待機期間の外で即時に PR を出す。更新ポリシー（何を自動マージするか）の正本はこのルールで、`practices/dx/dependency-management.md` #2 は range 指定とメジャー更新の進め方を扱う。
+
+| 更新タイプ | 対象 | ポリシー |
+|---|---|---|
+| patch | 本番依存・開発依存 | 公開から 7 日たった版を、CI green なら自動マージ |
+| minor | 開発依存 | 同上 |
+| minor | 本番依存 | PR を作り、人がレビューしてマージ |
+| major | すべて | 手動マージ必須。CHANGELOG / Migration Guide を確認する（下記「メジャー更新のリスクと対応」） |
+| security | すべて | 待機期間・スケジュールの対象外で即時 PR。CI green を確認して当日中にマージ |
+
+- Renovate の `minimumReleaseAge` / Dependabot の `cooldown` は、パッケージの公開時刻からの経過時間で判定する。PR を作ってからの待機ではないので、公開から日数がたった版はすぐに自動マージされる。人のレビュー機会が要る更新には `automerge` を付けない
+- 待機日数は pnpm の `minimumReleaseAge`（#4・#11）以上にそろえる。Renovate 側が短いと、PR の依存解決が pnpm の待機期間に引っかかって失敗する。待機期間内の緊急のセキュリティ修正版は、#4 の手順で期限付きの `minimumReleaseAgeExclude` に追加して取り込む
 
 **根拠**:
 - 依存更新を後回しにすると複数バージョンの差分が積み重なり、メジャーアップグレードが地獄になる
@@ -155,44 +169,57 @@ patch / minor は自動マージ、major は手動レビュー、というルー
 - Renovate は GitHub 以外に GitLab / Bitbucket / Azure DevOps など複数プラットフォームに対応し、90 以上のパッケージマネージャーをサポートする。マルチプラットフォーム運用や npm 以外のエコシステムを広く自動更新したい場合は Renovate が優位、GitHub 単体で追加セットアップなしに始めたい場合は Dependabot が優位という判断軸になる
 
 **Renovate 設定例**（推奨）:
-```json
-// renovate.json
+```json5
+// renovate.json5（コメントを書くので JSON5 形式）
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    "group:allNonMajor",          // patch/minor は 1 PR にまとめる
-    ":semanticCommits"
-  ],
-  "schedule": ["before 9am on monday"],
-  "timezone": "Asia/Tokyo",
-  "labels": ["dependencies"],
-  "rangeStrategy": "bump",
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: ["config:recommended", ":semanticCommits"],
+  schedule: ["before 9am on monday"],
+  timezone: "Asia/Tokyo",
+  labels: ["dependencies"],
+  rangeStrategy: "bump",
+  // 公開から 7 日たった版だけを PR の対象にする（pnpm の minimumReleaseAge: 10080 とそろえる）
+  minimumReleaseAge: "7 days",
 
-  "packageRules": [
+  packageRules: [
     {
-      "matchUpdateTypes": ["patch", "minor"],
-      "matchDepTypes": ["devDependencies"],
-      "automerge": true,
-      "automergeType": "branch"
+      // 開発依存の patch / minor は 1 PR にまとめて自動マージ
+      matchDepTypes: ["devDependencies"],
+      matchUpdateTypes: ["patch", "minor"],
+      groupName: "devDependencies (non-major)",
+      automerge: true,
     },
     {
-      "matchPackageNames": ["next", "react", "react-dom"],
-      "matchUpdateTypes": ["major"],
-      "addLabels": ["framework-update"],
-      "reviewers": ["team:frontend-leads"]
+      // 本番依存は patch だけ自動マージ。minor は automerge を付けず人がレビューする
+      matchDepTypes: ["dependencies"],
+      matchUpdateTypes: ["patch"],
+      groupName: "dependencies (patch)",
+      automerge: true,
     },
     {
-      "matchPackageNames": ["typescript"],
-      "rangeStrategy": "pin"        // TS は version pinning
-    }
+      matchUpdateTypes: ["major"],
+      automerge: false,
+      addLabels: ["breaking-change"],
+    },
+    {
+      matchPackageNames: ["next", "react", "react-dom", "typescript"],
+      matchUpdateTypes: ["major"],
+      addLabels: ["framework-update"],
+      reviewers: ["team:frontend-leads"],
+    },
+    {
+      matchPackageNames: ["typescript"],
+      rangeStrategy: "pin",
+    },
   ],
 
-  "vulnerabilityAlerts": {
-    "enabled": true,
-    "labels": ["security"],
-    "schedule": ["at any time"]    // 脆弱性は即時 PR
-  }
+  // リポジトリ単位の設定なので packageRules の中ではなくトップレベルに置く。
+  // 既定で minimumReleaseAge: null・prCreation: "immediate" のため、待機期間を待たずに PR が出る
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security"],
+    schedule: ["at any time"],
+  },
 }
 ```
 
@@ -208,12 +235,19 @@ updates:
       day: "monday"
       time: "09:00"
       timezone: "Asia/Tokyo"
+    # 公開から 7 日たった版だけを対象にする。security updates には適用されない
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 10
     groups:
       dev-dependencies:
         dependency-type: "development"
         update-types: ["patch", "minor"]
     labels: ["dependencies"]
+    ignore:
+      # 理由: 次のメジャーへの移行は追跡 Issue で計画中のため、version update の PR を止める
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -240,7 +274,9 @@ updates:
 
 **出典**:
 - [Renovate Docs](https://docs.renovatebot.com/) (Mend)
+- [Renovate: Configuration Options](https://docs.renovatebot.com/configuration-options/) (Mend 公式、`minimumReleaseAge` は版ごとの公開からの経過時間、`vulnerabilityAlerts` は repo スコープで既定 `minimumReleaseAge: null`・`prCreation: "immediate"`) ※2026-10-25 確認
 - [Dependabot Docs](https://docs.github.com/en/code-security/dependabot) (GitHub)
+- [Dependabot options reference](https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference) (GitHub 公式、`cooldown` は version updates のみで security updates には適用されない) ※2026-10-25 確認
 - [Snyk: Automated dependency updates](https://snyk.io/blog/automate-fixes-with-snyks-prs/) (Snyk)
 - [Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/) (GitHub Blog 公式、`groups` によるエコシステム単位のPR集約と`interval: monthly`化、セキュリティPRが独立トリガーである点) ※2026-07-29に実際にfetch成功
 - [Dependabot の PR を形骸化させないための設定](https://zenn.dev/shebang/articles/dependabot-prs) (Zenn shebang、`ignore` の理由記録と production/development の `groups` 分割) ※2026-10-12 fetch
@@ -252,89 +288,31 @@ updates:
 
 **バージョン**: Renovate v37+, Dependabot v2
 **確信度**: 高
-**最終更新**: 2026-10-21
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. lockfile を必ずコミットし、`--frozen-lockfile` で再現性を担保する
 
-`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` をリポジトリに含め、CI では `--frozen-lockfile` で完全一致を強制する。
-ローカルと本番で異なるバージョンが入る事故を防ぐ。
+`package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` をリポジトリに含め、CI では `npm ci` / `pnpm install --frozen-lockfile` で lockfile との完全一致を強制する。
+ここではセキュリティ上の意味だけを補足する。lockfile のコミット・`packageManager` による CLI の固定・CI 設定の具体例は `practices/dx/dependency-management.md` #1 を参照。
 
 **根拠**:
-- `package.json` の `^1.2.3` は「1.2.3 ≤ x < 2.0.0」を許容する。lockfile がないと CI ごとに異なるバージョンが入る
-- supply chain attack（典型例: dependency confusion）への耐性も lockfile で部分的に得られる
-- 攻撃者が同名のパッケージを高バージョンで publish しても、lockfile が古いバージョンの hash を固定していれば拾わない
-- `packageManager` フィールドで CLI バージョンも固定すると、Corepack 経由でツールも統一できる
-
-**コマンド対応表**:
-| ツール | ローカル install | CI install |
-|---|---|---|
-| npm | `npm install` | `npm ci` |
-| pnpm | `pnpm install` | `pnpm install --frozen-lockfile` |
-| yarn | `yarn install` | `yarn install --immutable`（v3+） |
-| bun | `bun install` | `bun install --frozen-lockfile` |
-
-**`package.json` での固定**:
-```json
-{
-  "name": "myapp",
-  "packageManager": "pnpm@9.12.0",
-  "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
-  },
-  "scripts": {
-    "preinstall": "npx only-allow pnpm"
-  }
-}
-```
-
-**Corepack で CLI バージョン固定**:
-```bash
-# Node.js 16.9+ に同梱、experimental だが普及済み
-corepack enable
-corepack use pnpm@9.12.0
-# → packageManager フィールドに従って自動的に正しいバージョンを使う
-```
-
-**CI で `--frozen-lockfile` を強制**:
-```yaml
-# .github/workflows/ci.yml
-- uses: pnpm/action-setup@v3
-  # version は package.json の packageManager から自動取得
-
-- uses: actions/setup-node@v4
-  with:
-    node-version: 20
-    cache: pnpm
-
-- run: pnpm install --frozen-lockfile  # lockfile が package.json と乖離していれば fail
-- run: pnpm typecheck
-- run: pnpm test
-- run: pnpm build
-```
-
-**lockfile merge conflict の対処**:
-- 手動で編集しない（lockfile は人手で書くファイルではない）
-- 競合したらどちらか一方を採用してから `pnpm install` で再生成
-- `pnpm install --fix-lockfile` でツールに任せる
-
-**判断（どのパッケージマネージャーを選ぶか）**:
-- **pnpm**（推奨デフォルト）: disk 使用量最小、リンク経由のインストールで速い、モノレポ対応良好
-- **npm**: Node.js 同梱、追加インストール不要、CI で安定
-- **yarn (Berry)**: Plug'n'Play で `node_modules` を使わない設計、上級者向け
-- **bun**: 速度最強だが、まだ実戦投入のリスク残る
+- lockfile は解決済みの版と integrity hash を固定する。CI で lockfile との一致を強制すれば、CI 上で依存が再解決されて未検証の版が入ることはない
+- supply chain attack（典型例: dependency confusion）への耐性も lockfile で部分的に得られる。攻撃者が同名のパッケージを高バージョンで publish しても、lockfile が既存の版と hash を固定していれば拾わない。新規追加・更新のときは効かないので、#4 の scope ごとのレジストリ指定と組み合わせる
+- lockfile の diff はレビュー対象にする。`resolved` の URL がレジストリ外を指していないか、意図しない依存が増えていないかを確認する（npm / yarn の lockfile は #4 の lockfile-lint で機械的に検査できる）
+- パッケージマネージャ本体も依存の一部として版を固定する。pnpm 11 は `packageManager`（または `devEngines.packageManager`）に書いた版を自分で取得して実行する（`pmOnFail` の既定値 `download`）ので、Corepack は必須ではない。Corepack を使う場合、同梱されるのは Node.js 14.19.0 以上 25.0.0 未満で、Node.js 25 以降は `npm install -g corepack` で別途入れる
 
 **出典**:
 - [npm: package-lock.json](https://docs.npmjs.com/cli/v10/configuring-npm/package-lock-json) (npm Docs)
 - [pnpm: pnpm-lock.yaml](https://pnpm.io/git#lockfiles) (pnpm Docs)
-- [Node.js: Corepack](https://nodejs.org/api/corepack.html) (Node.js Docs)
+- [pnpm: Settings - pmOnFail](https://pnpm.io/settings/cli) (pnpm 公式、v11.0.0 で追加、既定 `download` で宣言された版を取得して実行) ※2026-10-25 確認
+- [Corepack README](https://github.com/nodejs/corepack#readme) (Node.js 公式、Node.js 14.19.0 以上 25.0.0 未満に同梱、それ以外は `npm install -g corepack`) ※2026-10-25 確認
 - [OWASP: Dependency Confusion](https://owasp.org/www-pdf-archive/OWASP-Dependency-Confusion.pdf) (OWASP)
 
-**バージョン**: pnpm 8+, Node.js 20+
+**バージョン**: pnpm 11+, Node.js 24+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -346,10 +324,11 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 **根拠**:
 - npm の install script は過去に supply chain attack の経路として何度も悪用されている（`ua-parser-js` 2021, `colors`/`faker` 2022, `event-stream` 2018 等）
 - CI 環境では install script を実行しないだけで攻撃の大部分を防げる
-- pnpm の `onlyBuiltDependencies` で「必要な script のみ allowlist」運用が現実的
-- lockfile-lint で lockfile の整合性（resolved URL・integrity hash）も検証する
+- pnpm は v10.0.0 から依存の lifecycle script を既定で実行せず、許可したものだけを実行する。許可リストは v10 では `package.json` の `pnpm.onlyBuiltDependencies`、pnpm 11 では `pnpm-workspace.yaml` の `allowBuilds`（v10.26.0 で追加。v11 で `onlyBuiltDependencies` などは削除）で管理する
+- pnpm 11 は `.npmrc` から auth / registry 以外の設定を読まない。セキュリティ設定を `.npmrc` に書いても警告なく無視されるので、`pnpm-workspace.yaml` に書く（#11）
+- npm / yarn の lockfile は lockfile-lint で整合性（resolved URL・integrity hash）も検証する。lockfile-lint は `pnpm-lock.yaml` に対応していないので、pnpm では `blockExoticSubdeps`（v11 で既定 true）で推移依存の git / tarball URL 取得を拒否する
 - `npm audit` / `pnpm audit` は CVE 登録済みの既知脆弱性のみを検出する。Socket のような行動解析型スキャナーは install script 実行可否・ネットワーク接続要求・ファイルシステム操作を静的解析し、CVE に存在しない新種マルウェアや公開直後の zero-day 汚染を検知できる
-- 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: `!=3.0` で難読化された特定バージョンを除外）を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
+- 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: 問題の `3.0.0` を除外するなら `^3.0.1` のように下限を引き上げる。npm の semver range に `!=` 演算子はない）か安全な版の固定を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
 - 個人のローカル開発環境でも、行動解析型スキャナーを `npm`/`pnpm` コマンド自体に shell alias でかぶせておくと「実行するたびに」検査が効く。指示や記憶に頼る運用（「怪しいパッケージは手動で確認する」）は忘れられるが、alias と pre-commit フックは忘れない
 - **自分が公開しているパッケージが乗っ取られた場合の対応は「消費者側」と手順が異なる**: 侵入経路（GitHub Actions の脆弱性等）を塞がないまま publish 権限や `latest` タグだけ戻しても、同じ経路から再度汚染される。deprecate は新規インストールの大半を防ぐが「解決策」ではなく、既存インストール済み環境には別途通知が必要
 
@@ -361,13 +340,17 @@ alias npm='sfw npm'   # Socket Firewall 経由で install を検査してから�
 
 **`--ignore-scripts` の運用**:
 ```bash
-# 全 install script を無効化
+# その回の install だけ全 install script を無効化
 pnpm install --ignore-scripts
+npm ci --ignore-scripts
+```
 
-# pnpm の場合は package.json で永続設定
-# .npmrc
+```ini
+# .npmrc（npm）: 永続設定。npm は .npmrc の設定を読む
 ignore-scripts=true
 ```
+
+pnpm 11 では `.npmrc` の `ignore-scripts=true` は読まれない。依存の script は既定で実行されないので、下の `allowBuilds` で必要なものだけを許可する。
 
 **pnpm v11 のデフォルト有効セキュリティ設定（移行時の注意点）**:
 
@@ -375,11 +358,11 @@ pnpm v11 では下記3設定がデフォルト ON になったため、`ERR_PNPM
 
 ```bash
 # pnpm v11 で新たにデフォルト有効になった主要設定
-# 1. allowBuilds: ビルドスクリプト許可リスト制（実行 = 明示的に承認したものだけ）
+# 1. strictDepBuilds: 未承認の build script があると install を失敗させる（許可は allowBuilds に書く）
 pnpm approve-builds   # 対話形式で許可パッケージを選択（CI では CI=true 設定が必要）
 
 # 2. blockExoticSubdeps: git URL / tarball 指定経由の推移依存をブロック
-# 3. verifyDepsBeforeRun: install 後に lockfile 整合確認
+# 3. verifyDepsBeforeRun: スクリプト実行前に node_modules が最新か確認し、古ければ install する
 
 # Lockfile integrity エラー（v11.4+ でハードエラーに変更）
 pnpm install --update-checksums  # 正当な更新時のみ使用
@@ -388,39 +371,36 @@ pnpm install --update-checksums  # 正当な更新時のみ使用
 ```dockerfile
 # Docker での pnpm v11 対応パターン
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-ENV CI=true   # approve-builds の対話プロンプトをスキップするために必須
+# approve-builds の対話プロンプトをスキップするために必須
+ENV CI=true
 RUN pnpm install --frozen-lockfile
 ```
 
 | 設定 | v10 デフォルト | v11 デフォルト |
 |---|---|---|
-| minimumReleaseAge | 無効 | 1440分（24h） |
-| blockExoticSubdeps | false | **true** |
+| minimumReleaseAge | 0（無効。v10.16.0 で追加） | 1440 分（24h）。`minimumReleaseAgeStrict` は false |
+| blockExoticSubdeps | false（v10.26.0 で追加） | true |
 | verifyDepsBeforeRun | false | install |
-| allowBuilds | 全許可 | **要明示承認** |
+| strictDepBuilds | false | true（未承認の build script があると install が失敗） |
+| 依存の build script | 既定で実行しない（v10.0.0 から）。許可は `package.json` の `pnpm.onlyBuiltDependencies` | 既定で実行しない。許可は `pnpm-workspace.yaml` の `allowBuilds` だけ（`onlyBuiltDependencies` は削除） |
+| trustPolicy | off（v10.21.0 で追加） | off（明示的に `no-downgrade` を設定する） |
 
-**pnpm v9+ の onlyBuiltDependencies と trustPolicy**:
-```json
-// package.json
-{
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "sharp",
-      "node-sass"
-    ]
-  }
-}
-// → このリスト以外の postinstall は実行されない
-```
-
+**pnpm 11 の `allowBuilds` と `trustPolicy`**（`pnpm-workspace.yaml` に書く）:
 ```yaml
-# .npmrc（pnpm）: 信頼スコアが以前より下がったバージョンをインストール拒否
-trustPolicy: no-downgrade
+# pnpm-workspace.yaml
+# 依存の build script は既定で実行しない。必要なものだけ true で許可し、不要なものは false で明示的に拒否する
+allowBuilds:
+  esbuild: true
+  sharp: true
+  core-js: false
 
-# パッケージマネージャを固定し、AIエージェントや新メンバーの誤った npm install を防ぐ
-# package.json の devEngines フィールド（Node.js 22.12+）
+# 過去の版より信頼の根拠（trusted publisher・provenance）が弱くなった版のインストールを拒否する
+trustPolicy: no-downgrade
 ```
+
+v10 から移行するときは `pnpx codemod run pnpm-v10-to-v11` で `onlyBuiltDependencies` などを `allowBuilds` に書き換えられる。
+
+パッケージマネージャを固定し、AI エージェントや新メンバーの誤った `npm install` を防ぐには `package.json` の `devEngines` を使う（Node.js 22.12+。`packageManager` による固定は `practices/dx/dependency-management.md` #1 を参照）。
 
 ```json
 // package.json
@@ -435,15 +415,16 @@ trustPolicy: no-downgrade
 }
 ```
 
-**lockfile-lint で URL を制限**:
+**lockfile-lint で URL を制限**（npm / yarn の lockfile。`--type` は `npm` か `yarn` だけで、`pnpm-lock.yaml` には使えない）:
 ```yaml
-# .github/workflows/lockfile-lint.yml
-- run: npx lockfile-lint \
-    --path pnpm-lock.yaml \
-    --type pnpm \
-    --validate-https \
-    --allowed-hosts registry.npmjs.org \
-    --validate-integrity
+# .github/workflows/lockfile-lint.yml のステップ
+- run: |
+    npx lockfile-lint \
+      --path package-lock.json \
+      --type npm \
+      --validate-https \
+      --allowed-hosts registry.npmjs.org \
+      --validate-integrity
 ```
 
 **判断軸（install script を許可するか）**:
@@ -479,31 +460,45 @@ npm config set min-release-age=1 --location=project
 # yarn 4.10+: 1440分（24h）
 yarn config set npmMinimalAgeGate 1d
 
-# pnpm 10.16+: デフォルト 1440分（24h）→ 7日間推奨
-pnpm config set --location=project minimumReleaseAge 10080
+# pnpm 10.16+: pnpm-workspace.yaml に書く（次の例）。既定は v10 が 0（無効）、v11 が 1440 分（24h）。7 日間（10080 分）を推奨
 ```
 
 ```yaml
-# .npmrc（pnpm）: 除外リストの例（CI でコメントを自動検証）
+# pnpm-workspace.yaml（pnpm 11）: 除外リストの例（CI でコメントを自動検証）
 minimumReleaseAge: 10080
-
-# minimumReleaseAgeExclude:
-#   - "@swc/core"       # ネイティブバイナリ。承認: CTO, 期限: 2026-09-30, 理由: RC 対応
-#   - "esbuild"         # ネイティブバイナリ。承認: Tech Lead, 期限: 永続, 理由: 公式リリース
+minimumReleaseAgeExclude:
+  # パッケージ@バージョン単位で最小範囲に絞り、承認者・期限・理由を同じ行のコメントに書く
+  - '@swc/core@1.15.3'   # 承認: CTO, 期限: 2026-11-30, 理由: RC 対応
+  - '@myorg/*'           # 承認: Tech Lead, 期限: 永続, 理由: 社内 CI から publish する自社パッケージ
 ```
 
 ```bash
-# CI: 除外エントリの承認期限チェック（期限切れで PR ブロック）
-#!/bin/bash
-TODAY=$(date +%Y-%m-%d)
-EXPIRED=$(grep -E '期限:' .npmrc | grep -v "永続" | awk '{print $NF}' | while read d; do
-  [[ "$d" < "$TODAY" ]] && echo "$d is expired"
-done)
-[[ -n "$EXPIRED" ]] && { echo "ERROR: expired minimumReleaseAge exclusions: $EXPIRED"; exit 1; }
+#!/usr/bin/env bash
+# CI: minimumReleaseAgeExclude の承認期限チェック（期限切れ・期限なしが 1 件でもあれば exit 1）
+set -euo pipefail
+
+file=pnpm-workspace.yaml
+today=$(date +%Y-%m-%d)
+
+# minimumReleaseAgeExclude ブロックの "  - ..." の行だけを取り出す
+entries=$(sed -n '/^minimumReleaseAgeExclude:/,/^[^[:space:]#]/p' "$file" | grep -E '^[[:space:]]+- ' || true)
+
+# 期限の書かれていないエントリも違反にする
+missing=$(grep -v -E '期限: ([0-9]{4}-[0-9]{2}-[0-9]{2}|永続)' <<<"$entries" || true)
+# YYYY-MM-DD は文字列比較で日付の前後を判定できる
+expired=$(grep -oE '期限: [0-9]{4}-[0-9]{2}-[0-9]{2}' <<<"$entries" | awk -v today="$today" '$2 < today { print $2 }' || true)
+
+if [[ -n "$missing" || -n "$expired" ]]; then
+  [[ -n "$missing" ]] && printf 'ERROR: 期限のない除外エントリ:\n%s\n' "$missing"
+  [[ -n "$expired" ]] && printf 'ERROR: 期限切れの除外エントリ: %s\n' "$expired"
+  exit 1
+fi
+echo "OK: minimumReleaseAgeExclude に期限切れ・期限なしのエントリはない"
+exit 0
 ```
 
 ```yaml
-# Dependabot (.github/dependabot.yml) でも冷却期間を設定
+# Dependabot (.github/dependabot.yml) でも冷却期間を設定（security updates には適用されない。#2 参照）
 version: 2
 updates:
   - package-ecosystem: "npm"
@@ -511,7 +506,7 @@ updates:
     schedule:
       interval: "daily"
     cooldown:
-      default-days: 1
+      default-days: 7
 ```
 
 **社内パッケージの dependency confusion 対策**:
@@ -525,7 +520,13 @@ updates:
 - [npm: Avoiding npm substitution attacks](https://github.blog/security/supply-chain-security/avoiding-npm-substitution-attacks/) (GitHub Blog)
 - [Socket: npm supply chain security](https://socket.dev/) (Socket)
 - [Snyk: npm security best practices](https://snyk.io/blog/ten-npm-security-best-practices/) (Snyk Blog)
-- [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs)
+- [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs、v10 での許可リスト)
+- [pnpm: Build Settings](https://pnpm.io/settings/build) (pnpm 公式、`allowBuilds` は v10.26.0 で追加、`onlyBuiltDependencies` などは v11 で削除、`strictDepBuilds` 既定 true) ※2026-10-25 確認
+- [pnpm: Dependency Resolution Settings](https://pnpm.io/settings/dependency-resolution) (pnpm 公式、`minimumReleaseAge` は v10.16.0 で追加・既定は v11 から 1440／それ以前は 0、`minimumReleaseAgeExclude` のバージョン指定、`trustPolicy` は v10.21.0 で追加・既定 off、`blockExoticSubdeps` は v10.26.0 で追加) ※2026-10-25 確認
+- [pnpm: Settings](https://pnpm.io/settings) (pnpm 公式、「Only auth and registry settings are read from `.npmrc` files.」) ※2026-10-25 確認
+- [pnpm v10.0.0 release notes](https://github.com/pnpm/pnpm/releases/tag/v10.0.0) (pnpm 公式、依存の lifecycle script を既定で実行しない) ※2026-10-25 確認
+- [pnpm v11.0.0 release notes](https://github.com/pnpm/pnpm/releases/tag/v11.0.0) (pnpm 公式、`minimumReleaseAge: 1440`・`blockExoticSubdeps`・`strictDepBuilds`・`verifyDepsBeforeRun` の既定変更) ※2026-10-25 確認
+- [lockfile-lint](https://github.com/lirantal/lockfile-lint/tree/main/packages/lockfile-lint) (公式 README、`--type` は `npm` か `yarn`) ※2026-10-25 確認
 - [Protecting your Node.js project against supply-chain attacks](https://dev.to/douglasdemoura/protecting-your-nodejs-project-against-supply-chain-attacks-5984) (dev.to、release-age gate の npm/yarn/pnpm 設定例) ※2026-05-17に実際にfetch成功
 - [Mini Shai-Hulud Hits AntV: 300+ Malicious npm Packages via Compromised Maintainer Account](https://snyk.io/blog/mini-shai-hulud-antv-npm-supply-chain-attack/) (Snyk Blog、preinstall hook攻撃 + Claude Code session hooks永続化の新手口) ※2026-05-20に実際にfetch成功
 - [Laravel Lang Supply Chain Advisory](https://snyk.io/blog/laravel-lang-supply-chain-advisory/) (Snyk Blog、Composerタグリダイレクション攻撃・信頼境界の原則) ※2026-05-23に実際にfetch成功
@@ -623,7 +624,8 @@ npm view @scope/package@1.2.4 version
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-10-01
+**最終更新**: 2026-10-25
+
 ---
 
 ### 5. SBOM（Software Bill of Materials）を生成して依存関係を可視化する
@@ -648,9 +650,16 @@ on:
 jobs:
   sbom:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # anchore/sbom-action がリリースに SBOM を添付するため
+      actions: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
+      - uses: actions/checkout@v7
+      # サードパーティ action は実運用では SHA でピン留めする（practices/ci-cd/github-actions.md #9）
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/setup@v3
+        with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次で明示する
       - run: pnpm install --frozen-lockfile
 
       # CycloneDX 形式
@@ -665,7 +674,7 @@ jobs:
           output-file: sbom.spdx.json
 
       # アーティファクトとして保存
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: sbom
           path: sbom.*.json
@@ -722,13 +731,13 @@ npx license-checker --failOn 'GPL;AGPL;LGPL' --production
 3. **Stage 3**: 脆弱性 DB 連携で常時監視（Snyk / Dependabot Alerts）
 4. **Stage 4**: 顧客への SBOM 提供（B2B SaaS で要求される）
 
-**GitHub Enterprise での SBOM 生成（追加コストなし）**:
+**GitHub の Artifact Attestations で SBOM を成果物に紐づける**:
 
-GitHub Enterprise では Dependency Graph の機能が内包されており、`actions/attest-sbom` を使うことで追加ツールなしで SBOM を生成できる。トリガーは `main` へのマージ時とリリース時の2点から始めるのが推奨。
+`actions/attest` は SBOM を生成しない。外部ツール（下の例では `anchore/sbom-action`）が生成した SPDX / CycloneDX の SBOM を、ビルド成果物（`subject-path`）に紐づけて署名付きの attestation にする。`actions/attest-sbom` は `actions/attest` への移行が告知されており、v4 以降は `actions/attest` のラッパーになっている。public リポジトリはすべてのプランで使え、private / internal リポジトリでは GitHub Enterprise Cloud が必要。トリガーは `main` へのマージ時とリリース時の2点から始めるのが推奨。
 
 ```yaml
-# .github/workflows/sbom-gh-native.yml
-name: Generate SBOM (GitHub-native)
+# .github/workflows/sbom-attest.yml
+name: Attest SBOM
 on:
   push:
     branches: [main]
@@ -739,20 +748,29 @@ jobs:
   sbom:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # anchore/sbom-action がリリースに SBOM を添付するため
+      actions: read
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v3
+      - uses: actions/checkout@v7
+      # サードパーティ action は実運用では SHA でピン留めする（practices/ci-cd/github-actions.md #9）
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
+      - uses: pnpm/setup@v3
+        with: { node-version-file: false, cache: true, install: false }   # Node は setup-node に任せ、install は次で明示する
       - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # attestation の対象（subject）にするビルド成果物
+      - run: tar -czf app-build.tar.gz .next
       - uses: anchore/sbom-action@v0
         with:
           format: cyclonedx-json
           output-file: sbom.cyclonedx.json
-      - uses: actions/attest-sbom@v2
+      - uses: actions/attest@v4
         with:
-          subject-path: sbom.cyclonedx.json
+          subject-path: app-build.tar.gz
+          sbom-path: sbom.cyclonedx.json
 ```
 
 **OWASP Dependency-Track による集中管理**:
@@ -760,13 +778,15 @@ jobs:
 複数プロジェクトの SBOM を一元集約して継続的に脆弱性監視するには、OWASP Dependency-Track が有効。
 CI で生成した SBOM を API 経由でアップロードし、新規 CVE 発見時に自動アラートを受け取れる。
 
+multipart/form-data で送るときは `POST`、`PUT` は Base64 にした BOM を JSON で送る形式になる。
+
 ```yaml
 # SBOM を Dependency-Track に送信（sbom.yml に追加）
 - name: Upload SBOM to Dependency-Track
   run: |
-    curl -X PUT \
+    # -F を使うと curl が multipart/form-data（boundary 付き）の Content-Type を付ける
+    curl --fail-with-body -X POST \
       -H "X-Api-Key: ${{ secrets.DTRACK_API_KEY }}" \
-      -H "Content-Type: multipart/form-data" \
       -F "autoCreate=true" \
       -F "projectName=${{ github.repository }}" \
       -F "projectVersion=${{ github.ref_name }}" \
@@ -790,14 +810,17 @@ CI で生成した SBOM を API 経由でアップロードし、新規 CVE 発�
 - [CycloneDX Specification](https://cyclonedx.org/specification/overview/) (OWASP)
 - [SPDX Specification](https://spdx.dev/) (Linux Foundation)
 - [CISA: Software Bill of Materials](https://www.cisa.gov/sbom) (CISA)
-- [Anchore: SBOM Action](https://github.com/anchore/sbom-action) (Anchore)
+- [Anchore: SBOM Action](https://github.com/anchore/sbom-action) (Anchore 公式、リリース時は SBOM を release asset に添付し `contents: write` が必要) ※2026-10-25 確認
+- [actions/attest](https://github.com/actions/attest) (GitHub 公式、`subject-path` と `sbom-path`、必要な permissions、private リポジトリは GitHub Enterprise Cloud が必要) ※2026-10-25 確認
+- [actions/attest-sbom](https://github.com/actions/attest-sbom) (GitHub 公式、`actions/attest` への移行告知、外部ツールが生成した SBOM を受け取る) ※2026-10-25 確認
+- [Dependency-Track: Continuous Integration & Delivery](https://docs.dependencytrack.org/usage/cicd/) (OWASP 公式、`PUT` は JSON + Base64、multipart は `POST`) ※2026-10-25 確認
 - [Grype](https://github.com/anchore/grype) (Anchore)
 - [GitHub EnterpriseでDependabotとSBOMを使ったサプライチェーンセキュリティ入門](https://zenn.dev/itsdaichi/articles/a11a58c15919da) (Zenn、GHE-native SBOM + CycloneDX/VEX フォーマット比較) ※2026-05-31 fetch
 - [SBOMで始めるサプライチェーンセキュリティ実践](https://zenn.dev/geniee/articles/751e4305d6b97a) (Zenn、OWASP Dependency-Track 集中管理・ソース/コンテナ二重スキャン) ※2026-06-04 fetch
 
-**バージョン**: CycloneDX 1.5+, SPDX 2.3+, OWASP Dependency-Track 4.x+
+**バージョン**: CycloneDX 1.5+, SPDX 2.3+, OWASP Dependency-Track 4.x+, actions/attest v4
 **確信度**: 高
-**最終更新**: 2026-06-04
+**最終更新**: 2026-10-25
 
 ---
 
@@ -811,7 +834,7 @@ VS Code 拡張機能はインストール時から Node.js プロセスとして
 **根拠**:
 - 2026-05-22 に確認された事例: Nx Console v18.95.0（VS Code 拡張機能）に悪意ある
   コードが混入し、GitHub の内部リポジトリ約 3,800 件が 11〜18 分で窃取された（TeamPCP 攻撃）
-- 拡張機能の `activate()` は VS Code 起動のたびに実行され、継続的なクレデンシャル収集が可能
+- 拡張機能の `activate()` は `activationEvents` に従って呼ばれる。悪意ある拡張機能は起動直後に発火するイベント（`onStartupFinished` 等）を宣言できるので、VS Code を起動するたびにクレデンシャルを収集できる
 - インストールのみで即座に env 変数・ワークスペースのファイルへアクセスできる
 - 「有名ツールだから安全」という前提が攻撃の起点になる
 
@@ -858,7 +881,7 @@ ls ~/Library/LaunchAgents/com.user.kitty-monitor.plist 2>/dev/null && echo "INFE
 
 **バージョン**: VS Code 全バージョン
 **確信度**: 高
-**最終更新**: 2026-05-22
+**最終更新**: 2026-10-25
 
 ---
 
@@ -885,7 +908,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 - [ ] OAuth スコープは最小権限にする（`drive` ではなく `drive.readonly`、`calendar` ではなく `calendar.readonly`）
 - [ ] `.mcp.json` や `.claude/settings.json` をプロジェクトに含める場合はコードレビューと同じ基準で内容を審査する
 - [ ] 外部リポジトリの clone 時は `.mcp.json` の内容を確認してから Claude Code / Cursor を起動する
-- [ ] `allowedTools` / `permissions` は Managed Settings で組織統制する（Rule #13 参照）
+- [ ] `permissions`（allow / deny / `disableBypassPermissionsMode`）は Managed Settings で組織統制する（`practices/ai-agent/claude-code.md` #13 参照）
 - [ ] ツール定義のメタデータを正規化 JSON 化して SHA-256 でフィンガープリント化し、承認時に保存・実行前に再検証する（承認後のツール定義差し替え＝rug-pull / MCPoison 型攻撃の検知）
 - [ ] AI モデルファイルを外部から取り込む場合、`safetensors` 等の安全なフォーマットを優先し、`pickle` ベースのモデルは picklescan 等でスキャンする（modelscan 単体はブロックリスト方式で `.npz` 等の未対応フォーマットを見逃すため、複数スキャナの併用が前提）
 - [ ] 「誰が・どのツールを・どんな引数で・許可付きで呼んだか」を正規化 JSON で監査ログに残し、SOC/ブルーチームが事後にランタイム検知できる状態にする（OWASP MCP Top 10 相当のリスクに対する Sigma ルール等）
@@ -900,7 +923,7 @@ AI が承認なしに意図しない操作を実行させる（ツールポイ�
 | Confused Deputy | AI の委任権限を悪用して未認可操作を実行 | 承認ダイアログの内容を毎回確認（「常に許可」を使わない） |
 | **ビルド出力ハイジャック** | ANSI エスケープコードで人間の端末から隠した命令を AI エージェントのログ解析に見せる（2026-06 jqwik 1.10.0 protestware）| テスト出力・ビルドログを AI コンテキストに自動注入しない。破壊的操作は人間の確認を必須にする |
 | **Localhost 信頼境界バイパス** | Web ページから `localhost`/`127.0.0.1` で動く AI エージェントプロセスへ認証なしでアクセスし任意コマンドを実行（AutoJack, AutoGen Studio CVE）。エージェントが Web ブラウズ可能かつローカルサービスとも通信できる状態が前提 | エージェントを別 OS ユーザー・コンテナ・VM で分離。MCP 実行ファイルは許可リスト制。Web ブラウジングと特権ローカルサービスを同一ネットワーク境界で動作させない |
-| **STDIO トランスポートのコマンド未検証実行** | MCP の STDIO インターフェースがコマンド文字列を検証・サニタイズ・サンドボックスなしにサブプロセス実行へ渡す設計になっており、`npx -c` のようなフラグでアローリストを間接的に迂回できる（単一情報源の報告のため件数は参考値） | MCP サーバーを localhost 限定で待受、外部入力を渡す前に禁止文字（`; \| && $() `` >`）を検査、コマンドは文字列でなくリストとして渡す（`shlex.split` 等）、プロセスをコンテナ + 最小権限 + read-only fs でサンドボックス化 |
+| **STDIO トランスポートのコマンド未検証実行** | MCP の STDIO インターフェースがコマンド文字列を検証・サニタイズ・サンドボックスなしにサブプロセス実行へ渡す設計になっており、`npx -c` のようなフラグでアローリストを間接的に迂回できる（単一情報源の報告のため件数は参考値） | 起動を許可する実行ファイルだけでなく、引数・サブコマンドも allowlist で照合し、`npx -c` / `sh -c` / `node -e` のようなシェル・コード実行フラグを拒否する（禁止文字の検査やリスト形式での起動だけでは、メタ文字を含まない `npx -c id` は止められず、npx 自身がコマンドを実行する）。MCP サーバーは localhost 限定で待ち受け、プロセスをコンテナ + 最小権限 + read-only fs でサンドボックス化する |
 
 **出典引用**:
 > "承認制はあっても、UIの設計次第でその意味が失われる"
@@ -1002,7 +1025,7 @@ class ToolPinStore:
 
 **バージョン**: Claude Code / Cursor / MCP Protocol 全バージョン
 **確信度**: 高
-**最終更新**: 2026-07-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1027,6 +1050,8 @@ class ToolPinStore:
 ```
 
 **OSS 構成（Trivy MCP + Claude Code hooks）**:
+Trivy MCP は Trivy 本体に組み込まれたコマンドではなくプラグインなので、先に `trivy plugin install mcp` で導入してから `trivy mcp` で起動する。
+
 ```json
 // .mcp.json: Trivy MCP サーバー登録
 {
@@ -1057,10 +1082,11 @@ trivy fs --scanners vuln --severity CRITICAL,HIGH --exit-code 1 --quiet .
 - [Fix SCA issues at scale in your terminal with Snyk Remediation Agent in the CLI](https://snyk.io/blog/snyk-remediation-agent-in-the-cli/) (Snyk公式ブログ) ※2026-05-29に実際にfetch成功
 - [Claude Code × Trivy MCPで依存ライブラリの脆弱性を検出→修正→再スキャンする](https://zenn.dev/virtualcraft/articles/claude-code-trivy-mcp-security-check) (Zenn、Trivy MCP + Claude Code hooks によるOSSのみのSCA自動化構成) ※2026-06-12に実際にfetch成功
 - [OWASP Cheat Sheet Series: Vulnerable Dependency Management](https://github.com/OWASP/CheatSheetSeries/commit/b994fb6623eff9fac19e9d19697aedce77114074) (OWASP公式、修正版へアップグレードできない場合の「保守されたバックポート」評価基準4点) ※2026-08-31に実際にfetch成功
+- [aquasecurity/trivy-mcp](https://github.com/aquasecurity/trivy-mcp) (Aqua Security 公式、`trivy plugin install mcp` で導入するプラグイン、`trivy mcp` で起動) ※2026-10-25 確認
 
 **バージョン**: Snyk CLI 1.0+, Trivy 0.50+
 **確信度**: 中
-**最終更新**: 2026-08-31
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1080,8 +1106,8 @@ polyfill.io 事件（2024年、配信元ドメインが攻撃者に買収され�
 # 外部スクリプト棚卸しコマンド（./public 以下を静的解析）
 grep -rhoE '<(script|link)[^>]+(src|href)="https?://[^"]+"' ./public
 
-# 実行時観察: CSP Report-Only モードで動的に読み込まれるリソースも検出
-# Next.js proxy.ts（middleware.ts）に追加:
+# 実行時観察: CSP Report-Only モードで動的に読み込まれるリソースも検出（報告の受信は security/csp.md #3・#4）
+# Next.js の proxy.ts（v15 以前は middleware.ts）でレスポンスに付ける:
 # Content-Security-Policy-Report-Only: script-src 'self'; report-to csp-endpoint
 ```
 
@@ -1102,7 +1128,7 @@ grep -rhoE '<(script|link)[^>]+(src|href)="https?://[^"]+"' ./public
 1. **削除**: `Promise`・`fetch` 等の polyfill はネイティブ実装済みなら削除
 2. **自社管理に移管**: 重要なライブラリは npm 経由でバンドルに取り込む（CDN オーナーシップ変更リスクを排除）
 3. **SRI を付与**: 移管できない外部スクリプトには `integrity` と `crossorigin` を設定。バージョン固定 URL でのみ有効（動的エンドポイントには使えない）
-4. **CSP で補完**: `script-src` に外部 CDN ドメインを明示し、未知オリジンをブロック（`security/csp.md` Rule #1〜6 参照）
+4. **CSP で補完**: 外部スクリプトも nonce を付けて読み込み、SRI と組み合わせる。CDN のホスト名を `script-src` に並べる allowlist は使わない（ドメインごと信頼するので改ざんを防げず、`'strict-dynamic'` 下ではホスト allowlist は無視される）。設計は `practices/security/csp.md` #1・#5 を参照
 5. **四半期棚卸し**: 外部スクリプト一覧をドキュメント化し、所有者・用途・npm 移管可否を定期確認
 
 **アンチパターン**:
@@ -1119,7 +1145,7 @@ grep -rhoE '<(script|link)[^>]+(src|href)="https?://[^"]+"' ./public
 
 **バージョン**: ブラウザ共通（SRI は Chrome/Firefox/Safari/Edge 全対応）
 **確信度**: 高
-**最終更新**: 2026-06-11
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1134,12 +1160,13 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - 従来の ad-hoc パッチは頻度こそ低いが事前告知がなく、利用チームに突発的な対応負荷を強いていた
 - LLM 支援による脆弱性発見の増加（Mozilla は Anthropic の Mythos Preview により Firefox で271件を一度に発見）を背景に、Next.js 自身も `deepsec` 等のツールと独自リサーチャー・拡大したバグバウンティで先回り検知を強化している
 - 事前告知にはリリース時期と最大深刻度（high/medium 等）が含まれるため、ホスティング事業者と連携したファイアウォールルール等の一時的な緩和策も計画に組み込める
-- 初回の月次リリースは 2026-07-20 予定で、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
+- ただしファイアウォールルールは patch の代わりにならない。2026-05-07 のリリース（13 件のアドバイザリ、修正版 15.5.18 / 16.2.6）で Vercel は「パッチ適用だけが完全な緩和策」「WAF 層では確実にブロックできない」と明記した
+- 初回の月次リリースは当初 2026-07-20 予定だったが 2026-07-21 に変更され、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
 - ad-hoc パッチは実際に発動している: 2026-09-22 に out-of-band 緊急リリースがあり、`next/og` の Node.js `ImageResponse` 実装が上流 Satori 依存の脆弱性経由で Remote Code Execution（Critical, GHSA-vcvr-r3jv-pc5j）の影響を受けると告知された。対象は Next.js `>=16.2.0 <16.3.6`。修正版 `16.3.6`（15.x 系は RCE 自体の対象外だが hardening を含む `15.5.26`）が即日公開され、Edge の `ImageResponse` 実装は影響を受けない。月次サイクルとは別に、こうした Critical 脆弱性は告知当日中のアップグレードを要する
 - 2026-09-30 の月次リリース（v16.3.8 / v15.5.27）は、予告から内容が 2 回変わった。9/29 に公開された 16.3.7 はバグ修正のみでセキュリティ修正を含まず、修正版は 16.3.8 / 15.5.27 に変更された。さらに当日、予告していた 9 件のうち critical 1件・high 1件が上流依存の調整待ちで後日のリリースに回され、修正は 7 件（high 1・medium 5・low 1）になった。予告時点の版番号や件数で対応を確定せず、告知ページの日付付き追記とリリース当日の本告知で対象と修正版を確かめる。同リリースには `next dev` の MCP エンドポイントが接続元 Web サイトを検証せず、悪意あるサイト経由でソースやルート情報を読める問題（Low）も含まれ、開発サーバーも更新対象になる
 - 各脆弱性には**影響条件**が明記される（例: SSRF は `images.remotePatterns` 設定時のみ、Draft Mode 漏えいは Cache Components / `experimental.useCache` 有効時のみ、MCP エンドポイントの情報漏えいは `next dev` のみ）。自アプリの設定と突き合わせて優先度を決める
 - 月次枠とは別に、上流依存（upstream dependencies）の脆弱性修正は out-of-band の臨時リリースになることがある。2026-10-08 には「10/14 に Critical 2件・High 1件（うち2件は上流調整のため9月リリースから延期）を修正する臨時アップデート」が事前告知され、詳細アドバイザリ（影響範囲・対象バージョン・手順）は当日公開とされた。告知日と公開日の間にアップグレード検証環境と担当を確保しておく
-- 月次の枠外でも out-of-band の臨時リリースが出る。2026-10-14 には 9月リリースから上流依存の遅延で見送られた修正を含む v16.4.1 / v15.5.28 が公開され、`use cache` 関数が typed array を複数返す場合の認証不要 RCE（Critical、回避策なし）、SVG の Image Optimization 経由の RCE（Critical、`sharp` 0.35.5 以上で回避可）、Server Actions を使う App Router の DoS（High）を修正した。告知を見たら次の月次枠を待たず当日中に `npm install next@<patched>` で更新する
+- 月次の枠外でも out-of-band の臨時リリースが出る。2026-10-14 には 9月リリースから上流依存の遅延で見送られた修正を含む v16.4.1 / v15.5.28 が公開され、`use cache` 関数が typed array を複数返す場合の認証不要 RCE（Critical、回避策なし）、SVG の Image Optimization 経由の RCE（Critical、Next.js を glibc 系 Linux で動かしている場合に影響。回避策は Next.js が使う `sharp` を 0.35.5 以上にすること）、Server Actions を使う App Router の DoS（High）を修正した。告知を見たら次の月次枠を待たず、当日中に使用中の系列の修正版へ更新する（`npm install next@16.4.1` / `npm install next@15.5.28`。`next@latest` は 15 系から 16 系のようにメジャーを跨ぐので緊急パッチには使わない）
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1159,19 +1186,20 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 > ([Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026), Next.js Blog, 冒頭段落) ※2026-10-08に実際にfetch成功
 
 **出典**:
-- [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ) ※2026-07-14 fetch
+- [Next.js Security Release and Our Next Patch Release](https://nextjs.org/blog/next-security-release-program) (Next.js 公式ブログ、初回の月次リリースを 7/20 から 7/21 に変更した追記) ※2026-10-25 確認
+- [Next.js May 2026 security release](https://vercel.com/changelog/next-js-may-2026-security-release) (Vercel 公式 changelog、13 件のアドバイザリ・修正版 15.5.18 / 16.2.6、パッチ適用だけが完全な緩和策) ※2026-10-25 確認
 - [Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026) (Next.js 公式ブログ、`next/og` RCE の out-of-band 緊急パッチの実例) ※2026-09-23 fetch
 - [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js 公式ブログ、9/30 リリースで修正された 7 件（high 1・medium 5・low 1）と `next dev` MCP エンドポイントの修正) ※2026-09-30 fetch
 - [Upcoming Next.js September Security Release](https://nextjs.org/blog/upcoming-nextjs-security-release-september-2026) (Next.js 公式ブログ、9/29・9/30 の追記: 16.3.7 にはセキュリティ修正が含まれない、critical・high の 2 件は後日のリリースに回す) ※2026-10-25 確認（routine-followup マージ時の修正）
 - [Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026) (Next.js 公式ブログ、上流依存の Critical 2件・High 1件を対象とする 2026-10-14 の臨時アップデート事前告知) ※2026-10-08 fetch
-- [Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/nextjs-security-update-october-14-2026) (Next.js 公式ブログ、out-of-band 臨時リリース) ※2026-10-14 fetch
+- [Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/nextjs-security-update-october-14-2026) (Next.js 公式ブログ、out-of-band 臨時リリース。SVG の Image Optimization RCE は glibc 系 Linux が条件) ※2026-10-25 確認
   > "Updates are now available in v16.4.1 (Active LTS) and v15.5.28 (Maintenance LTS) to address these issues. Please patch your Next.js dependencies to maintain the security of your applications." (セクション冒頭)
   > "There is no known workaround for affected applications. You should upgrade immediately even if your application does not have similar functions."
   > (セクション "Impact" — Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays)
 
-**バージョン**: Next.js 16.2+ / 15.5+（`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外。2026-09-30 の修正版は 16.3.8 / 15.5.27）
+**バージョン**: Next.js 16.2+ / 15.5+（2026-10-14 時点の修正版は 16.4.1 / 15.5.28。`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外）
 **確信度**: 高
-**最終更新**: 2026-10-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -1184,22 +1212,30 @@ pnpm 11 はデフォルトで `minimumReleaseAge: 1440`（分単位、24時間�
 - pnpm 11 は設定を「認証・レジストリ関連（INI形式 `.npmrc`）」と「pnpm 固有設定（YAML形式 `pnpm-workspace.yaml`）」に分離した。`minimumReleaseAge` は後者に属するため `.npmrc` に書いても**エラーにも警告にもならず、単に無視される**
 - ローカル開発でバージョン固定（exact version）指定をすると、pnpm が自動的に `pnpm-workspace.yaml` へ `minimumReleaseAgeExclude` エントリを生成することがある。これを未コミットのまま CI で `--frozen-lockfile` を使うと、同じ lockfile が `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` で失敗する（ローカルでは通り CI だけ落ちる典型パターン）
 - バージョン範囲指定（`^` 等）の場合は、新しいバージョンが age 制限に引っかかると**警告なく古い適合バージョンにフォールバックする**。意図しない古いバージョンが入っていないか lockfile の diff で確認する必要がある
+- 範囲内に条件を満たす版が 1 つもないときの挙動は `minimumReleaseAgeStrict` で決まる。`minimumReleaseAge` を自分で設定すると既定で true になり、解決が失敗する。設定しないまま既定値（1440）に頼ると false で、条件を満たさない版にフォールバックして install が通る。待機を確実に効かせるには `minimumReleaseAge` を明示する
+- 待機期間を外したいパッケージは `minimumReleaseAge: 0` で全体を無効にせず、`minimumReleaseAgeExclude` にパッケージ名か「パッケージ@バージョン」（v10.19.0+）で最小範囲を書き、#4 の承認期限チェックの対象にする
 
 **設定例**:
 ```yaml
-# pnpm-workspace.yaml（pnpm 11 での正しい配置場所）
-minimumReleaseAge: 0            # 0 で無効化（pre-11 相当の挙動に戻す）
-minimumReleaseAgeStrict: true
+# Good: pnpm-workspace.yaml（pnpm 11 での正しい配置場所）
+minimumReleaseAge: 10080        # 7 日（分単位）。明示したので minimumReleaseAgeStrict は既定で true
 minimumReleaseAgeExclude:
-  - '@types/node@26.2.0'        # 個別に除外したいパッケージ@バージョン
-blockExoticSubdeps: false
+  # 除外はパッケージ@バージョンで最小範囲に絞り、承認者・期限・理由を残す（#4 の CI チェック対象）
+  - '@types/node@26.2.0'        # 承認: Tech Lead, 期限: 2026-11-15, 理由: 型定義の即時追従
 allowBuilds:
   esbuild: true
 ```
 ```ini
 # Bad: .npmrc に書いても pnpm 11 では黙って無視される
-minimum-release-age=0
+minimum-release-age=10080
 ```
+```yaml
+# Bad: エラーを消すために既定の防御を丸ごと無効にする
+minimumReleaseAge: 0            # 公開直後の版がそのまま入る
+blockExoticSubdeps: false       # 推移依存の git / tarball URL 取得を許してしまう
+```
+
+無効化が避けられない場合は、理由・対象範囲・期限を書いた一時的な例外として扱い、期限が来たら元に戻す。
 
 **出典引用**:
 > "pnpm no longer reads non-auth settings from `.npmrc`. Configuration is split into two categories: auth/registry in INI format, pnpm-specific settings in YAML."
@@ -1207,10 +1243,12 @@ minimum-release-age=0
 
 **出典**:
 - [pnpm 11のminimumReleaseAge既定24hを踏みに行ったら、手元では通ってCIだけ落ちた](https://zenn.dev/clopy/articles/pnpm11-minimum-release-age-ci-only-failure) (Zenn、`pnpm-workspace.yaml`/`.npmrc` の設定分離とCI専用エラーの実機検証) ※2026-08-19 fetch
+- [pnpm: Dependency Resolution Settings](https://pnpm.io/settings/dependency-resolution) (pnpm 公式、`minimumReleaseAge` の既定は v11 から 1440、`minimumReleaseAgeStrict` は明示設定時に既定 true、`minimumReleaseAgeExclude` のバージョン指定は v10.19.0+) ※2026-10-25 確認
+- [pnpm: Settings](https://pnpm.io/settings) (pnpm 公式、「Only auth and registry settings are read from `.npmrc` files.」) ※2026-10-25 確認
 
 **バージョン**: pnpm 11+
-**確信度**: 中（単一記事だが公式ツールの設定ファイル形式・エラーコードを直接示す実機検証のためパターン1c扱い）
-**最終更新**: 2026-08-19
+**確信度**: 高
+**最終更新**: 2026-10-25
 
 ---
 

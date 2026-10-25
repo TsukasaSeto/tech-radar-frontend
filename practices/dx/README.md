@@ -8,7 +8,7 @@
 - `naming.md` — コンポーネント / hook / 型 / boolean / ハンドラーの命名規約
 - `code-review.md` — レビュー観点・PR ラベル・ファシリテーション
 - `monorepo.md` — pnpm workspace / Turborepo / パッケージ境界
-- `dependency-management.md` — lockfile / packageManager / 更新ポリシー
+- `dependency-management.md` — lockfile / packageManager / range 指定と major 更新の進め方（更新ポリシーは `security/dependency-security.md`）
 
 ## スコープ
 

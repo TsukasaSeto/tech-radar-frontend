@@ -79,10 +79,11 @@ ky を使うことでこれらを設定1回で統一できる。
 **コード例**:
 ```ts
 // lib/http.ts
-import ky from 'ky';
+import ky, { isHTTPError } from 'ky';
+import { getAuthToken } from '@/lib/auth';
 
 export const http = ky.create({
-  prefixUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
+  prefix: process.env.NEXT_PUBLIC_API_BASE_URL,  // ky 1.x では prefixUrl
   timeout: 10_000,        // 10秒タイムアウト（per-attempt）
   retry: {
     limit: 2,             // 最大2回リトライ
@@ -91,22 +92,22 @@ export const http = ky.create({
   },
   hooks: {
     beforeRequest: [
-      request => {
+      ({ request }) => {
         const token = getAuthToken();
         if (token) request.headers.set('Authorization', `Bearer ${token}`);
       },
     ],
-    beforeRetry: [
-      async ({ request, error, retryCount }) => {
-        if (retryCount === 1) await refreshToken();
-      },
-    ],
+    // 401 のトークンリフレッシュは #4 の afterResponse で行う
     beforeError: [
-      async error => {
-        const { response } = error;
-        if (response) {
-          const body = await response.json().catch(() => ({}));
-          error.message = (body as { message?: string }).message ?? error.message;
+      ({ error }) => {
+        // HTTPError なら、解析済みのレスポンスボディが error.data に入っている
+        if (
+          isHTTPError(error)
+          && typeof error.data === 'object'
+          && error.data !== null
+          && 'message' in error.data
+        ) {
+          error.message = String(error.data.message);
         }
         return error;
       },
@@ -125,24 +126,25 @@ const user = await res.json();  // 型が any
 ```
 
 **出典**:
-- [ky README](https://github.com/sindresorhus/ky) (sindresorhus/ky / GitHub)
+- [ky README](https://github.com/sindresorhus/ky) (sindresorhus/ky / GitHub、`prefix` オプション・フックが受け取る state オブジェクト・`isHTTPError` と `error.data`) ※2026-10-25 確認（ky 2.2.0 の README）
 
-**バージョン**: ky 1.0+
+**バージョン**: ky 2.0+（1.x では `prefixUrl` で、`beforeRequest` / `afterResponse` / `beforeError` は state オブジェクトではなく位置引数を受け取る）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. openapi-fetch でスキーマ駆動の型安全な REST クライアントを構築する
 
 OpenAPI スキーマから `openapi-typescript` で型を生成し、
-`openapi-fetch` でランタイムの型安全なクライアントを作る。
+`openapi-fetch` で型安全なクライアントを作る。型による保証はコンパイル時のもので、実行時の検証は別に行う。
 
 **根拠**:
 - API 仕様とクライアントコードの乖離をコンパイル時に検出できる
 - パスパラメータ・クエリパラメータ・リクエストボディ・レスポンスがすべて型付けされる
-- OpenAPI スキーマがあれば追加のランタイム検証なしで型安全性を確保できる
+- 生成した型が保証するのはコンパイル時だけで、openapi-fetch は実行時にレスポンスを検証しない。スキーマとずれたレスポンスや外部 API のレスポンスを信頼できない場合は、Zod などで実行時にも検証する（`practices/api-client/type-safety.md` #2）
 - バックエンドの型変更をフロントエンドが即座に検知できる
+- openapi-fetch は 4xx / 5xx でも reject せず、`{ data, error, response }` を返す。TanStack Query の `queryFn` / `mutationFn` に渡すときは `error` を throw に変換する。変換しないと失敗が成功として扱われ、`retry` や `onError` のロールバックが動かない
 
 **コード例**:
 ```bash
@@ -153,12 +155,22 @@ npx openapi-typescript https://api.example.com/openapi.json -o src/types/api.d.t
 ```ts
 // lib/api-client.ts
 import createClient from 'openapi-fetch';
+import { ApiError } from '@/lib/api-error';  // error-handling.md #1
 import type { paths } from '@/types/api';
 
 export const apiClient = createClient<paths>({
   baseUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
   headers: { 'Content-Type': 'application/json' },
 });
+
+// TanStack Query の queryFn / mutationFn に渡す関数では、error を throw に変換する
+export async function getUser(id: string) {
+  const { data, error, response } = await apiClient.GET('/users/{id}', {
+    params: { path: { id } },
+  });
+  if (error) throw new ApiError(response.status, 'API_ERROR', `HTTP ${response.status}`);
+  return data;
+}
 
 // 使用例: パス・パラメータ・レスポンスが全て型付き
 const { data, error } = await apiClient.GET('/users/{id}', {
@@ -185,12 +197,12 @@ const user = await res.json();  // any 型
 ```
 
 **出典**:
-- [openapi-fetch Docs](https://openapi-ts.dev/openapi-fetch/) (openapi-ts.dev)
+- [openapi-fetch Docs](https://openapi-ts.dev/openapi-fetch/) (openapi-ts.dev、各メソッドは `data` / `error` / `response` を返し、`error` は 4xx / 5xx のときに入る) ※2026-10-25 確認
 - [openapi-typescript Docs](https://openapi-ts.dev/introduction) (openapi-ts.dev)
 
 **バージョン**: openapi-fetch 0.12+, openapi-typescript 7+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -201,7 +213,8 @@ const user = await res.json();  // any 型
 
 **根拠**:
 - 認証ロジックの変更が1箇所で完結する
-- トークンリフレッシュロジックを beforeRetry フックに集約できる
+- トークンリフレッシュは `afterResponse` フックに集約し、401 を検知したらリフレッシュして新しいトークンで 1 回だけ再送する（`ky.retry()` を返す）
+- `beforeRetry` ではリフレッシュできない。401 は既定の `retry.statusCodes` に含まれないので再試行自体が起きず、`beforeRetry` の `retryCount` は常に 1 以上なので `retryCount === 0` の分岐も成立しない
 - 個々のAPIコールがアプリケーションロジックに専念できる
 
 **コード例**:
@@ -209,25 +222,29 @@ const user = await res.json();  // any 型
 // lib/http.ts
 import ky from 'ky';
 import { getSession } from 'next-auth/react';
+import { refreshAccessToken } from '@/lib/auth';
 
 export const authenticatedHttp = ky.create({
-  prefixUrl: process.env.NEXT_PUBLIC_API_BASE_URL,
+  prefix: process.env.NEXT_PUBLIC_API_BASE_URL,  // ky 1.x では prefixUrl
   hooks: {
     beforeRequest: [
-      async request => {
+      async ({ request }) => {
         const session = await getSession();
         if (session?.accessToken) {
           request.headers.set('Authorization', `Bearer ${session.accessToken}`);
         }
       },
     ],
-    beforeRetry: [
-      async ({ request, retryCount }) => {
-        if (retryCount === 0) {
-          // 401 時にトークンをリフレッシュして再試行
-          const newToken = await refreshAccessToken();
-          if (newToken) request.headers.set('Authorization', `Bearer ${newToken}`);
-        }
+    afterResponse: [
+      // 最初の 401 だけリフレッシュし、新しいトークンで 1 回だけ再送する
+      async ({ request, response, retryCount }) => {
+        if (response.status !== 401 || retryCount > 0) return;
+        const newToken = await refreshAccessToken();
+        if (!newToken) return;  // リフレッシュに失敗したら 401 のまま HTTPError になる
+
+        const headers = new Headers(request.headers);
+        headers.set('Authorization', `Bearer ${newToken}`);
+        return ky.retry({ request: new Request(request, { headers }), code: 'TOKEN_REFRESHED' });
       },
     ],
   },
@@ -240,11 +257,11 @@ const res = await fetch('/api/users', {
 ```
 
 **出典**:
-- [ky README: Hooks](https://github.com/sindresorhus/ky#hooks) (sindresorhus/ky / GitHub)
+- [ky README: Hooks](https://github.com/sindresorhus/ky#hooks) (sindresorhus/ky / GitHub、`afterResponse` から `ky.retry()` で 401 を再送する例・`beforeRetry` の `retryCount` は常に 1 以上) ※2026-10-25 確認（ky 2.2.0 の README）
 
-**バージョン**: ky 1.0+
+**バージョン**: ky 2.0+（1.x では `prefixUrl` で、`afterResponse` は `(request, options, response, state)` の位置引数）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -255,12 +272,13 @@ Next.js の fetch 拡張オプション（`cache`, `next.revalidate`, `next.tags
 
 **根拠**:
 - Next.js は fetch を拡張しており、ISR・キャッシュ制御がオプション1つで設定できる
-- `next.tags` でタグベースの revalidation が可能（`revalidateTag()` と組み合わせ）
+- `next.tags` でタグベースの revalidation が可能（Server Action では `updateTag(tag)`、Route Handler では `revalidateTag(tag, 'max')` と組み合わせる。1 引数の `revalidateTag(tag)` は v16 で非推奨）
 - データ取得関数を複数の Server Component で呼んでも重複リクエストは自動で排除される（Request Memoization）
+- 更新側の Server Action は公開エンドポイントとして扱い、認証・認可・入力検証を Action ごとに行う（`practices/nextjs/server-actions.md` #5）。`'use server'` はファイルか関数本体の先頭に書かないと効かないので、Action は `'use server'` 専用のファイルに分ける
 
 **コード例**:
 ```ts
-// lib/data.ts
+// app/_lib/dal/products.ts（DAL の配置は practices/architecture/data-access-layer.md #1）
 
 // 60秒ごとに再検証する（ISR）
 export async function getProducts() {
@@ -277,156 +295,92 @@ export async function getDashboardData() {
   });
   return res.json();
 }
+```
 
-// Server Action でキャッシュを無効化
+```ts
+// app/actions/products.ts - Server Action でキャッシュを無効化
 'use server';
-import { revalidateTag } from 'next/cache';
 
-export async function updateProduct(id: string, data: ProductUpdate) {
-  await fetch(`https://api.example.com/products/${id}`, {
+import { updateTag } from 'next/cache';
+import { z } from 'zod';
+// 未認証・権限不足ならスローする自前ヘルパー（unauthorized() / forbidden() を使うなら experimental.authInterrupts: true が前提）
+import { requireAuth, requirePermission } from '@/lib/auth';
+
+const ProductUpdateInput = z.object({
+  id: z.uuid(),
+  name: z.string().min(1).max(100),
+  price: z.number().int().nonnegative(),
+});
+
+export async function updateProduct(raw: unknown): Promise<void> {
+  const user = await requireAuth();                        // ① 認証
+  await requirePermission(user, 'product:update');         // ② 認可（最終判定は API / DAL 側でも行う）
+  const { id, ...data } = ProductUpdateInput.parse(raw);   // ③ 許可したフィールドだけを受け付ける
+
+  const res = await fetch(`https://api.example.com/products/${id}`, {
     method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${user.accessToken}`,
+    },
     body: JSON.stringify(data),
     cache: 'no-store',
   });
-  revalidateTag('products');  // 'products' タグのキャッシュを無効化
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  updateTag('products');  // 'products' タグのキャッシュをすぐに失効させ、自分の更新を次の表示に反映する
 }
 ```
 
 **出典**:
 - [Next.js Docs: fetch](https://nextjs.org/docs/app/api-reference/functions/fetch) (Next.js公式)
 - [Next.js Docs: Caching](https://nextjs.org/docs/app/building-your-application/caching) (Next.js公式)
+- [Next.js Docs: updateTag](https://nextjs.org/docs/app/api-reference/functions/updateTag) (Next.js公式、Server Action 専用で read-your-own-writes 向け) ※2026-10-25 確認
+- [Next.js Docs: revalidateTag](https://nextjs.org/docs/app/api-reference/functions/revalidateTag) (Next.js公式、1 引数の形式は非推奨・推奨プロファイルは `'max'`) ※2026-10-25 確認
+- [Next.js Docs: use server](https://nextjs.org/docs/app/api-reference/directives/use-server) (Next.js公式、ファイル先頭か関数本体の先頭に置く・Server Function 内で認証と認可を行う) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+
+**バージョン**: Next.js 16+（`updateTag` と `revalidateTag(tag, profile)`。v15 以前は `revalidateTag(tag)` の 1 引数）、Zod 4+（`z.uuid()`）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 6. TanStack Query の Query Key をファクトリパターンで管理する
 
-クエリキーを `queryKeys.users.list()` のようなファクトリ関数で定義し、
-コード全体でのキーの一貫性と型安全な無効化を実現する。
-`caching.md` のファクトリパターンをさらに発展させ、REST エンドポイント単位で整理する。
+クエリキーのファクトリの詳細（構造・使い方・無効化の範囲）は `practices/api-client/caching.md` #3 を参照。
+ここでは REST API で使うときの観点だけを扱う。
 
 **根拠**:
-- クエリキーのタイポや構造差異によるキャッシュ分断を防ぐ
-- `invalidateQueries` の適用範囲をコード上で明示的に表現できる
-- エンドポイント追加時のキー設計が統一され、レビューコストが下がる
-- TanStack Query 公式ドキュメントが推奨するベストプラクティス
-
-**コード例**:
-```tsx
-// lib/query-keys.ts
-export const queryKeys = {
-  users: {
-    all: () => ['users'] as const,
-    lists: () => [...queryKeys.users.all(), 'list'] as const,
-    list: (filters?: { role?: string; page?: number }) =>
-      [...queryKeys.users.lists(), { filters }] as const,
-    details: () => [...queryKeys.users.all(), 'detail'] as const,
-    detail: (id: string) => [...queryKeys.users.details(), id] as const,
-  },
-  posts: {
-    all: () => ['posts'] as const,
-    list: (params?: { authorId?: string }) =>
-      [...queryKeys.posts.all(), 'list', { params }] as const,
-    detail: (id: string) => [...queryKeys.posts.all(), id] as const,
-  },
-} as const;
-
-// 使用例
-function useUsers(filters?: { role?: string }) {
-  return useQuery({
-    queryKey: queryKeys.users.list(filters),
-    queryFn: () => fetchUsers(filters),
-  });
-}
-
-function useUser(id: string) {
-  return useQuery({
-    queryKey: queryKeys.users.detail(id),
-    queryFn: () => fetchUser(id),
-  });
-}
-
-// Mutation 後の無効化
-const queryClient = useQueryClient();
-// users.list 系（フィルタ違いも含め全て）を無効化
-await queryClient.invalidateQueries({ queryKey: queryKeys.users.lists() });
-// 特定ユーザーのみ無効化
-await queryClient.invalidateQueries({ queryKey: queryKeys.users.detail(userId) });
-
-// Bad: 文字列リテラルをコード全体に散在
-useQuery({ queryKey: ['user', id] });
-// 別の場所で
-useQuery({ queryKey: ['users', id] });  // キャッシュが分断される
-```
+- REST のリソース（`/users`、`/posts` など）ごとにファクトリを 1 つ作り（`userKeys` / `postKeys`）、`all → lists → list(filters) → details → detail(id)` の階層をすべてのリソースでそろえる。どのリソースでも「一覧だけ」「1 件だけ」の無効化を同じ書き方にできる
 
 **出典**:
-- [TanStack Query: Query Key Factories](https://tanstack.com/query/latest/docs/framework/react/community/lukemorales-query-key-factory) (TanStack公式)
-- [Effective React Query Keys](https://tkdodo.eu/blog/effective-react-query-keys) (TkDodo's Blog)
+- [Effective React Query Keys](https://tkdodo.eu/blog/effective-react-query-keys) (TkDodo's Blog、TanStack Query のメンテナー。機能ごとのファクトリと `all` / `lists` / `list` / `details` / `detail` の階層) ※2026-10-25 確認
 
 **バージョン**: TanStack Query 5+
-**確信度**: 高
-**最終更新**: 2026-05-06
+**確信度**: 中
+**最終更新**: 2026-10-25
 
 ---
 
 ### 7. Optimistic Update は useMutation の onMutate / onError / onSettled で実装する
 
-`useMutation` の3つのコールバック（`onMutate` でスナップショット取得と楽観的更新、
-`onError` でロールバック、`onSettled` で再フェッチ）を組み合わせて
-安全な楽観的更新を実現する。
+3 つのコールバック（`onMutate` / `onError` / `onSettled`）の役割と実装例の詳細は `practices/api-client/caching.md` #4 を参照。
+ここでは REST の 1 件のリソースを更新するときの観点だけを扱う。
 
 **根拠**:
-- `onMutate` でキャッシュを先行更新しUIの体感速度を向上させる
-- `onError` のコンテキストにスナップショットを渡すことで失敗時に確実にロールバックできる
-- `onSettled` は成功・失敗に関わらず実行されるため最終的なデータ整合を保証できる
-- `cancelQueries` による競合リクエストのキャンセルがロールバックの精度を高める
+- 1 件のリソースを更新するときは、クエリキーのファクトリ（`practices/api-client/caching.md` #3）の `detail(id)` キーだけを `cancelQueries` / `setQueryData` / `invalidateQueries` の対象にし、関係のないキャッシュを巻き込まない
+- openapi-fetch で `mutationFn` を書くときは、`error` を throw に変換してから返す（#3）。変換しないと 4xx / 5xx でも `onError` のロールバックが走らない
+- 送信中はボタンを `isPending` で無効にし、楽観的更新が重なる連打を防ぐ
+- `onSuccess` で `invalidateQueries` するだけの実装は、サーバーの応答まで UI が変わらない。応答を待ってよい操作ならそれで十分で、楽観的更新が必要なのは即時のフィードバックが重要な操作に限る
 
 **コード例**:
 ```tsx
-// Good: useMutation の3コールバックで安全な楽観的更新
-function useLikePost() {
-  const queryClient = useQueryClient();
+// features/posts/components/LikeButton.tsx
+'use client';
+import { useLikePost } from '@/features/posts/hooks/use-like-post'; // caching.md #4 と同じ構成で、キーに postKeys.detail(postId) を使う
+import type { Post } from '@/features/posts/types';
 
-  return useMutation({
-    mutationFn: (postId: string) =>
-      apiClient.POST('/posts/{id}/like', { params: { path: { id: postId } } }),
-
-    onMutate: async (postId) => {
-      // 進行中の再フェッチをキャンセル（楽観的更新を上書きさせない）
-      await queryClient.cancelQueries({ queryKey: queryKeys.posts.detail(postId) });
-
-      // 現在のキャッシュをスナップショット（ロールバック用）
-      const previousPost = queryClient.getQueryData<Post>(queryKeys.posts.detail(postId));
-
-      // 楽観的にキャッシュを更新
-      queryClient.setQueryData<Post>(queryKeys.posts.detail(postId), old =>
-        old ? { ...old, likeCount: old.likeCount + 1, isLiked: true } : old,
-      );
-
-      // onError に渡すコンテキストを返す
-      return { previousPost };
-    },
-
-    onError: (_err, postId, context) => {
-      // エラー時にスナップショットへロールバック
-      if (context?.previousPost) {
-        queryClient.setQueryData(queryKeys.posts.detail(postId), context.previousPost);
-      }
-      toast.error('いいねに失敗しました');
-    },
-
-    onSettled: (_data, _err, postId) => {
-      // 成功・失敗に関わらずサーバーから最新データを取得
-      queryClient.invalidateQueries({ queryKey: queryKeys.posts.detail(postId) });
-    },
-  });
-}
-
-// 使用例
-function PostCard({ post }: { post: Post }) {
+export function LikeButton({ post }: { post: Post }) {
   const { mutate: likePost, isPending } = useLikePost();
   return (
     <button onClick={() => likePost(post.id)} disabled={isPending}>
@@ -434,12 +388,6 @@ function PostCard({ post }: { post: Post }) {
     </button>
   );
 }
-
-// Bad: onMutate なしで楽観的更新なし（サーバーレスポンス後にUIが更新）
-const { mutate } = useMutation({
-  mutationFn: likePost,
-  onSuccess: () => queryClient.invalidateQueries({ queryKey: ['posts'] }),
-});
 ```
 
 **出典**:
@@ -447,7 +395,7 @@ const { mutate } = useMutation({
 
 **バージョン**: TanStack Query 5+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

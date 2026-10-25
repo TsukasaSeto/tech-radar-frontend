@@ -48,10 +48,10 @@ packages:
 {
   "name": "my-monorepo",
   "private": true,
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@11.28.8",
   "engines": {
-    "node": ">=20.0.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
   },
   "scripts": {
     "build": "turbo run build",
@@ -123,16 +123,16 @@ packages:
 - [Turborepo Docs](https://turborepo.com/docs) (Vercel)
 - [Nx Docs](https://nx.dev/) (Nrwl)
 
-**バージョン**: pnpm 9+, Turborepo 2+
+**バージョン**: pnpm 9+（例の `packageManager` は pnpm 11）, Turborepo 2+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. パッケージ境界を `apps/` / `packages/` の 2 層で明確化する
 
 `apps/` にはデプロイ単位（Web アプリ・ドキュメントサイト等）、`packages/` には apps 間で共有する内部ライブラリを置く。
-パッケージは「公開しない（private: true）」または「npm 公開する（access: public）」を最初に決める。
+パッケージは「公開しない（`private: true`）」または「npm 公開する（`publishConfig.access: public`）」を最初に決める。
 
 **根拠**:
 - フォルダ構造で「これは何のためにあるか」が即座に判別できる
@@ -172,12 +172,15 @@ ESLint で強制:
 
 **ESLint で依存方向を強制**:
 ```js
-// packages/ui/.eslintrc.js
+// packages/ui/eslint.config.js の rules
 'no-restricted-imports': ['error', {
   patterns: [
-    '@my-monorepo/web/*',      // ui は web に依存禁止
-    '@my-monorepo/admin/*',
-  ]
+    {
+      // ルート（@my-monorepo/web）とサブパス（@my-monorepo/web/...）の両方を禁止する
+      group: ['@my-monorepo/web', '@my-monorepo/web/*', '@my-monorepo/admin', '@my-monorepo/admin/*'],
+      message: 'packages/ から apps/ に依存しない',
+    },
+  ],
 }]
 ```
 
@@ -187,7 +190,7 @@ ESLint で強制:
 {
   "name": "@my-monorepo/ui",
   "version": "1.0.0",
-  "access": "public",
+  "publishConfig": { "access": "public" },
   "files": ["dist"],
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -226,10 +229,12 @@ ESLint で強制:
 **出典**:
 - [Turborepo: Filtering](https://turborepo.com/docs/reference/run#--filter-string) (Vercel)
 - [Monorepo.tools](https://monorepo.tools/) (Nrwl)
+- [npm Docs: publishConfig](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#publishconfig) (npm、公開時の `access` は `publishConfig` で指定する) ※2026-10-25 確認
+- [ESLint: no-restricted-imports](https://eslint.org/docs/latest/rules/no-restricted-imports) (ESLint、`patterns` の `group` / `message`) ※2026-10-25 確認
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -294,7 +299,7 @@ packages/tsconfig/
 {
   "extends": "@my-monorepo/tsconfig/nextjs.json",
   "compilerOptions": {
-    "baseUrl": ".",
+    // baseUrl は使わない（TS 6.0 で非推奨、TS 7.0 で削除）。paths は tsconfig からの相対パスで書く
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["next-env.d.ts", "src/**/*"]
@@ -314,6 +319,12 @@ export default [
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {
+    // recommendedTypeChecked の型情報を使うルールに必要
+    languageOptions: {
+      parserOptions: { projectService: true },
+    },
+  },
+  {
     plugins: { react: reactPlugin, 'react-hooks': hooksPlugin, 'jsx-a11y': jsxA11y },
     rules: {
       'react/react-in-jsx-scope': 'off',
@@ -332,6 +343,12 @@ import baseConfig from '@my-monorepo/eslint-config';
 
 export default [
   ...baseConfig,
+  {
+    // tsconfig の探索起点を各パッケージのディレクトリにする
+    languageOptions: {
+      parserOptions: { tsconfigRootDir: import.meta.dirname },
+    },
+  },
   {
     files: ['src/**/*.{ts,tsx}'],
     rules: {
@@ -401,10 +418,12 @@ export default {
 **出典**:
 - [Turborepo: Sharing TypeScript config](https://turborepo.com/docs/handbook/linting/typescript) (Vercel)
 - [ESLint: Configuration Files](https://eslint.org/docs/latest/use/configure/configuration-files) (ESLint)
+- [typescript-eslint: Linting with Type Information](https://typescript-eslint.io/getting-started/typed-linting/) (typescript-eslint、`recommendedTypeChecked` には `parserOptions.projectService` が必要) ※2026-10-25 確認
+- `baseUrl` の扱いは [`typescript/strict-mode.md`](../typescript/strict-mode.md) #4 を参照
 
-**バージョン**: TypeScript 5+, ESLint 9+
+**バージョン**: TypeScript 5+（`baseUrl` を使わない書き方は TS 7 でもそのまま使える）, ESLint 9+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -427,14 +446,12 @@ import パスから「これは public API か内部実装か」が読み手に�
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.cjs"
+      "import": { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
     },
     "./button": {
-      "types": "./dist/button.d.ts",
-      "import": "./dist/button.mjs",
-      "require": "./dist/button.cjs"
+      "import": { "types": "./dist/button.d.mts", "default": "./dist/button.mjs" },
+      "require": { "types": "./dist/button.d.cts", "default": "./dist/button.cjs" }
     },
     "./styles.css": "./dist/styles.css",
     "./package.json": "./package.json"
@@ -443,11 +460,13 @@ import パスから「これは public API か内部実装か」が読み手に�
 }
 ```
 
+ESM と CommonJS の両方を出すときは、型宣言も条件ごとに `.d.mts` / `.d.cts` を分ける。1 つの `.d.ts` を両方に割り当てると、`"type": "module"` では require 側の型が ESM と判定され、`node16` / `nodenext` で解決エラー（Masquerading as ESM）になる。
+
 **使う側のインポート**:
 ```tsx
 // Good: exports に定義されたパス
-import { Button } from '@my-monorepo/ui';
-import { Card } from '@my-monorepo/ui/card';
+import { Card } from '@my-monorepo/ui';
+import { Button } from '@my-monorepo/ui/button';
 import '@my-monorepo/ui/styles.css';
 
 // Bad: 内部ファイル直接アクセス（exports で禁止）
@@ -529,26 +548,28 @@ import { ChevronDown } from '@my-monorepo/ui/icons/chevron-down';
 
 **Verify ツール**:
 ```bash
-# exports の整合性検証
-pnpm dlx @arethetypeswrong/cli @my-monorepo/ui
-# ✓ Are the types wrong? の評価
+# exports の整合性検証（パッケージのディレクトリを渡す。--pack で npm pack した tarball を検査する）
+pnpm dlx @arethetypeswrong/cli --pack packages/ui
+# ✓ Are the types wrong? の評価（公開済みの版は --from-npm @my-monorepo/ui で検査する）
 
-pnpm dlx publint @my-monorepo/ui
+pnpm dlx publint packages/ui
 # ✓ npm publish 前の package.json 検証
 ```
 
 **`files` フィールドとの関係**:
-- `exports`: どのパスを公開するか
-- `files`: npm publish 時に含めるファイル
+- `exports`: どのパスを import で解決できるようにするか
+- `files`: npm publish 時に tarball に含めるファイル
 
-両方設定するのが安全（`exports` だけだと、依存先で予期せぬファイルが除外されることがある）。
+両方設定するのが安全。`files` を省略するとソースやテストまで公開され、逆に `exports` が指すファイルが `files` から漏れると公開後に解決できなくなる。
 
 **出典**:
 - [Node.js Docs: Package exports](https://nodejs.org/api/packages.html#package-entry-points) (Node.js)
 - [TypeScript Docs: Module resolution](https://www.typescriptlang.org/docs/handbook/modules/reference.html#nodenext-node16) (TypeScript)
 - [arethetypeswrong/arethetypeswrong](https://github.com/arethetypeswrong/arethetypeswrong.github.io) (arethetypeswrong)
+- [@arethetypeswrong/cli README](https://github.com/arethetypeswrong/arethetypeswrong.github.io/tree/main/packages/cli) (arethetypeswrong、`--pack <dir>` / `--from-npm <pkg>`、Masquerading as ESM) ※2026-10-25 確認
 - [publint](https://publint.dev/) (publint)
+- [publint CLI](https://publint.dev/docs/cli) (publint、位置引数はディレクトリか tarball) ※2026-10-25 確認
 
 **バージョン**: Node.js 14.13+, TypeScript 4.7+
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25

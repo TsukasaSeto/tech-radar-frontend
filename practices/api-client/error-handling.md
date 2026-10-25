@@ -16,7 +16,7 @@ HTTP レスポンスのステータスコードを 4xx（クライアントエ�
 **根拠**:
 - 4xx はクライアント起因（バリデーションエラー、認証エラー等）でユーザーへの表示が必要
 - 5xx はサーバー起因でリトライやフォールバックが有効なケースが多い
-- 429 Too Many Requests はレートリミットのため `Retry-After` ヘッダーを尊重すべき
+- 429 Too Many Requests はレートリミットのため `Retry-After` ヘッダーを尊重すべき。`Retry-After` は秒数と HTTP-date の 2 形式があるので、`Number()` ではなく #3 の `parseRetryAfter` で解釈する（HTTP-date だと `Number()` は NaN になる）
 - エラー種別を統一した型で表現することでエラー処理が一貫する
 
 **コード例**:
@@ -27,7 +27,7 @@ export class ApiError extends Error {
     public readonly status: number,
     public readonly code: string,
     message: string,
-    public readonly retryAfter?: number,
+    public readonly retryAfterMs?: number,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -42,17 +42,19 @@ export class ApiError extends Error {
 }
 
 // lib/http.ts - エラーの分類と変換
-async function handleResponse<T>(response: Response): Promise<T> {
+import { ApiError } from './api-error';
+import { parseRetryAfter } from './retry-after'; // #3 で定義（秒数と HTTP-date の両方に対応）
+
+export async function handleResponse<T>(response: Response): Promise<T> {
   if (response.ok) return response.json() as Promise<T>;
 
   const body = await response.json().catch(() => ({}));
-  const retryAfter = response.headers.get('Retry-After');
 
   throw new ApiError(
     response.status,
     (body as { code?: string }).code ?? 'UNKNOWN',
     (body as { message?: string }).message ?? `HTTP ${response.status}`,
-    retryAfter ? Number(retryAfter) : undefined,
+    parseRetryAfter(response.headers.get('Retry-After')) ?? undefined,
   );
 }
 
@@ -67,7 +69,11 @@ async function handleSubmit(data: FormData) {
       } else if (error.status === 422) {
         showValidationErrors(error);
       } else if (error.isRateLimited) {
-        showMessage(`${error.retryAfter}秒後に再試行してください`);
+        showMessage(
+          error.retryAfterMs !== undefined
+            ? `${Math.ceil(error.retryAfterMs / 1000)}秒後に再試行してください`
+            : 'しばらく経ってから再試行してください',
+        );
       } else if (error.isServerError) {
         showMessage('サーバーエラーが発生しました。しばらく経ってから再試行してください。');
       }
@@ -82,7 +88,7 @@ async function handleSubmit(data: FormData) {
 
 **バージョン**: 全バージョン（HTTP仕様）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -108,32 +114,37 @@ async function safeFetch<T>(
   url: string,
   options?: RequestInit,
 ): Promise<{ data: T; error: null } | { data: null; error: FetchError }> {
+  let res: Response;
   try {
-    const res = await fetch(url, options);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      return {
-        data: null,
-        error: {
-          type: 'http',
-          status: res.status,
-          message: (body as { message?: string }).message ?? `HTTP ${res.status}`,
-        },
-      };
-    }
-    return { data: await res.json() as T, error: null };
+    res = await fetch(url, options);
   } catch (err) {
+    // キャンセル（AbortError）は障害ではないので、そのまま呼び出し元へ投げる
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
     // TypeError: Failed to fetch → ネットワークエラー
     return {
       data: null,
       error: {
         type: 'network',
         message: navigator.onLine
-          ? 'リクエストがタイムアウトしました'
+          ? 'サーバーに接続できませんでした'
           : 'インターネット接続を確認してください',
       },
     };
   }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return {
+      data: null,
+      error: {
+        type: 'http',
+        status: res.status,
+        message: (body as { message?: string }).message ?? `HTTP ${res.status}`,
+      },
+    };
+  }
+  // JSON の解析失敗はネットワーク障害ではないので、try の外で例外のまま投げる
+  return { data: (await res.json()) as T, error: null };
 }
 
 // 使用例
@@ -152,7 +163,7 @@ if (error) {
 
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -164,8 +175,9 @@ if (error) {
 **根拠**:
 - 固定間隔のリトライは多数のクライアントが同時にサーバーを叩く「Thundering Herd」問題を引き起こす
 - ジッターを加えることでリトライのタイミングを分散させ、サーバーへの負荷集中を防ぐ
-- ky の `retry` オプションは指数バックオフとジッターを組み込みでサポートしている
-- べき等でない操作（POST等）はリトライしない
+- ky の `retry` は指数バックオフが既定で、ジッターは `jitter: true` を指定したときだけ掛かる（既定は無効）。`Retry-After` は `afterStatusCodes`（既定は 413 / 429 / 503）のステータスで ky が自動的に尊重し、その場合はジッターを掛けない
+- べき等でない操作（POST / PATCH）は、`Idempotency-Key` を付けるなどサーバー側で重複実行を防げる場合だけリトライする（下の判定表と冪等性チェックリストを参照）
+- 手動で実装する場合、リトライしないステータス（400 / 401 / 403 / 404 / 422 など）で投げた例外を同じ `try` の `catch` が拾うと、意図に反して再試行してしまう。`try` は `fetch` の呼び出しだけを囲み、再試行しないエラーはその外で投げる
 - **失敗を待ってからリトライするのではなく、遅延しきい値で予防的にバックアップリクエストを送る「Hedged Requests」も有効な補完策**: LLM/STT API 等テール遅延（p95/p99）が長いべき等な呼び出しでは、`hedgeAfterMs` 経過時点でバックアップリクエストを追加送信し、先に完了した方を採用・残りをキャンセルする。通常の指数バックオフ＋ジッターは「失敗後」のリカバリ、Hedged Requests は「遅延時」の先制対応という異なる軸の戦略であり、べき等性とキャンセル処理の実装が前提になる
 
 **コード例**:
@@ -173,50 +185,78 @@ if (error) {
 // ky を使ったリトライ設定（推奨）
 import ky from 'ky';
 
-const http = ky.create({
+export const http = ky.create({
   retry: {
     limit: 3,
     methods: ['get', 'head'],  // べき等なメソッドのみ
     statusCodes: [408, 429, 500, 502, 503, 504],
     backoffLimit: 3000,  // 最大待機時間 3秒
     delay: attemptCount => 0.3 * 2 ** (attemptCount - 1) * 1000,  // 300ms, 600ms, 1200ms
+    jitter: true,  // 既定は無効。true で 0〜計算値の範囲にばらす（フルジッター）
   },
 });
+```
 
-// 手動実装（ky が使えない場合）
-async function fetchWithRetry<T>(
+```ts
+// lib/fetch-with-retry.ts - 手動実装（ky が使えない場合）
+import { ApiError } from './api-error';
+import { parseRetryAfter } from './retry-after';
+
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS']);
+const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+// POST / PATCH は Idempotency-Key があるときだけ再送する
+function isSafeToRetry(options: RequestInit): boolean {
+  const method = (options.method ?? 'GET').toUpperCase();
+  return IDEMPOTENT_METHODS.has(method) || new Headers(options.headers).has('Idempotency-Key');
+}
+
+function backoffWithJitter(attempt: number): number {
+  return Math.random() * Math.min(1000 * 2 ** attempt, 10_000);  // フルジッター
+}
+
+export async function fetchWithRetry<T>(
   url: string,
   options: RequestInit = {},
   maxRetries = 3,
 ): Promise<T> {
-  let lastError: Error;
+  const canRetry = isSafeToRetry(options);
+  let lastError: unknown;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const isLastAttempt = !canRetry || attempt === maxRetries;
+
+    let res: Response;
     try {
-      const res = await fetch(url, options);
-      if (res.ok) return res.json() as Promise<T>;
-
-      // 4xx はリトライしない（クライアント起因）
-      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-
-      lastError = new Error(`HTTP ${res.status}`);
+      res = await fetch(url, options);
     } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+      // キャンセルは再送しない。それ以外は fetch が reject したネットワークエラー
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      lastError = err;
+      if (isLastAttempt) break;
+      await new Promise(resolve => setTimeout(resolve, backoffWithJitter(attempt)));
+      continue;
     }
 
-    if (attempt < maxRetries) {
-      // 指数バックオフ＋ジッター
-      const baseDelay = Math.min(1000 * 2 ** attempt, 10000);
-      const jitter = Math.random() * baseDelay * 0.1;
-      await new Promise(resolve => setTimeout(resolve, baseDelay + jitter));
-    }
+    if (res.ok) return (await res.json()) as T;
+
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'));
+    const error = new ApiError(res.status, 'HTTP_ERROR', `HTTP ${res.status}`, retryAfterMs ?? undefined);
+
+    // 400 / 401 / 403 / 404 / 422 などは再試行せず、すぐ呼び出し元へ投げる
+    if (!RETRYABLE_STATUSES.has(res.status)) throw error;
+
+    lastError = error;
+    if (isLastAttempt) break;
+    // Retry-After があればそれを優先し、なければ指数バックオフ＋ジッター
+    await new Promise(resolve => setTimeout(resolve, retryAfterMs ?? backoffWithJitter(attempt)));
   }
 
-  throw lastError!;
+  throw lastError;
 }
+```
 
+```ts
 // Bad: 固定間隔リトライ（Thundering Herd の原因）
 for (let i = 0; i < 3; i++) {
   await new Promise(resolve => setTimeout(resolve, 1000));  // 全クライアントが同時にリトライ
@@ -233,10 +273,10 @@ for (let i = 0; i < 3; i++) {
 |---|---|---|---|
 | **408** Request Timeout | クライアント送信が間に合わなかった | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
 | **425** Too Early | early data 拒否 | ✅ 再試行 | ✅ 再試行 |
-| **429** Too Many Requests | レート制限 | ✅ `Retry-After` ヘッダー尊重 | ✅ `Retry-After` ヘッダー尊重 |
+| **429** Too Many Requests | レート制限 | ✅ `Retry-After` ヘッダー尊重 | ⚠️ Idempotency-Key があるか、サーバーが未処理を保証する場合のみ（`Retry-After` を尊重） |
 | **500** Internal Server Error | サーバー側エラー | ✅ 再試行（1〜3 回） | ❌ サーバー側で処理済の可能性あり、冪等性キー必須 |
 | **502** Bad Gateway | 上流サーバー応答異常 | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
-| **503** Service Unavailable | 一時的障害 | ✅ `Retry-After` 尊重 | ✅ `Retry-After` 尊重 |
+| **503** Service Unavailable | 一時的障害 | ✅ `Retry-After` 尊重 | ⚠️ Idempotency-Key があるか、サーバーが未処理を保証する場合のみ（`Retry-After` を尊重） |
 | **504** Gateway Timeout | 上流タイムアウト | ✅ 再試行 | ⚠️ サーバー側到達確認後に再試行 |
 | **400** Bad Request | リクエスト不正 | ❌ リトライ不可 | ❌ リトライ不可 |
 | **401** Unauthorized | 認証失敗 | ⚠️ トークンリフレッシュ後 1 回のみ | ⚠️ トークンリフレッシュ後 1 回のみ |
@@ -248,6 +288,8 @@ for (let i = 0; i < 3; i++) {
 | Network error | DNS/TCP/TLS 失敗 | ✅ 再試行 | ⚠️ Idempotency-Key 必須 |
 
 凡例: ✅ リトライしてよい / ⚠️ 条件付き / ❌ リトライ不可
+
+`Retry-After` は「いつ再送してよいか」を示すだけで、同じリクエストを 2 回実行しても安全であることは保証しない。非冪等メソッドでは待機時間に関係なく冪等性の条件を確認する。
 
 **冪等性チェックリスト（非冪等メソッドをリトライする前に確認）**:
 
@@ -287,8 +329,26 @@ async function purchase(item: Item, quantity: number) {
 サーバーが `Retry-After: 30`（秒）または HTTP-date 形式で返したら、それを尊重する。
 固定指数バックオフよりサーバーが指定した値を優先することで、レート制限解除を最短で待てる。
 
+ky は `afterStatusCodes`（既定 413 / 429 / 503）のステータスで `Retry-After` を読み、その時間だけ待ってから再試行する。`afterResponse` フックで待機を足すと、ky 自身の待機と合わせて二重に待つことになるので書かない。待機の上限は `maxRetryAfter` で決める。
+
 ```ts
-function parseRetryAfter(header: string | null): number | null {
+import ky from 'ky';
+
+export const rateLimitedHttp = ky.create({
+  retry: {
+    limit: 5,
+    statusCodes: [429, 503],
+    maxRetryAfter: 60_000,  // サーバー指定の待機が長すぎるときの上限
+    jitter: true,           // Retry-After がないときのバックオフにだけ掛かる
+  },
+});
+```
+
+手動実装や `ApiError` を組み立てる箇所（#1・#5）では、次のパーサーを共通で使う。
+
+```ts
+// lib/retry-after.ts - 秒数と HTTP-date の両形式を解釈し、ミリ秒で返す
+export function parseRetryAfter(header: string | null): number | null {
   if (!header) return null;
   const seconds = Number(header);
   if (!Number.isNaN(seconds)) return seconds * 1000;
@@ -296,39 +356,19 @@ function parseRetryAfter(header: string | null): number | null {
   if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
   return null;
 }
-
-// retry callback で Retry-After を尊重
-ky.create({
-  retry: {
-    limit: 5,
-    statusCodes: [429, 503],
-    delay: (attempt) => Math.min(0.3 * 2 ** (attempt - 1) * 1000, 3000),
-  },
-  hooks: {
-    afterResponse: [
-      async (req, opts, res) => {
-        const retryAfter = parseRetryAfter(res.headers.get('Retry-After'));
-        if (retryAfter && (res.status === 429 || res.status === 503)) {
-          await new Promise(r => setTimeout(r, retryAfter));
-        }
-        return res;
-      },
-    ],
-  },
-});
 ```
 
 **出典**:
 - [AWS: Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) (AWS Architecture Blog / 2015)
-- [ky README: retry](https://github.com/sindresorhus/ky#retry) (sindresorhus/ky / GitHub)
+- [ky README: retry](https://github.com/sindresorhus/ky#retry) (sindresorhus/ky / GitHub、`jitter` の既定は無効・`afterStatusCodes` での `Retry-After` の扱い・ヘッダーがあるときはジッターを掛けない) ※2026-10-25 確認（ky 2.2.0 の README）
 - [RFC 9110: HTTP Semantics - Retry-After](https://www.rfc-editor.org/rfc/rfc9110.html#field.retry-after) (IETF)
 - [RFC 9110: HTTP Semantics - Idempotent Methods](https://www.rfc-editor.org/rfc/rfc9110.html#section-9.2.2) (IETF)
 - [Stripe API: Idempotent Requests](https://docs.stripe.com/api/idempotent_requests) (Stripe Docs)
 - [TypeScriptでHedged Requestsを実装する：LLM/STT APIの尾遅延を面接で説明する](https://qiita.com/Karentia/items/21c03624da1be9c7e4fc) (Qiita Karentia、遅延しきい値でのバックアップリクエスト送信・冪等性とキャンセル処理の実装例) ※2026-07-08に実際にfetch成功
 
-**バージョン**: ky 1.0+
+**バージョン**: ky 2.0+（`jitter` を使う例。手動実装と判定表はバージョン非依存）
 **確信度**: 高
-**最終更新**: 2026-07-08（補強）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -392,18 +432,22 @@ const [{ data, error }] = useQuery({ query: MyQuery });
 ### 5. HTTPステータスコード別の回復戦略を実装する
 
 HTTP エラーを「種別ごとに異なる回復アクション」にマッピングし、
-ユーザー体験を最大化する。401は認証リダイレクト、429は指数バックオフ、
+ユーザー体験を最大化する。401は認証リダイレクト、
 5xx系はサーキットブレーカーで過負荷時の障害拡大を防ぐ。
+再試行してよいかの判定は #3 の判定表に集約し、このルールでは #3 にない回復アクション（認証フローへの誘導とサーキットブレーカー）を扱う。
 
 **根拠**:
 - エラーごとに適切な回復戦略が異なり、一律の処理ではUXが低下する
 - 401は即座に認証フローへ誘導することでユーザーが迷わない
-- 429のバックオフはサーバー過負荷を悪化させないために必須
-- サーキットブレーカーは5xxが連続する障害時にリクエストを遮断し、システム全体の回復を助ける
+- 429 / 5xx の再試行は 1 か所（下の例では TanStack Query の `retry` / `retryDelay`）にまとめ、回数に上限を設ける。fetch 関数の中で再帰的に再試行すると上限がなくなり、TanStack Query の `retry` とも二重になる。`Retry-After` は #3 の `parseRetryAfter` で解釈する
+- サーキットブレーカーは5xxが連続する障害時にリクエストを遮断し、システム全体の回復を助ける。half-open では復旧確認のリクエストを 1 本に絞らないと、復旧直後のサーバーに再び負荷が集中する
 
 **コード例**:
 ```ts
 // lib/recovery-strategy.ts
+import { ApiError } from './api-error';
+import { parseRetryAfter } from './retry-after';
+import { refreshTokenOrRedirect } from './auth';
 
 // サーキットブレーカーの状態
 type CircuitState = 'closed' | 'open' | 'half-open';
@@ -411,22 +455,20 @@ type CircuitState = 'closed' | 'open' | 'half-open';
 class CircuitBreaker {
   private state: CircuitState = 'closed';
   private failureCount = 0;
-  private lastFailureTime?: number;
+  private openedAt = 0;
 
   constructor(
     private readonly threshold = 5,       // 失敗N回でopen
     private readonly resetTimeout = 30_000, // 30秒後にhalf-openへ
   ) {}
 
+  // true のときはリクエストを送らない
   isOpen(): boolean {
-    if (this.state === 'open') {
-      const elapsed = Date.now() - (this.lastFailureTime ?? 0);
-      if (elapsed > this.resetTimeout) {
-        this.state = 'half-open';  // 復旧試行へ
-        return false;
-      }
-      return true;
-    }
+    if (this.state === 'closed') return false;
+    // open / half-open では resetTimeout ごとに 1 本だけ復旧確認のリクエストを通す
+    if (Date.now() - this.openedAt < this.resetTimeout) return true;
+    this.state = 'half-open';
+    this.openedAt = Date.now();
     return false;
   }
 
@@ -437,75 +479,81 @@ class CircuitBreaker {
 
   recordFailure() {
     this.failureCount++;
-    this.lastFailureTime = Date.now();
-    if (this.failureCount >= this.threshold) {
+    if (this.state === 'half-open' || this.failureCount >= this.threshold) {
       this.state = 'open';
+      this.openedAt = Date.now();
     }
   }
 }
 
 const breaker = new CircuitBreaker();
 
-// ステータスコード別の回復戦略
-async function fetchWithRecovery<T>(url: string, options?: RequestInit): Promise<T> {
+// ステータスコード別の回復戦略（再試行はしない。呼び出し側の retry に任せる）
+export async function fetchWithRecovery<T>(url: string, options?: RequestInit): Promise<T> {
   // サーキットブレーカーが開いている場合はリクエストを遮断
   if (breaker.isOpen()) {
-    throw new Error('Service temporarily unavailable (circuit open)');
+    throw new ApiError(503, 'CIRCUIT_OPEN', 'Service temporarily unavailable (circuit open)');
   }
 
+  let res: Response;
   try {
-    const res = await fetch(url, options);
-
-    if (res.ok) {
-      breaker.recordSuccess();
-      return res.json() as Promise<T>;
-    }
-
-    switch (true) {
-      // 401: 認証リダイレクト
-      case res.status === 401: {
-        await refreshTokenOrRedirect();  // トークン更新を試み、失敗時は /login へ
-        throw new ApiError(401, 'UNAUTHORIZED', 'Session expired');
-      }
-
-      // 429: Retry-After を尊重した指数バックオフ
-      case res.status === 429: {
-        const retryAfter = res.headers.get('Retry-After');
-        const waitMs = retryAfter
-          ? Number(retryAfter) * 1000
-          : Math.min(1000 * 2 ** retryCount, 32_000);  // 最大32秒
-        await sleep(waitMs + Math.random() * 1000);      // ジッター加算
-        return fetchWithRecovery(url, options);           // 再試行
-      }
-
-      // 5xx: サーキットブレーカーに記録
-      case res.status >= 500: {
-        breaker.recordFailure();
-        throw new ApiError(res.status, 'SERVER_ERROR', `HTTP ${res.status}`);
-      }
-
-      default:
-        throw new ApiError(res.status, 'CLIENT_ERROR', `HTTP ${res.status}`);
-    }
+    res = await fetch(url, options);
   } catch (err) {
-    if (err instanceof TypeError) {
-      // ネットワークエラーもサーキットブレーカーに記録
-      breaker.recordFailure();
-    }
+    // ネットワークエラー（TypeError）もサーキットブレーカーに記録
+    if (err instanceof TypeError) breaker.recordFailure();
     throw err;
   }
-}
 
-// TanStack Query との統合例
-const { data } = useQuery({
-  queryKey: ['users'],
-  queryFn: () => fetchWithRecovery<User[]>('/api/users'),
-  retry: (failureCount, error) => {
-    if (error instanceof ApiError && error.status === 401) return false;  // 401はリトライしない
-    if (error instanceof ApiError && error.status === 429) return failureCount < 3;
-    return failureCount < 2;
-  },
-});
+  const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After')) ?? undefined;
+
+  // 5xx: サーキットブレーカーに記録
+  if (res.status >= 500) {
+    breaker.recordFailure();
+    throw new ApiError(res.status, 'SERVER_ERROR', `HTTP ${res.status}`, retryAfterMs);
+  }
+  breaker.recordSuccess();  // 4xx でもサーバーは応答している
+
+  if (res.ok) return (await res.json()) as T;
+
+  // 401: 認証リダイレクト
+  if (res.status === 401) {
+    await refreshTokenOrRedirect();  // トークン更新を試み、失敗時は /login へ
+    throw new ApiError(401, 'UNAUTHORIZED', 'Session expired');
+  }
+
+  throw new ApiError(
+    res.status,
+    res.status === 429 ? 'RATE_LIMITED' : 'CLIENT_ERROR',
+    `HTTP ${res.status}`,
+    retryAfterMs,
+  );
+}
+```
+
+```ts
+// features/users/hooks/use-users.ts - TanStack Query との統合例
+import { useQuery } from '@tanstack/react-query';
+import { ApiError } from '@/lib/api-error';
+import { fetchWithRecovery } from '@/lib/recovery-strategy';
+import type { User } from '@/features/users/types';
+
+export function useUsers() {
+  return useQuery({
+    queryKey: ['users'],
+    queryFn: () => fetchWithRecovery<User[]>('/api/users'),
+    retry: (failureCount, error) => {
+      if (!(error instanceof ApiError)) return failureCount < 2;  // ネットワークエラー
+      if (error.code === 'CIRCUIT_OPEN') return false;           // 遮断中は再試行しない
+      if (error.isRateLimited || error.isServerError) return failureCount < 3;
+      if (error.isUnauthorized) return failureCount < 1;  // トークン更新後に 1 回だけ
+      return false;  // その他の 4xx は再試行しない（#3 の判定表）
+    },
+    retryDelay: (attempt, error) =>
+      error instanceof ApiError && error.retryAfterMs !== undefined
+        ? error.retryAfterMs                                      // Retry-After を優先
+        : Math.random() * Math.min(1000 * 2 ** attempt, 32_000), // 指数バックオフ＋ジッター
+  });
+}
 ```
 
 **出典**:
@@ -513,9 +561,9 @@ const { data } = useQuery({
 - [AWS: Exponential Backoff and Jitter](https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/) (AWS Architecture Blog)
 - [RFC 6585: 429 Too Many Requests](https://www.rfc-editor.org/rfc/rfc6585) (IETF)
 
-**バージョン**: 全バージョン（パターン）
+**バージョン**: 全バージョン（パターン）、TanStack Query 5+（統合例）
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 

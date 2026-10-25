@@ -6,15 +6,16 @@ API キー・DB 接続文字列・OAuth クレデンシャル等を「サーバ�
 
 ### 1. `NEXT_PUBLIC_` プレフィックスでクライアント・サーバー境界を明示する
 
-Next.js では `NEXT_PUBLIC_` プレフィックスの環境変数のみクライアントバンドルに含まれる。
+Next.js では、`.env` や実行環境から読み込む環境変数のうち `NEXT_PUBLIC_` プレフィックスのものだけがクライアントバンドルに含まれる（`next.config` の `env` に書いた値は例外で、接頭辞に関係なく常にバンドルに入る）。
 プレフィックスなしの環境変数は **サーバー専用**。混同しないようコマンド規約を統一する。
 また `NEXT_PUBLIC_` はビルド時にソースコードへ直接インライン化される値であり、デプロイ環境（Vercel 等）でダッシュボードの値を更新しただけでは反映されない点に注意する。**再ビルド（再デプロイ）して初めて新しい値が焼き込まれる**。
 
 **根拠**:
 - 認証情報をうっかり `NEXT_PUBLIC_*` で公開する事故が業界全体で頻発（GitHub の secret scanning でも検出される）
-- プレフィックスがビルド時に文字列置換される仕組みのため、ビルド成果物に含まれるかどうかは `NEXT_PUBLIC_` で完全に決まる
+- `.env`・実行環境から読み込む変数に限れば、プレフィックスがビルド時に文字列置換される仕組みのため、ビルド成果物に含まれるかどうかは `NEXT_PUBLIC_` で決まる。`next.config` の `env`（Legacy 扱いの設定）に書いた値は接頭辞に関係なくバンドルにインライン化されるので、秘密情報を書かない
 - Next.js 13+ では `import 'server-only'` で「サーバー専用モジュール」を強制でき、クライアントから誤って import するとビルドエラーになる
 - Vite・Remix にも同等の規約（`VITE_*` / `PUBLIC_*` ）がある
+- スキーマ検証（下記の `@t3-oss/env-nextjs` や Zod）で起動時に設定漏れ・型の誤りを検出する。自前の Zod で書く場合は、サーバー用スキーマの parse をサーバー専用モジュール（`import 'server-only'`）に置き、Client Component が import するモジュールのトップレベルで `process.env` 全体を parse しない（クライアントでは非公開の変数が `undefined` になるため、import しただけで検証エラーになる）
 - ビルド時インライン化の帰結として、値のローテーション（ライセンスキー更新等）は環境変数更新だけでは反映されず、**Production・Preview 双方の明示的な再デプロイ**が必要（例: Vercel の `vercel redeploy <deployment-url>`）。複数アプリで同じ `NEXT_PUBLIC_*` を共有している場合、1 つだけ再デプロイを忘れると古い値のまま本番稼働し続ける事故につながる
 
 **コード例**:
@@ -123,7 +124,12 @@ DATABASE_URL=postgres://...
 
 **LLM API キーには「三層ロック」を適用する（AI 統合時の強化パターン）**:
 
-Gemini・OpenAI 等の LLM API キーは漏洩したときのコスト爆発リスクが大きい。命名規約（`NEXT_PUBLIC_` なし）＋ビルド時強制（`import 'server-only'`）に加え、**Server Action を唯一のゲートウェイ**にすることで三層防御になる:
+Gemini・OpenAI 等の LLM API キーは漏洩したときのコスト爆発リスクが大きい。命名規約（`NEXT_PUBLIC_` なし）＋ビルド時強制（`import 'server-only'`）に加え、**Server Action を唯一のゲートウェイ**にすることで三層防御になる。
+ただし Server Action は公開 POST エンドポイントで、第三者が curl などから直接呼べる。キーを隠しても、ゲートウェイが誰の呼び出しでも通すなら有料 API を無制限に使われる（denial-of-wallet）。Layer 2 には次の 3 つを必須とする:
+
+- 認証（`verifySession()`）と、その機能を使う権限の確認
+- ユーザー単位のレート上限と、入力長の上限
+- 予算上限: ユーザー・テナント単位の月次トークン使用量を記録して上限で止める。LLM 提供元のダッシュボードでも支出上限と予算アラートを設定する（ゲートウェイが破られたときの最後の歯止め）
 
 ```typescript
 // Layer 1: lib/ai/gemini.ts — server-only で build 時に import を封鎖
@@ -137,10 +143,31 @@ export async function generateContent(prompt: string) {
 
 // Layer 2: app/actions/ai.ts — Server Action が唯一のゲートウェイ
 'use server';
+import { Ratelimit } from '@upstash/ratelimit';
+import { Redis } from '@upstash/redis';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { canUseAiFeature } from '@/app/_lib/dal/entitlements'; // 契約プラン等による利用権限
 import { generateContent } from '@/lib/ai/gemini';
 
+const ratelimit = new Ratelimit({
+  redis: Redis.fromEnv(),
+  limiter: Ratelimit.slidingWindow(10, '1 m'), // ユーザーごとに 1 分 10 回まで
+});
+
+const MAX_INPUT_LENGTH = 4_000;
+
 export async function generateAction(input: string) {
-  if (!input.trim()) return { ok: false, error: 'Input required.' };
+  const session = await verifySession();
+  if (!session) return { ok: false, error: 'Unauthorized.' };
+  if (!(await canUseAiFeature(session.userId))) return { ok: false, error: 'Forbidden.' };
+
+  if (!input.trim() || input.length > MAX_INPUT_LENGTH) {
+    return { ok: false, error: 'Invalid input.' };
+  }
+
+  const { success } = await ratelimit.limit(`ai-generate:${session.userId}`);
+  if (!success) return { ok: false, error: 'Too many requests.' };
+
   const result = await generateContent(input);
   return { ok: true, result };
 }
@@ -156,6 +183,8 @@ export async function generateAction(input: string) {
 - [t3-oss/env-nextjs](https://env.t3.gg/) (t3-oss)
 - [「API キーは全部隠せ」は勘違いだった — ブラウザに出る"公開値"とサーバだけの"秘密"の見分け方](https://qiita.com/Kazy_engineer/items/c66f3fe21f25f096f571) (Qiita Kazy_engineer、「隠す」ではなく「縛る」の原則と公開値別の保護方法) ※2026-06-15 fetch
 - [AIのAPIキーがクライアントに混入したら「ビルドエラー」にする — server-onlyで作る安全なGemini統合](https://zenn.dev/shippai/articles/f1625c5587629a) (Zenn shippai、LLM API キーの三層ロックパターン) ※2026-06-16 fetch
+- [Next.js Docs: env（next.config.js）](https://nextjs.org/docs/app/api-reference/config/next-config-js/env) (Next.js 公式、"environment variables specified in this way will always be included in the JavaScript bundle") ※2026-10-25 確認
+- [upstash/ratelimit-js](https://github.com/upstash/ratelimit-js) (Upstash 公式、`Ratelimit.slidingWindow` と `limit()` の使い方) ※2026-10-25 確認
 - [NEXT_PUBLIC_* を更新したのに古いキーが動き続ける（ビルド時に焼き込まれる）](https://zenn.dev/y3chi5z/articles/next-public-env-baked-at-build) (Zenn y3chi5z、Vercel でのローテーション事故と `vercel redeploy` による対処) ※2026-09-15に実際にfetch成功
 
 **出典引用**:
@@ -167,7 +196,7 @@ export async function generateAction(input: string) {
 
 **バージョン**: Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-09-15
+**最終更新**: 2026-10-25
 
 ---
 
@@ -190,36 +219,48 @@ export async function generateAction(input: string) {
 name: Secret Leak Check
 on: [pull_request]
 
+permissions:
+  contents: read
+  pull-requests: write # gitleaks-action が PR にコメントするため
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # gitleaks がコミット履歴を走査するため
+      - uses: actions/setup-node@v7
+        with: { node-version: 24 }
       - run: npm ci && npm run build
 
       # 1. ビルド済み JS にシークレット候補がないか grep
+      #    -l でファイル名だけを出す（-n だと一致した行＝シークレットそのものが CI ログに残る）
       - name: Grep build for known secret prefixes
         run: |
-          if grep -rEn "sk_(live|test)_|rk_(live|test)_|password=|AKIA[0-9A-Z]{16}" .next/static/; then
+          if grep -rlE "sk_(live|test)_|rk_(live|test)_|password=|AKIA[0-9A-Z]{16}" .next/static/; then
             echo "ERROR: secret pattern found in client bundle"
             exit 1
           fi
 
-      # 2. TruffleHog で広範な検査
-      - uses: trufflesecurity/trufflehog@main
-        with:
-          path: ./.next/static
-          extra_args: --only-verified
+      # 2. TruffleHog で広範な検査。TruffleHog の GitHub Action は git 履歴を走査するので、
+      #    git 管理外の .next/static は CLI の filesystem モードで走査する
+      - name: TruffleHog (build output)
+        run: |
+          docker run --rm -v "$PWD/.next/static:/scan:ro" \
+            trufflesecurity/trufflehog:3.99.7 \
+            filesystem /scan --results=verified,unknown --fail
 
       # 3. リポジトリ全体にも secret scanner（コミット時の漏洩）
       # betterleaks（gitleaks 作者による後継ツール）を使うと BPE トークナイザーで
       # 検出率 98.6% vs gitleaks 70.4%（CredData 評価）を達成できる
-      - uses: gitleaks/gitleaks-action@v2
+      - uses: gitleaks/gitleaks-action@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }} # Organization のリポジトリでは必須
 ```
+
+サードパーティの action（`gitleaks/gitleaks-action`）と Docker イメージ（`trufflesecurity/trufflehog`）は、実運用では SHA / digest でピン留めする（`practices/ci-cd/github-actions.md` #9）。`gitleaks-action@v2` は Node 20 ランタイムのため、GitHub ホストランナーから Node 20 が削除された 2026-09-16 以降は動かない。
 
 **自前で検出するパターン例**:
 ```ts
@@ -257,12 +298,13 @@ process.exit(leaked ? 1 : 0);
 ```
 
 **カバレッジ補足**:
-- 環境変数だけでなく、Source Map にコメントで PII / コメントが残るケースもある → Source Map をクライアント配信しない
+- 環境変数だけでなく、Source Map にコメントで PII / コメントが残るケースもある → Source Map をクライアント配信しない（Sentry へアップロードする場合は SDK の既定でアップロード後にクライアントの `.map` が削除される。`practices/observability/error-tracking.md` #4・#9）
 - `.env.local` を accidentally commit する事故は `.gitignore` + pre-commit hook で防ぐ
 - Vercel・Cloudflare のビルドログにもシークレットを `***` で伏字化する機能あり
 
 **出典**:
-- [TruffleHog](https://github.com/trufflesecurity/trufflehog) (Truffle Security)
+- [TruffleHog](https://github.com/trufflesecurity/trufflehog) (Truffle Security、`filesystem` サブコマンドと `--results` / `--fail`。GitHub Action の action.yml は `git file://` で履歴を走査する) ※2026-10-25 確認
+- [gitleaks/gitleaks-action](https://github.com/gitleaks/gitleaks-action) (Gitleaks 公式、v3 の使用例と v2 から v3 への移行、Node 20 の削除日) ※2026-10-25 確認
 - [Gitleaks](https://github.com/gitleaks/gitleaks)
 - [GitHub: secret scanning](https://docs.github.com/en/code-security/secret-scanning) (GitHub Docs)
 - [gitleaksの作者が一から作り直したbetterleaks](https://zenn.dev/shuymn/articles/600779b488d6d3) (Zenn shuymn、BPE トークナイザーによる検出率改善) ※2026-06-08に実際にfetch成功
@@ -272,24 +314,13 @@ process.exit(leaked ? 1 : 0);
 > "本文のgrepは0件だったが、著者欄に情報が焼き込まれている"
 > ([公開されるのは本文だけではない。grep検査を全部通したのにコミット履歴から個人情報が漏れていた話](https://qiita.com/fujiken818/items/e96cf84bc2bee61512b2), Qiita, セクション "コミットの著者欄は本文ではない") ※2026-09-05に実際にfetch成功
 
-**バージョン**: Next.js 13+, GitHub Actions
+**バージョン**: Next.js 13+, GitHub Actions（Node 24、gitleaks-action v3、TruffleHog 3.99）
 **確信度**: 高
-**最終更新**: 2026-09-05
+**最終更新**: 2026-10-25
 
 #### 追加根拠 (2026-05-16)
 
-Vercel が「Protected Source Maps」機能をリリースし、ソースマップへのアクセス制御の具体的な実装手段が確立された:
-- [Protected Source Maps: Ship browser source maps securely](https://vercel.com/changelog/protected-source-maps-ship-browser-source-maps-securely) (Vercel / 2026-05-14) ※2026-05-16に実際にfetch成功
-
-**出典引用**:
-> "Source maps are how you debug minified production code. They give you readable stack traces and your original source code, with the real filenames and line numbers intact."
-> ([Protected Source Maps](https://vercel.com/changelog/protected-source-maps-ship-browser-source-maps-securely), セクション "Why source map protection matters")
-
-**Protected Source Maps の設定（Vercel）**:
-- **新規プロジェクト**: デフォルトで有効（自動保護、追加設定不要）
-- **既存プロジェクト**: Settings → Deployment Protection → Protected Source Maps を有効化（再デプロイ不要）
-- 有効化後: チームメンバー（Vercel 認証済み）のみ `.map` ファイルにアクセス可能
-- 攻撃者は source map から元コードのファイル名・行番号・ロジックを逆解析できなくなる
+`.map` をデプロイに残す構成（ブラウザの DevTools でも本番のソースを読みたい場合）でのアクセス制限は、Vercel なら Protected Source Maps（`practices/observability/error-tracking.md` #9）を使う。Sentry SDK の既定のようにアップロード後に `.map` を削除していれば、配信される `.map` は残らない。
 
 **Vercel 以外の対応（参考）**:
 ```nginx
@@ -307,7 +338,7 @@ location ~* \.js\.map$ {
 ### 3. `.env.local` は git 管理外、`.env.example` をテンプレートとして提供する
 
 `.gitignore` で `.env*.local` を完全に除外し、`.env.example` でキー名のみを共有する。
-新規メンバーは `.env.example` をコピーして `.env.local` を作る運用に統一する。
+新規メンバーは `.env.example` をコピーして `.env.local` を作る運用に統一する。`.env.local` に入れるのは、漏れても被害が限られる開発用の値（ローカル DB・テスト用キー等）だけにし、本番・共有環境の実値はリポジトリツリーの外（Secret Manager・OS の Keychain。#4・#6）に置く。
 
 **根拠**:
 - `.env` の commit は frontend 業界で最頻発の事故。一度 git 履歴に入ったシークレットは rotate するまで永遠に有効
@@ -362,7 +393,7 @@ GOOGLE_CLIENT_SECRET=
 ```
 
 **pre-commit hook で防御**:
-```yaml
+```sh
 # .husky/pre-commit
 #!/bin/sh
 # .env*.local の commit を防ぐ
@@ -387,7 +418,7 @@ fi
 pre-commit:
   commands:
     gitleaks:
-      run: gitleaks git --staged --redact --verbose
+      run: gitleaks git --pre-commit --redact --staged --verbose
 ```
 
 ```toml
@@ -439,17 +470,17 @@ project/secrets/credentials.json
 # または Secret Manager 経由で環境変数として注入（Rule #4 参照）
 ```
 
-リポジトリ内に残してよいのは `.env.example` のようなキー名のみのテンプレートだけとし、実値は repo tree の外側 or Secret Manager に置く。
+リポジトリツリー内（`.env.local` を含む）に置いてよいのは、`.env.example` のようなキー名のみのテンプレートと、漏れても被害が限られる開発用の値までとする。本番・共有環境の実値は repo tree の外側 or Secret Manager に置く。
 
 **出典引用**:
 > "AIコーディングのテンポは速く、一つ前のターンで何を保留にしたか、平気で忘れます。"
-> ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本責") ※2026-05-17に実際にfetch成功
+> ([AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer), セクション "問題の本質") ※2026-05-17に実際にfetch成功
 
 > "gitignore は、`git add` `git commit` `git push` が対象にするファイルの範囲を決めるものであり、それ以外の経路（AIツールのファイルシステム走査・tar/rsync・Dockerビルドコンテキスト等）は一切尊重してくれません。"
 > ([gitignore は防御じゃない。Grok Build の repo アップロード事案から、秘密の置き場所を見直す](https://zenn.dev/ishizakahiroshi/articles/20260714-grok-build-repo-upload-timeline), Zenn, セクション "本題: gitignore は防御じゃない") ※2026-07-14に実際にfetch成功
 
 **事故った時の対応**:
-1. シークレットを **即座に rotate**ﾈgit history から消しても、すでに漏れた値は永久に流出している前提）
+1. シークレットを **即座に rotate**（git history から消しても、すでに漏れた値は永久に流出している前提）
 2. git history からの削除は `git filter-repo` または BFG Repo-Cleaner で
 3. force push 後、リポジトリの他クローンから再取り込みされないよう全員に伝達
 4. Vercel / Cloudflare 等の deployment 履歴のログも確認（過去のビルドログに残っていないか）
@@ -459,9 +490,9 @@ project/secrets/credentials.json
 ## 環境変数のセットアップ
 
 1. `.env.example` を `.env.local` にコピー
-2. 各値を以下のドキュメントから取得して埋める：
-   - DATABASE_URL: [Confluence: DB セットアップ](https://...)
-   - STRIPE_*: [Stripe Dashboard](https://dashboard.stripe.com/test/apikeys)
+2. 開発用の値を以下のドキュメントから取得して埋める（本番・共有環境の値は入れない）：
+   - DATABASE_URL: [Confluence: DB セットアップ](https://...)（ローカル DB）
+   - STRIPE_*: [Stripe Dashboard](https://dashboard.stripe.com/test/apikeys)（テストモードのキー）
    - JWT_SIGNING_KEY: `openssl rand -base64 32` で生成
 
 3. `.env.local` は **絶対に commit しない**
@@ -470,6 +501,7 @@ project/secrets/credentials.json
 **出典**:
 - [dotenv-safe](https://github.com/rolodato/dotenv-safe) — 必須環境変数のチェック
 - [Next.js Docs: Environment Variables](https://nextjs.org/docs/app/building-your-application/configuring/environment-variables#test-environment-variables) (Next.js 公式)
+- [gitleaks: .pre-commit-hooks.yaml](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (Gitleaks 公式、pre-commit フックの `gitleaks git --pre-commit --redact --staged --verbose`) ※2026-10-25 確認
 - [GitHub: Removing sensitive data](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) (GitHub Docs)
 - [AI コーディングで secret を漏らさないための４層防御](https://zenn.dev/takna/articles/secret-leak-prevention-4-layer) (Zenn takna, gitleaks+lefthook+GitHub Push Protection+Claude Hooks による4層防御) ※2026-05-17 fetch
 - [AIエージェントに deploy を任せたら設定ファイルごとデプロイされた話](https://qiita.com/yurukusa/items/c2fdcf5c0be30929b686) (Qiita yurukusa、AI deploy での --dir=. 流出事故・.netlifyignore・PreToolUse 防御) ※2026-06-28に実際にfetch成功
@@ -484,7 +516,7 @@ project/secrets/credentials.json
 
 **バージョン**: 一般原則
 **確信度**: 高
-**最終更新**: 2026-08-12
+**最終更新**: 2026-10-25
 
 ---
 
@@ -496,8 +528,8 @@ production 環境では Vercel Environment Variables / AWS Secrets Manager / Dop
 **根拠**:
 - 平文 `.env.production` は EC2 / VM に置くと OS レベルでアクセスできる人が広がる
 - Secret Manager は IAM で「誰が」「いつ」「何の値を」読んだかを監査ログ化できる
-- ローテーションﾈkey rotation）が手動でなく自動化できる
-- Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供ﾈOS の環境変数として渡される）
+- ローテーション（key rotation）が手動でなく自動化できる
+- Vercel / Netlify / Cloudflare Pages はビルド時に環境変数を注入する仕組みを提供（OS の環境変数として渡される）
 - **サーバーレス関数の「環境変数」も要注意**: AWS Lambda 等の platform-level function configuration（Environment Variables 欄への直接設定）は永続的なデプロイメタデータとしてコンソールや IaC 定義に平文で残り、Secret Manager 経由の一時的なプロセスメモリ上の値とは性質が異なる。シークレットは実行時にランタイムで vault / caching extension から取得し、platform-level function configuration には置かない
 - **Google Cloud Run + Secret Manager**: シークレット単位で `roles/secretmanager.secretAccessor` を実行時サービスアカウントに付与し、`--set-secrets` で環境変数としてマウントする。IAM 権限がなければ注入自体が発生しないため、コンテナイメージにもリポジトリにもシークレットの実体が存在しない状態を作れる（プロジェクト全体ではなくシークレット単位の最小権限）
 
@@ -515,23 +547,20 @@ const apiKey = await getSecret('prod/stripe/secret-key'); // 前掲 getSecret() 
 | サービス | 強み | 弱み |
 |---|---|---|
 | **Vercel Environment Variables** | Vercel デプロイなら無料・自動連携 | Vercel ロックイン |
-| **AWS Secrets Manager** | IAM 完全統合、ローテーション自動化、KMS 暗号化 | コスト高めﾈ0.40/secret/month） |
-| **Doppler** | マルチクラウド、UI 良好、無料枚あり | サードパーティ依存 |
-| **Infisical** | OSSﾈself-host 可）、E2E 暗号化 | 運用負荷 |
+| **AWS Secrets Manager** | IAM 完全統合、ローテーション自動化、KMS 暗号化 | コスト高め（$0.40/secret/month） |
+| **Doppler** | マルチクラウド、UI 良好、無料枠あり | サードパーティ依存 |
+| **Infisical** | OSS（self-host 可）、E2E 暗号化 | 運用負荷 |
 | **HashiCorp Vault** | 大企業向け、機能豊富 | 学習コスト高、オーバースペック |
 
 **Vercel での例**:
 ```bash
-# CLI で環境変数を設定
-vercel env add DATABASE_URL production
-# プロンプトで値を入力ﾈCLI 履歴に残らない）
+# CLI で環境変数を設定。値はプロンプトで入力する（CLI 履歴に残らない）
+# Secret 種別にすると保存後は誰も値を閲覧・取得できない（Production / Preview の既定は Secret。#7）
+vercel env add DATABASE_URL production --type secret
 
-# プロジェクト設定 → Environment Variables → Sensitive にチェック
-# → ダッシュボードでも値が見えなくなるﾈ最低限の権限分離）
-
-# プレビュー・開発用にも個別に設定可能
-vercel env add DATABASE_URL preview
-vercel env add DATABASE_URL development
+# プレビュー・開発用にも個別に設定可能（Development の既定は Config なので Secret を明示する）
+vercel env add DATABASE_URL preview --type secret
+vercel env add DATABASE_URL development --type secret
 ```
 
 **Google Cloud Run + Secret Manager**:
@@ -571,17 +600,18 @@ const dbUrl = await getSecret('prod/database/url');
 **ローテーション戦略**:
 - 自動ローテーション: AWS Secrets Manager は Lambda でローテーション関数を実行可能
 - 半自動: 月次で手動ローテーション + Slack 通知でリマインド
-- 即時: 漏洩疊いがあれば即時ローテーション + 全環境再デプロイ
+- 即時: 漏洩疑いがあれば即時ローテーション + 全環境再デプロイ
 
-**紧急時のチェックリスト**:
-- [ ] 漏洩した key を **即座に invalidate**ﾈAPI 提供元のダッシュボードで revoke）
+**緊急時のチェックリスト**:
+- [ ] 漏洩した key を **即座に invalidate**（API 提供元のダッシュボードで revoke）
 - [ ] 新しい key を Secret Manager に登録
-- [ ] 全環境を再デプロイﾈビルド時に環境変数が確定するため）
-- [ ] アクセスログを確認ﾈ漏洩した key で異常なアクセスがあったか）
+- [ ] 全環境を再デプロイ（ビルド時に環境変数が確定するため）
+- [ ] アクセスログを確認（漏洩した key で異常なアクセスがあったか）
 - [ ] post-mortem を書き、再発防止策を導入
 
 **出典**:
 - [Vercel: Environment Variables](https://vercel.com/docs/environment-variables) (Vercel)
+- [Vercel CLI: vercel env](https://vercel.com/docs/cli/env) (Vercel 公式、`--type config|secret` と環境ごとの既定の種別、標準入力での値の受け渡し) ※2026-10-25 確認
 - [AWS Secrets Manager Docs](https://docs.aws.amazon.com/secretsmanager/) (AWS)
 - [Doppler](https://www.doppler.com/) (Doppler)
 - [Infisical](https://infisical.com/) (Infisical)
@@ -597,7 +627,7 @@ const dbUrl = await getSecret('prod/database/url');
 
 **バージョン**: パターン（実装依存）
 **確信度**: 高
-**最終更新**: 2026-08-08
+**最終更新**: 2026-10-25
 
 ---
 
@@ -607,8 +637,9 @@ const dbUrl = await getSecret('prod/database/url');
 
 **根拠**:
 - 秘密鍵を各関数インスタンスの環境変数に配布する方式は、インスタンスごとのローテーション漏れや環境変数経由の漏洩リスクを抱える
-- KMS 側で署名すれば、検証側は発行者ごとに公開される JWKS（OpenID Connect Discovery）から公開鍵を取得でき、秘密鍵を一切配布せずに外部サービスとの相互検証が成立する
-- 認証は基盤側の OIDC トークンで行われるため、アプリケーションコードが鍵のライフサイクル管理を持つ必要がない
+- KMS 側で署名すれば、秘密鍵を一切配布せずに外部サービスとの相互検証が成立する。Vercel KMS では、検証側は発行者（issuer）ごとに公開される JWKS（OpenID Connect Discovery）から公開鍵を取得する
+- Vercel KMS では、関数は Vercel の OIDC トークンで KMS に認証するため、アプリケーションコードが鍵のライフサイクル管理を持つ必要がない
+- 検証側は署名だけでなく `issuer`（必要なら `audience`）と scope も検証する。署名の検証だけでは、同じ鍵・発行者が別の用途に発行したトークンも受け入れてしまう。Vercel KMS の issuer はプロジェクト・環境ごとに分かれるが、1 つの issuer で複数の受け手向けに発行するなら `aud` を付けて `audience` も検証する
 
 **コード例**:
 ```typescript
@@ -628,13 +659,17 @@ export async function GET() {
 }
 ```
 ```typescript
-// 検証側（外部サービス） — JWKS は issuerId ごとに公開される
+// 検証側（外部サービス） — JWKS は issuer ごとに公開される
 import { createRemoteJWKSet, jwtVerify } from 'jose';
 
-const JWKS = createRemoteJWKSet(
-  new URL(`https://kms.vercel.com/${issuerId}/jwks.json`)
-);
-const { payload } = await jwtVerify(token, JWKS);
+const issuer = 'https://kms.vercel.com/123e4567-e89b-42d3-a456-426614174000';
+const JWKS = createRemoteJWKSet(new URL(`${issuer}/jwks.json`));
+
+export async function verifyServiceToken(token: string) {
+  const { payload } = await jwtVerify(token, JWKS, { issuer });
+  if (payload.scope !== 'read:data') throw new Error('insufficient scope');
+  return payload;
+}
 ```
 
 **出典引用**:
@@ -645,11 +680,11 @@ const { payload } = await jwtVerify(token, JWKS);
 > ([Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys), セクション "Capabilities") ※2026-08-18に実際にfetch成功
 
 **出典**:
-- [Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys) (Vercel 公式changelog、Vercel KMS による署名API・JWKS配布の仕組み) ※2026-08-18 fetch
+- [Sign JWTs from your Functions without managing private keys](https://vercel.com/changelog/sign-jwts-from-your-functions-without-managing-private-keys) (Vercel 公式changelog、Vercel KMS による署名API・JWKS配布の仕組み。`signToken` の引数、issuer の URL 形式と `jwtVerify(token, jwks, { issuer })` の検証例は ※2026-10-25 確認) ※2026-08-18 fetch
 
 **バージョン**: Vercel KMS（`@vercel/kms`、2026年8月時点）
 **確信度**: 高
-**最終更新**: 2026-08-18
+**最終更新**: 2026-10-25
 
 ---
 
@@ -724,7 +759,7 @@ Vercel は環境変数の「Sensitive」トグルを廃止し、Config（保存�
 - Secret はパスワード・APIキー・トークン向けで、保存後はメンバーが値を閲覧・取得できない（デプロイからのみ参照可能）
 - 既存の Sensitive フラグ付き変数は自動的に Secret 扱いとなり、移行作業は不要（後方互換）
 - 旧ポリシー「Enforce Sensitive Environment Variables」は廃止され、新ポリシー「Separate Production Secret Values」に置き換えられた。このポリシーは Secret 型の本番値が Preview/Development/カスタム環境の値と異なることを強制する
-- レガシーの `--sensitive` / `--no-sensitive` CLI フラグは引き続き動作し、それぞれ Secret / Config にマッピングされる
+- CLI の `--sensitive` / `--no-sensitive` フラグは引き続き動作し、それぞれ Secret / Config にマッピングされる。種別の明示は `--type config|secret`（`--visibility` は非推奨のエイリアス）
 - Vercel のダッシュボードは値を生の文字列のまま保存するため、末尾改行つきで登録すると本番だけ `Invalid character in header content ["host"]`（`ERR_INVALID_CHAR`）が出る（ローカルの `.env.local` は読み込み時に改行が除かれるため再現しない）。登録時は `echo` ではなく `printf` を使い、`vercel env pull` した結果を `cat -A` で確認し、URL 等の値は読み込み側でも `trim()` する
 - Rule #4（Secret Manager 採用）とは補完関係にある: #4 は「本番で平文 `.env` を使わない」というプラットフォーム非依存の原則、本ルールは Vercel 自身の環境変数システムが提供する write-only な値保護と環境間の値分離強制という、プラットフォーム固有の具体的な実装手段
 - v0 のような AI コード生成ツールも同じ Secret/Config 分離の恩恵を受ける: `NPM_TOKEN` / `NPM_RC` を Secret 種別の shared environment variable として設定すると、プライベート npm パッケージ導入時もクレデンシャルが LLM に渡らず、サンドボックスのファイルシステムにも書き込まれない
@@ -732,11 +767,19 @@ Vercel は環境変数の「Sensitive」トグルを廃止し、Config（保存�
 **コード例**:
 ```bash
 # Config: 公開してよい設定値（保存後も値を閲覧可能）
-vercel env add API_URL production --value "https://api.example.com" --visibility config --yes
+vercel env add API_URL production --value "https://api.example.com" --type config --yes
 
 # Secret: 機密値（保存後は誰も閲覧・取得できない）
-vercel env add API_KEY production --value "sk_live_..." --visibility secret --yes
+# 実値は --value でコマンドライン引数に書かない（シェル履歴・プロセス一覧に残る）
+# 方法 1: プロンプトで入力する
+vercel env add API_KEY production --type secret
+# 方法 2: #6 のように Keychain 等から標準入力で渡す（tr で末尾改行を除く）
+security find-generic-password -a "$(id -un)" -s "myapp-api-key-production" -w \
+  | tr -d '\n' \
+  | vercel env add API_KEY production --type secret
 ```
+
+`--visibility` は `--type` の非推奨エイリアス。`--sensitive` / `--no-sensitive` はそれぞれ Secret / Config に対応する。
 
 **出典引用**:
 > "The value remains available to your deployments and can be replaced, but members cannot view or retrieve it after saving."
@@ -747,6 +790,7 @@ vercel env add API_KEY production --value "sk_live_..." --visibility secret --ye
 
 **出典**:
 - [Environment variables now use Config and Secret types](https://vercel.com/changelog/environment-variables-now-use-config-and-secret-types) (Vercel 公式 changelog) ※2026-08-24 fetch
+- [Vercel CLI: vercel env](https://vercel.com/docs/cli/env) (Vercel 公式、"`--visibility` is a deprecated alias for `--type`"、`echo [value] | vercel env add` は "this will save the value in bash history") ※2026-10-25 確認
 - [v0 now reads npm credentials from shared environment variables](https://vercel.com/changelog/v0-now-reads-npm-credentials-from-shared-environment-variables) (Vercel 公式 changelog、AIツールがSecret値をモデルに露出させない設計の実例) ※2026-09-19 fetch
   > "Credentials can be marked sensitive, and v0 never exposes them to the model or writes them to the sandbox filesystem."
 - [Next.js 本番だけ ERR_INVALID_CHAR が出る原因と直し方 — 環境変数末尾改行の罠](https://zenn.dev/joemike/articles/nextjs-err-invalid-char-env-newline-sentry-2026) (Zenn joemike、Vercel 環境変数の末尾改行混入と `trim()` 対策) ※2026-10-13 fetch
@@ -754,7 +798,7 @@ vercel env add API_KEY production --value "sk_live_..." --visibility secret --ye
 
 **バージョン**: Vercel（環境変数 Config/Secret 種別、2026-08時点）
 **確信度**: 高
-**最終更新**: 2026-10-13
+**最終更新**: 2026-10-25
 
 ---
 

@@ -17,18 +17,22 @@
 // Accordion（折りたたみパネル）
 function AccordionItem({ title, content }: { title: string; content: string }) {
   const [isOpen, setIsOpen] = useState(false);
+  const buttonId = useId();
   const contentId = useId();
 
   return (
     <div>
       <button
+        id={buttonId}
         aria-expanded={isOpen}     // 展開状態をスクリーンリーダーに伝える
         aria-controls={contentId}  // 制御する要素を指定
         onClick={() => setIsOpen(v => !v)}
       >
         {title}
       </button>
-      <div id={contentId} role="region" hidden={!isOpen}>
+      {/* region にはアクセシブルネームが必須（名前のない region はランドマークとして扱われない）。
+          見出しボタンを aria-labelledby で参照する。名前を付けないなら role="region" 自体を外す（region は任意） */}
+      <div id={contentId} role="region" aria-labelledby={buttonId} hidden={!isOpen}>
         {content}
       </div>
     </div>
@@ -41,10 +45,11 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 **出典**:
 - [MDN: ARIA](https://developer.mozilla.org/en-US/docs/Web/Accessibility/ARIA) (MDN Web Docs)
 - [WAI-ARIA Authoring Practices Guide](https://www.w3.org/WAI/ARIA/apg/) (W3C WAI)
+- [APG: Accordion Pattern](https://www.w3.org/WAI/ARIA/apg/patterns/accordion/) (W3C WAI、パネルの `region` は任意で、付けるならボタンを `aria-labelledby` で参照する。同時に開けるパネルが 6 個程度を超えるならランドマークの乱立を避けて `region` を使わない) ※2026-10-25 確認
 
 **バージョン**: ARIA 1.2
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -113,10 +118,10 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 </div>
 
 // 白背景（#ffffff）に対する Tailwind カラーの目安:
-// gray-700 (#374151) → 10.7:1 ✓（通常テキストに使用可）
-// gray-500 (#6b7280) → 5.9:1 ✓（通常テキストに使用可）
-// gray-400 (#9ca3af) → 2.9:1 ✗（装飾的用途のみ）
-// blue-600 (#2563eb) → 5.9:1 ✓（リンクに使用可）
+// gray-700 (#374151) → 10.31:1 ✓（通常テキストに使用可）
+// gray-500 (#6b7280) → 4.83:1 ✓（通常テキストに使用可。ただし 4.5:1 の境界に近く、#f9fafb 等の淡い背景では 4.63:1 まで下がる）
+// gray-400 (#9ca3af) → 2.54:1 ✗（装飾的用途のみ）
+// blue-600 (#2563eb) → 5.17:1 ✓（リンクに使用可）
 
 // デザイントークンは「サーフェス色」と「その上に乗るテキスト色」をペアで定義し、
 // 個別コンポーネントが自己判断でテキスト色を選ばないようにする
@@ -154,7 +159,7 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 
 **バージョン**: WCAG 2.1 / 2.2
 **確信度**: 高
-**最終更新**: 2026-09-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -164,7 +169,7 @@ Ajax通信結果・フォームバリデーション・進捗状況など、DOM 
 `aria-live` リージョンを適切に配置し、視覚的変化をスクリーンリーダーに伝える。
 
 **根拠**:
-- スクリーンリーダーはフォーカスが当たった要素しか読まないため、フォーカス外の更新は読み上げられない（WCAG 2.1 SC 4.1.3 Status Messages はこの種のプログラム的通知を要求する）
+- スクリーンリーダーは、フォーカスの外で起きた動的な更新を自動では通知しない（ブラウズモードで後から読みに行けば読めるが、更新に気付けない）。WCAG 2.1 SC 4.1.3 Status Messages はこの種のプログラム的通知を要求する
 - `aria-live="polite"` は現在の読み上げ完了後に通知し、`aria-live="assertive"` は即座に割り込む。`assertive` の過剰使用は読み上げ中断で体験を損なう
 - `aria-atomic="true"` を設定するとリージョン全体を一括で読み上げ、部分更新の誤読を防ぐ
 - ライブリージョンはページ初期読み込み時から DOM に存在させ、後から追加しない（追加されたリージョンは無視するブラウザがある）
@@ -178,12 +183,12 @@ function App() {
 
   return (
     <>
-      {/* 常に DOM に存在させる（後から追加すると読み上げられないことがある） */}
+      {/* 常に DOM に存在させる（後から追加すると読み上げられないことがある）。sr-only で視覚的には非表示 */}
       <div
         role="status"
         aria-live="polite"
         aria-atomic="true"
-        className="sr-only"  {/* 視覚的には非表示 */}
+        className="sr-only"
       >
         {announcement}
       </div>
@@ -244,124 +249,85 @@ function EmailField() {
 
 **バージョン**: ARIA 1.2 / すべてのモダンブラウザ
 **確信度**: 高
-**最終更新**: 2026-07-29
+**最終更新**: 2026-10-25
 
 ---
 
 ### 5. `focus-visible` と Focus Trap でフォーカス体験を最適化する
 
-フォーカスリングはキーボードユーザーに見せ、マウスユーザーには不要な場合は非表示にする。
-モーダル・ドロワーなどの重畳UIでは Focus Trap でフォーカスをコンテナ内に閉じ込める。
+フォーカスリングは `:focus-visible` で定義し、ブラウザが「フォーカスを示すべき」と判断したときに見せる。
+モーダル・ドロワーなどの重畳UIは `<dialog>` + `showModal()` で作り、フォーカスをダイアログ内に閉じ込める。
 
 **根拠**:
-- `:focus-visible` はキーボード操作時のみフォーカスリングを表示し、マウス操作時は非表示にできる
+- `:focus-visible` はブラウザのヒューリスティックで一致する。キーボード操作によるフォーカスでは一致し、マウスクリックによるボタンのフォーカスでは通常一致しない（テキスト入力欄はマウスでフォーカスしても一致する）
 - Focus Trap がないモーダルではユーザーが Tab キーでモーダル外に出てしまい操作不能になる
 - WCAG 2.1 SC 2.4.7（Focus Visible）はフォーカスインジケータの視認性を要求する
 - モバイルファーストで開発し、タッチデバイスのみで確認していると `:hover` に相当する操作状態が存在しないため、実装漏れに永久に気づけない構造的盲点がある。PC での確認を開発フローに組み込む必要がある
-- 独自に `outline: none` を指定する必要は本来ない: モダンブラウザは `:focus-visible` の仕様に沿って、マウスクリック等ポインタ操作によるフォーカスではアウトラインを表示しない挙動を標準で持つ。素の `outline: none` は `:focus-visible` 未対応環境向けの互換コードでない限り不要になっている
+- 独自に `outline: none` を指定する必要は本来ない: モダンブラウザは `:focus-visible` の仕様に沿って、マウスクリック等ポインタ操作によるフォーカスではアウトラインを表示しない挙動を標準で持つ。`:focus { outline: none; }` のようなリセットは `:focus-visible` 未対応環境向けの互換コードでない限り書かない（`:focus-visible` 側で outline を定義し直さないと、キーボードユーザーがフォーカス位置を見失う）
+- `<dialog>` を `showModal()` で開くと、ダイアログ外の inert 化・Escape での close・閉じた後のフォーカスの復帰（開く前にフォーカスがあった要素へ戻す）をブラウザが行う。div で自作すると Tab の循環に加えてこれらをすべて実装する必要があり、漏れやすい
 
 **コード例**:
 ```css
-/* Good: :focus-visible でキーボードフォーカスリングを制御 */
-
-/* デフォルトのフォーカスリングを除去し、:focus-visible のみに適用 */
-:focus {
-  outline: none;  /* マウスクリック時はリングなし */
-}
-
+/* Good: :focus のリセットは書かず、:focus-visible のときの見た目だけを定義する */
 :focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 2px;
   border-radius: 2px;
 }
 
-/* Tailwind CSS での設定 */
-/* tailwind.config.ts */
-/* focus-visible: をユーティリティクラスで使用 */
+/* Bad: :focus で outline を消す（:focus-visible を定義し忘れるとキーボードでもリングが消える） */
+:focus {
+  outline: none;
+}
 ```
 
 ```tsx
-/* タイロウィンドで focus-visible を使う */
-<button className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2">
+// Tailwind CSS: focus:outline-none は付けず、focus-visible: のときだけ見た目を変える
+<button className="focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500">
   送信
 </button>
+```
 
-// Focus Trap の実装（モーダル・ドロワー等）
+```tsx
+// Good: ドロワーも <dialog> + showModal() で作る
 'use client';
 import { useEffect, useRef } from 'react';
 
-const FOCUSABLE_SELECTORS = [
-  'a[href]',
-  'button:not([disabled])',
-  'input:not([disabled])',
-  'select:not([disabled])',
-  'textarea:not([disabled])',
-  '[tabindex]:not([tabindex="-1"])',
-].join(', ');
+type DrawerProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+};
 
-function useFocusTrap(isActive: boolean) {
-  const containerRef = useRef<HTMLDivElement>(null);
+function Drawer({ isOpen, onClose, children }: DrawerProps) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    if (!isActive || !containerRef.current) return;
-
-    const container = containerRef.current;
-    const focusableElements = Array.from(
-      container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)
-    );
-    const firstEl = focusableElements[0];
-    const lastEl = focusableElements[focusableElements.length - 1];
-
-    // コンテナ内の最初の要素にフォーカスを移す
-    firstEl?.focus();
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Tab') return;
-      if (e.shiftKey) {
-        // Shift+Tab: 最初の要素にいたら最後の要素へ
-        if (document.activeElement === firstEl) {
-          e.preventDefault();
-          lastEl?.focus();
-        }
-      } else {
-        // Tab: 最後の要素にいたら最初の要素へ
-        if (document.activeElement === lastEl) {
-          e.preventDefault();
-          firstEl?.focus();
-        }
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isActive]);
-
-  return containerRef;
-}
-
-// 使用例（<dialog> を使う場合は Focus Trap は不要。div ベースのモーダルに使う）
-function Drawer({ isOpen, onClose, children }: DrawerProps) {
-  const containerRef = useFocusTrap(isOpen);
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    // フォーカストラップ・背景の inert 化・Escape での close・フォーカス復帰はブラウザが行う
+    if (isOpen && !dialog.open) dialog.showModal();
+    if (!isOpen && dialog.open) dialog.close();
+  }, [isOpen]);
 
   return (
-    <div
-      ref={containerRef}
-      role="dialog"
-      aria-modal="true"
-      aria-label="メニュー"
-      className={`drawer ${isOpen ? 'drawer--open' : ''}`}
-    >
+    // close イベントは Escape で閉じたときも発火するので、親の状態をここで同期する
+    <dialog ref={dialogRef} onClose={onClose} aria-label="メニュー" className="drawer">
       {children}
-      <button onClick={onClose}>閉じる</button>
-    </div>
+      <button type="button" onClick={onClose}>閉じる</button>
+    </dialog>
   );
 }
 ```
+
+`<dialog>` を使えない事情で div ベースのモーダルを作る場合は、APG の Dialog (Modal) パターンの要件（Tab / Shift+Tab の循環、Escape で閉じる、閉じた後に呼び出し元へフォーカスを戻す、背景を `inert` にする）をすべて満たす必要がある。Tab の循環だけを自作するのではなく、`focus-trap` などの検証済みライブラリを使う。
 
 **出典**:
 - [MDN: :focus-visible](https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible) (MDN Web Docs)
 - [WCAG 2.1 SC 2.4.7: Focus Visible](https://www.w3.org/TR/WCAG21/#focus-visible) (W3C WCAG)
 - [WAI-ARIA Authoring Practices: Managing Focus](https://www.w3.org/WAI/ARIA/apg/practices/managing-focus/) (W3C WAI)
+- [MDN: `<dialog>`](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/dialog) (MDN Web Docs、`showModal()` でダイアログ外が inert になり Esc で閉じられること) ※2026-10-25 確認
+- [HTML Living Standard: The dialog element](https://html.spec.whatwg.org/multipage/interactive-elements.html#the-dialog-element) (WHATWG、閉じたときに開く前のフォーカス位置へ戻す処理) ※2026-10-25 確認
 - [モバイルファーストで作ったらhoverが0件だった——PCで触るまで気づけない欠陥](https://zenn.dev/matsutake_prgrm/articles/mobile-first-hover-focus-blindspot) (Zenn、モバイルファースト開発の構造的盲点と outline:none の要否) ※2026-08-22に実際にfetch成功
 
 **出典引用**:
@@ -373,7 +339,7 @@ function Drawer({ isOpen, onClose, children }: DrawerProps) {
 
 **バージョン**: Chrome 86+, Firefox 85+, Safari 15.4+（:focus-visible）
 **確信度**: 高
-**最終更新**: 2026-08-22
+**最終更新**: 2026-10-25
 
 ---
 
@@ -465,7 +431,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 - 小さいタップ領域はモバイル・運動機能に制限のあるユーザーが誤タップする原因になる
 - WCAG 2.2 SC 2.5.8（Target Size, Minimum）は 24×24 CSS px の最低限を要求する
 - WCAG 2.1 SC 2.5.5（Target Size, Enhanced AAA）と Apple HIG は 44×44 CSS px を推奨する
-- 例外: インラインテキストリンク、ブラウザのネイティブコントロール、隣接ターゲットに十分な間隔がある場合
+- 例外: 24×24 未満のターゲットでも、各ターゲットのバウンディングボックスの中心に直径 24px の円を置いたとき、その円が他のターゲットや他の小さいターゲットの円と重ならない間隔がある場合（Spacing）。ほかに、同じ機能を満たす別のコントロールがある場合、文中のインラインリンク、サイズを変えていないブラウザのネイティブコントロールなど
 
 **コード例**:
 ```tsx
@@ -474,24 +440,20 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   <CloseIcon className="size-4" />
 </button>
 
-// Good: アイコンは小さくても padding で 44×44 px を確保
-<button className="
-  inline-flex items-center justify-center
-  size-11    {/* 44px × 44px */}
-  rounded
-  hover:bg-gray-100
-">
+// Good: アイコンは小さくても size-11（44px × 44px）でタップ領域を確保
+<button className="inline-flex items-center justify-center size-11 rounded hover:bg-gray-100">
   <CloseIcon className="size-4" aria-hidden="true" />
   <span className="sr-only">閉じる</span>
 </button>
 
 // 視覚的に小さくしたい場合は ::before で見えないタップ領域を拡張
-<button className="
-  relative size-6 inline-flex items-center justify-center
-  before:absolute before:inset-[-10px]    {/* 上下左右に 10px 拡張 → 44px */}
-  before:content-['']
-">
-  <CloseIcon className="size-6" />
+// before:inset-[-10px] で上下左右に 10px 広げ、24px → 44px にする。
+// アイコンだけのボタンなので aria-label で名前を付け、アイコンは aria-hidden にする
+<button
+  aria-label="閉じる"
+  className="relative size-6 inline-flex items-center justify-center before:absolute before:inset-[-10px] before:content-['']"
+>
+  <CloseIcon className="size-6" aria-hidden="true" />
 </button>
 
 // リンク同士の最小間隔（8px 以上が望ましい）
@@ -511,17 +473,17 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 **配色・コントラストとは別の独立した要件**:
 - ボタンが見やすいだけでは不十分。物理的に押せるサイズが必要
 - フォーム送信ボタン・モバイル UI で特に重要
-- 例外でアイコンボタンを 24px にする場合は、隣接ターゲットとの間隔を 24px 以上空ける
+- 24×24 以上あれば SC 2.5.8 の間隔の要件はかからない。24px 未満のアイコンボタンにする場合は、中心に置いた直径 24px の円が隣のターゲット（やその円）と重ならない間隔を空ける
 
 **出典**:
-- [WCAG 2.2 SC 2.5.8: Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum) (W3C WCAG)
+- [WCAG 2.2 SC 2.5.8: Target Size (Minimum)](https://www.w3.org/TR/WCAG22/#target-size-minimum) (W3C WCAG、24px 未満のターゲットにだけかかる Spacing の例外) ※2026-10-25 確認
 - [WCAG 2.1 SC 2.5.5: Target Size (Enhanced)](https://www.w3.org/TR/WCAG21/#target-size-enhanced) (W3C WCAG)
 - [Apple Human Interface Guidelines: Layout](https://developer.apple.com/design/human-interface-guidelines/layout) (Apple)
 - [Material Design: Accessibility - Touch targets](https://m3.material.io/foundations/designing/structure#touch-targets) (Google)
 
 **バージョン**: WCAG 2.2
 **確信度**: 高
-**最終更新**: 2026-05-16
+**最終更新**: 2026-10-25
 
 ---
 
@@ -627,6 +589,8 @@ const useSystemReducedMotion = () => {
       return () => mq.removeEventListener('change', callback);
     },
     () => window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    // getServerSnapshot: 省略すると SSR 時に例外になる。サーバーと初回 hydration で同じ値を返す
+    () => false,
   );
 };
 ```
@@ -675,6 +639,7 @@ function playCardFlip(el: HTMLElement, reduce: boolean) {
 - [OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b) (Zenn、共有デバイス対応・アプリ内設定 UI・useSyncExternalStore + atomWithStorage 実装) ※2026-06-06 fetch
 - [prefers-reduced-motion in React: 5 production patterns beyond duration: 0](https://dev.to/axyl1410/prefers-reduced-motion-in-react-5-production-patterns-beyond-duration-0-333m) (dev.to、Medium に同著者が同一内容をクロスポスト、単一ソース扱い。GSAP タイムラインの `gsap.set()` 最終状態パターン・描画複雑さの削減・両 preference 状態のスナップショットテスト) ※2026-07-11 fetch
 - [Your AI-generated UI probably breaks prefers-reduced-motion](https://dev.to/kevinfroeba/your-ai-generated-ui-probably-breaks-prefers-reduced-motion-1akh) (dev.to、WCAG 2.2.2 の追加言及。本文の技術的主張は既存出典と重複するため引用は WCAG 条項の追加に留める) ※2026-07-14に実際にfetch成功
+- [React: useSyncExternalStore](https://react.dev/reference/react/useSyncExternalStore) (React 公式、`getServerSnapshot` を省くとサーバーでのレンダリングが例外になり、サーバーと hydration で同じ値を返す必要があること) ※2026-10-25 確認
 
 > "Shared device usage where OS settings cannot be changed; wanting to disable animations only in one app without affecting the entire system"
 > ([OS設定（prefers-reduced-motion）に縛られないアニメーション制御](https://zenn.dev/10tera/articles/fa82f0617ecf1b), セクション "OS設定だけでは足りない理由") ※2026-06-06に実際にfetch成功
@@ -684,7 +649,7 @@ function playCardFlip(el: HTMLElement, reduce: boolean) {
 
 **バージョン**: Chrome 74+, Firefox 63+, Safari 10.1+
 **確信度**: 高
-**最終更新**: 2026-07-14
+**最終更新**: 2026-10-25
 
 ---
 
@@ -710,20 +675,20 @@ WebAIM の調査データが MDN ARIA ページで引用: 「ARIA を使用し�
 
 ---
 
-### 9. 比較表・データ一覧は div グリッドではなく `<table>` 要素で組む — アクセシビリティツリーと AI/LLM 抽出の両方が構造を失う
+### 9. 比較表・データ一覧は div グリッドではなく `<table>` 要素で組む — ARIA ロールで補ってもテキスト抽出（AI/LLM）では構造が失われる
 
-CSS Grid で div を並べただけの「見た目だけの表」は、視覚的なレイアウトとしては正しく見えても、行と列の対応関係という構造情報を一切保持しない。この構造情報の欠落は、スクリーンリーダーのアクセシビリティツリーと、AI/LLM 検索エンジンによる HTML→テキスト変換の両方で同時に問題化する。`role="table"`・`role="row"`・`role="cell"` などの ARIA ロールを div に付与しても、アクセシビリティ監査ツールは実表と同等のスコアを返すが、実際のテキスト抽出（スクリーンリーダーの読み上げ順、AI 検索のコンテンツ取得）では対応関係が再現できない。表形式のデータは常にネイティブの `<table>`（`<thead>`/`<tbody>`/`<th scope>`）で実装する。
+CSS Grid で div を並べただけの「見た目だけの表」は、視覚的なレイアウトとしては正しく見えても、行と列の対応関係という構造情報を HTML に持たない。`role="table"`・`role="row"`・`role="cell"` などの ARIA ロールを付ければアクセシビリティツリー上は表として扱われ、スクリーンリーダー向けには実表と同等になる（APG も div で組む ARIA の table / grid を正式なパターンとして扱っている）。しかし AI/LLM 検索エンジンなどが行う HTML→テキスト変換は ARIA ロールを見ないため、対応関係が再現できない。表形式のデータはネイティブの `<table>`（`<thead>`/`<tbody>`/`<th scope>`）で実装し、アクセシビリティツリーとテキスト抽出の両方に構造を渡す。
 
 **根拠**:
 - ARIA は「アクセシビリティツリー」という単一の消費者だけを対象にした補正であり、`<table>` 要素はそれに加えてテキスト抽出系のツールも含めた、より広い消費者に同時対応する
-- div+ARIA grid と実 `<table>` を同一データで比較検証した結果、アクセシビリティツリー上のスコアは同等でも、`turndown`（GFM変換）・`html-to-text`（dataTable）等のテキスト抽出では実 `<table>` が 7/7 行を正しく復元できたのに対し、div+ARIA grid は 0/7 だった（英語圏の検証データ）
+- div+ARIA grid と実 `<table>` を同一データで比較検証した結果、アクセシビリティツリー上のスコアは同等だった一方、`turndown`（GFM変換）・`html-to-text`（dataTable）等のテキスト抽出では実 `<table>` が 7/7 行を正しく復元できたのに対し、div+ARIA grid は 0/7 だった（英語圏の検証データ）
 - 日本語圏の独立した検証でも、div グリッドの比較表を HTML→テキスト変換すると「どの値がどちらの列のものか」という対応関係の印が失われることが確認されている（Zenn 側の検証）
-- AI 検索エンジン（LLM ベースの検索・要約）は DOM をそのまま解釈するのではなく、HTML→テキスト/Markdown 変換を経由してから処理するため、この構造欠落はスクリーンリーダー対応と AI/GEO（Generative Engine Optimization）対応の両方に同時に影響する
+- AI 検索エンジン（LLM ベースの検索・要約）は DOM をそのまま解釈するのではなく、HTML→テキスト/Markdown 変換を経由してから処理するため、この構造欠落は AI/GEO（Generative Engine Optimization）対応に影響する。ARIA ロールすら付けていない div グリッドは、これに加えてアクセシビリティツリー上でも表として扱われない
 - `table-fixed` と明示的な列幅指定を併用すると、レイアウトの自由度を保ちながら実表への置き換えが行いやすい
 
 **コード例**:
 ```tsx
-// Bad: 見た目だけの比較表（div + CSS Grid）
+// Bad: 見た目だけの比較表（div + CSS Grid + ARIA ロール）
 function ComparisonGrid() {
   return (
     <div className="grid grid-cols-3 gap-2" role="table">
@@ -739,8 +704,8 @@ function ComparisonGrid() {
       </div>
     </div>
   );
-  // ARIA ロールがありアクセシビリティ監査は通過するが、
-  // テキスト抽出（スクリーンリーダーの読み上げ順・AI検索のコンテンツ取得）では
+  // ARIA ロールによりアクセシビリティツリー上は表として扱われるが、
+  // ARIA を見ない HTML→テキスト変換（AI 検索のコンテンツ取得など）では
   // 「Pro」「¥1,200」「100GB」が同じ行に属するという対応関係が再現できない
 }
 
@@ -782,7 +747,7 @@ function ComparisonTable() {
 
 **バージョン**: HTML Living Standard（`<table>` 要素） / WAI-ARIA 1.2
 **確信度**: 高（異なる著者2名がそれぞれ独立の検証データで同じ知見を報告）
-**最終更新**: 2026-07-29
+**最終更新**: 2026-10-25
 
 ---
 
@@ -792,7 +757,7 @@ function ComparisonTable() {
 
 **根拠**:
 - Web の主要サイトで、画像の4枚に1枚以上が alt 欠落・曖昧・隣接画像からのコピーであるという実態調査がある
-- 文字列のみで機械的に検出可能な5パターンを定義できる: 空/欠落、ファイル名（`hero.png` 等）、プレースホルダー（`TODO`, `tbd`）、媒体名を述べただけの汎用語（`image`, `logo`, `chart`）、視覚的に近い画像間での同一 alt の繰り返し
+- 文字列のみで機械的に検出可能な5パターンを定義できる: 欠落（alt 属性なし）、ファイル名（`hero.png` 等）、プレースホルダー（`TODO`, `tbd`）、媒体名を述べただけの汎用語（`image`, `logo`, `chart`）、視覚的に近い画像間での同一 alt の繰り返し
 - 重複検知は「レイアウトの問題であって DOM の問題ではない」。ドキュメント順で判定すると、たまたまコード上隣接しているだけの無関係な画像（例: ヘッダーとフッターのロゴ）を誤検知するため、画面上の視覚的近接性で判定すべき
 - 画像内容を見るモデル判定は「decorative → redundant with caption → functional → informative」の順で最初に一致した段階で判定を止める手順にすると、既に十分な alt テキストに無限に改善提案を出し続けることを防げる
 - モデル判定はデフォルト無効・オプトインとし、画像URL・リンク先の署名付きトークンやセッションIDの漏洩を防ぐためクエリ文字列とフラグメントを redact してから文脈情報として渡す
@@ -802,7 +767,9 @@ function ComparisonTable() {
 **コード例**:
 ```
 機械的（決定的）に検出できる悪い alt テキストのパターン:
-alt="" または alt 属性なし          → 欠落
+alt 属性なし                        → 欠落
+alt=""（空文字）                     → 装飾画像の正しい書き方。欠落とは数えず、
+                                       役割判定で decorative にならない画像（リンクやボタン内の唯一の画像など）でだけ問題にする
 alt="hero.png" / alt="IMG_2847.jpg" → ファイル名
 alt="TODO" / alt="tbd"              → プレースホルダー
 alt="image" / alt="logo" / alt="chart" → 媒体名のみ（内容を説明していない）
@@ -836,8 +803,8 @@ alt="image of the login screen with the SSO button highlighted"
 - [Your alt text passes automated checks. That doesn't mean it's any good.](https://github.blog/engineering/user-experience/your-alt-text-passes-automated-checks-that-doesnt-mean-its-any-good/) (GitHub Engineering Blog 公式) ※2026-08-24 fetch
 
 **バージョン**: 一般原則（GitHub 公式ブログの alt テキスト自動レビュー設計事例）
-**確信度**: 高
-**最終更新**: 2026-08-24
+**確信度**: 中（GitHub 公式ブログの 1 記事）
+**最終更新**: 2026-10-25
 
 ---
 
@@ -847,7 +814,7 @@ Lighthouse の accessibility スコアが緑でも、スクリーンリーダー
 
 **根拠**:
 - 色コントラストやラベル監査に合格していても、肝心の購入・送信ボタンが無名のコントロールのままというケースが起こりうる
-- Hydration 後にしか現れないコンテンツやランドマーク欠落は、静的な Lighthouse スコアだけでは検出できない
+- Lighthouse（navigation モード）は読み込み直後のページを監査するため、操作して初めて現れる UI（メニュー・モーダル・決済フローの後半など）は監査の対象にならない
 
 **コード例**:
 ```ts
@@ -871,6 +838,6 @@ await expect(page.locator('#checkout-cta')).toMatchAriaSnapshot(`
 
 **バージョン**: Playwright（ARIA snapshots 機能）
 **確信度**: 中（公式機能の検証記事、単独ソースのパターン1c採用）
-**最終更新**: 2026-09-13
+**最終更新**: 2026-10-25
 
 ---

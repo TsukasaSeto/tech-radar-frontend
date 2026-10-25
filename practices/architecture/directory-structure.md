@@ -6,20 +6,22 @@
 
 グローバルな `components/`・`hooks/`・`utils/` の代わりに、
 機能ごとのディレクトリにコードをまとめる（Feature-Sliced Design）。
-`app/` ディレクトリはルーティング定義のみに絞り、ビジネスロジック・UI コンポーネントは `features/` または `_components/` に置く。
+`app/` ディレクトリにはルーティング定義と、`_` 付きの private フォルダ（ルート専用の `_components/`、DAL を置く `_lib/dal/` など。ルーティング対象外）だけを置き、ビジネスロジック・UI コンポーネントは `features/` または `_components/` に置く。
 
 **根拠**:
 - 機能に関連するすべてのファイルが一箇所にあり、削除・変更が容易
 - 機能をまたぐ依存関係が明確になり、意図しない結合を防ぐ
 - 機能のオーナーシップが明確になりチームのスケーラビリティが向上する
-- `app/page.tsx` に `'use client'` を置くとサブツリー全体がクライアント化する。`'use client'` はステートを持つリーフコンポーネントまで押し下げる
-- `lib/data.ts` 等のDALファイル先頭に `import 'server-only'` を置くと、クライアント側への誤インポートをビルド時に検出できる
+- `app/page.tsx` に `'use client'` を置くと、そのモジュールと、そこから import するコンポーネントがすべてクライアントバンドルに入る（境界はモジュールの依存関係で決まり、`children` として渡した Server Component はサーバーのまま）。`'use client'` はステートを持つリーフコンポーネントまで押し下げる
+- `app/_lib/dal/` 配下の DAL ファイル先頭に `import 'server-only'` を置くと、クライアント側への誤インポートをビルド時に検出できる（DAL の詳細は [`data-access-layer.md`](./data-access-layer.md) #1）
 - `index.ts` パブリック API は「承認済みシンボルのみを export」とし、クライアントフックが Server Component のバレルに混入しないよう管理する
 
 **コード例**:
 ```
 src/
-├── app/                    # ルーティング定義のみ（ビジネスロジック禁止）
+├── app/                    # ルーティング定義 + private フォルダのみ（ビジネスロジック禁止）
+│   ├── _lib/
+│   │   └── dal/            # DAL（先頭に import 'server-only'）。_ 付きなのでルーティング対象外
 │   ├── (auth)/             # 認証ルートグループ
 │   │   ├── login/
 │   │   │   ├── page.tsx   # データ取得 + 組み立てのみ
@@ -45,8 +47,6 @@ src/
 │       ├── components/
 │       ├── hooks/
 │       └── index.ts
-├── lib/
-│   └── data.ts             # 先頭に import 'server-only' でDAL保護
 ├── shared/                 # 複数機能で共有
 │   ├── components/         # Button, Modal, Input など汎用UI
 │   ├── hooks/              # useDebounce, useLocalStorage など汎用フック
@@ -64,14 +64,14 @@ src/
 
 **バージョン**: Next.js 13+（`import 'server-only'` は Next.js 13.4+）
 **確信度**: 高
-**最終更新**: 2026-06-06
+**最終更新**: 2026-10-25
 
 ---
 
 ### 2. `index.ts` バレルファイルで機能のパブリック API を定義する
 
 各機能ディレクトリに `index.ts` を置き、外部に公開するものだけを再エクスポートする。
-機能内部の実装詳細を外部から直接インポートできなくする。
+機能内部の実装詳細を外部から直接インポートさせない。`index.ts` を置くだけでは深いインポートは防げないので、lint で強制する（[`module-boundary.md`](./module-boundary.md) #4）。どの単位に `index.ts` を置くかは #5 に従う。
 
 **根拠**:
 - 機能の境界が明確になり、内部実装を変えても外部への影響が限定される
@@ -106,7 +106,7 @@ import { AuthFormField } from '@/features/auth/components/AuthFormField';  // �
 
 **バージョン**: TypeScript 5+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -124,8 +124,9 @@ Next.js App Router 環境では `app/` がルーティング層を担うため�
 **コード例**:
 ```
 src/
-├── app/            # (Next.js App Router) ルーティング・レイアウト
-├── pages/          # ページ単位の合成コンポーネント（widget/feature を組み合わせる）
+├── app/            # Next.js App Router のルーティング定義（FSD の層ではない）
+├── _app/           # FSD App 層（プロバイダー・グローバル設定）。Next.js の app/ と衝突するためリネーム
+├── _pages/         # FSD Pages 層（widget/feature を組み合わせる）。src/pages/ は Pages Router と解釈されるためリネーム
 │   └── dashboard/
 │       └── ui/DashboardPage.tsx
 ├── widgets/        # 独立した大きなUIブロック（ヘッダー・サイドバーなど）
@@ -150,7 +151,7 @@ import { type User } from '@/entities/user';
 import { useAuthStore } from '@/features/auth'; // 上位層への依存 NG
 ```
 
-Next.js App Router では `app/` と `pages/` という名称が Next.js 自身のルーティング機構と衝突するため、FSD 側のレイヤーを `_app/` / `_pages/` のようにアンダースコア付きでリネームし、パスエイリアスを `src/*` に向けて衝突を避ける。また Server/Client Component が混在する構成では、各スライスの公開 API を `index.ts`（クライアントから見える範囲）と `index.server.ts`（サーバー専用モジュールを含む範囲）の2つに分けることで、サーバー専用コードがクライアントバンドルへ混入してビルドエラーになる事故を防げる。
+上の構成例で FSD 側のレイヤーを `_app/` / `_pages/` としているのは、`app/` と `pages/` という名称が Next.js 自身のルーティング機構と衝突するため（`src/pages/` に置いたファイルは Pages Router のルートとして扱われる）。パスエイリアスは `src/*` に向けて衝突を避ける。また Server/Client Component が混在する構成では、各スライスの公開 API を `index.ts`（クライアントから見える範囲）と `index.server.ts`（サーバー専用モジュールを含む範囲）の2つに分けることで、サーバー専用コードがクライアントバンドルへ混入してビルドエラーになる事故を防げる。
 
 ```
 src/
@@ -167,7 +168,7 @@ src/
 
 **バージョン**: Next.js 13+, TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-08-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -190,8 +191,8 @@ features/auth/components/LoginForm/
 ├── LoginForm.tsx          # コンポーネント本体
 ├── LoginForm.test.tsx     # ユニットテスト
 ├── LoginForm.stories.tsx  # Storybook
-├── LoginForm.module.css   # スコープ付きCSS (CSS Modules使用時)
-└── index.ts               # 再エクスポート
+└── LoginForm.module.css   # スコープ付きCSS (CSS Modules使用時)
+// index.ts は置かない（公開境界は features/auth/index.ts。#5 参照）
 
 // Bad: グローバルに分散
 src/
@@ -210,7 +211,7 @@ src/
 
 **バージョン**: React 18+, TypeScript 5+, Next.js App Router
 **確信度**: 高
-**最終更新**: 2026-08-03
+**最終更新**: 2026-10-25
 
 ---
 
@@ -247,8 +248,8 @@ export { HomeHeader } from './home-header';
 export { HomeTabs } from './home-tabs';
 ```
 
-深いインポートパス（`@/components/home/home-tabs/home-tabs-skeleton`）を禁止し、
-`index.ts` 経由のみに限定することで内部リファクタリング時の影響を最小化する。
+機能の外からの深いインポートパス（`@/components/home/home-tabs/home-tabs-skeleton`）を禁止し、
+外からは機能の `index.ts` 経由のみに限定することで内部リファクタリング時の影響を最小化する（機能の内部では直接参照する。`index.ts` を置く単位は #5、強制は lint で行う）。
 AI協働開発時は「`src/components/home/` を修正して。公開APIは `home/index.ts`」という指示で
 Claude の参照対象を絞り込め、関係ないファイルへの変更提案が減少する。
 
@@ -261,6 +262,11 @@ Claude の参照対象を絞り込め、関係ないファイルへの変更提�
 `index.ts` を機能の境界（features/・shared/）にのみ配置し、
 すべてのサブディレクトリに再帰的に作成しない。
 過剰なバレルエクスポートはビルドツールの Tree Shaking 効率を下げ、循環依存の温床になる。
+
+`index.ts` を置く公開境界は次の単位に限る。境界の外からは `index.ts` 経由で参照し、境界の内側ではファイルを直接参照する。
+- `features/<name>/` と `shared/` の各スライス（#2）
+- ルートにコロケーションした Container 単位の `_containers/<name>/`（#6。Container だけを公開する）
+- コンポーネント単位のディレクトリ（`LoginForm/index.ts` など）には置かない
 
 **根拠**:
 - すべてのディレクトリに `index.ts` を置くと、バンドラーが不要なモジュールをすべて解析する
@@ -297,7 +303,7 @@ import { LoginForm } from '@/features/auth'; // 境界のみ経由
 
 **バージョン**: Next.js 13+, TypeScript 5+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-10-25
 
 ---
 
@@ -317,13 +323,13 @@ Zenn記事が数学的根拠と実測データを提示: 1ファイルが barrel
 
 React Server Components は React Testing Library / Storybook の対応が遅れているため、Server Component を直接ユニットテスト・ビジュアル確認するのが難しい。
 そこで **DAL 呼び出しなどサーバ処理を担う Container** と **props を受け取って表示するだけの Presentational** に明示的に分離し、Presentational 側をテスト・Storybook の対象にする。
-Container 配下は `_containers/<name>/` でコロケーションし、`index.tsx` から Container のみを再エクスポートして外部公開窓口とする。
+Container 配下は `_containers/<name>/` でコロケーションし、`index.tsx` から Container のみを再エクスポートして外部公開窓口とする（#5 の公開境界の 1 つ）。
 
 **根拠**:
 - RTL / Storybook が Server Component に未対応のため、純粋表示部だけを Client Component（または props 受け取りの関数コンポーネント）として切り出すとテスト・カタログ化が容易になる
 - Container には DAL 呼び出し（§Data Access Layer）が集約され、Presentational は副作用フリーで「props → JSX」の純粋関数として扱える
 - ディレクトリ名 `_containers/` のアンダースコア prefix によりルーティング対象から除外され、`page.tsx` / `layout.tsx` と並べて配置しても URL を汚染しない
-- `index.tsx` 経由でのみ Container を公開することで、`presentational.tsx` への外部 import を機械的に禁止できる
+- `index.tsx` 経由でのみ Container を公開し、lint（`eslint-plugin-import-access` や Biome の `noPrivateImports`）と組み合わせると、`presentational.tsx` への外部 import を機械的に禁止できる（`index.tsx` だけでは禁止できない）
 
 **コード例**:
 ```
@@ -385,5 +391,5 @@ export default async function Page({ params }: { params: Promise<{ postId: strin
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**確信度**: 中（非公式の書籍 1 冊が出典）
+**最終更新**: 2026-10-25

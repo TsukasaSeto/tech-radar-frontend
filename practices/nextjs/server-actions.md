@@ -4,32 +4,53 @@
 
 ### 1. フォームのミューテーションには Server Actions を使う
 
-`'use server'` で定義した Server Actions でフォーム送信やデータ変更操作を実定化する。
+`'use server'` で定義した Server Actions でフォーム送信やデータ変更操作を実装する。
+Server Action は公開エンドポイントなので、最小構成でも「認証 → 入力検証 → DAL 経由の書き込み」の順に書く（詳細は #5）。
 
 **根拠**:
 - クライアント→サーバーの通信を型安全に実装できる
 - Next.js が自動的に CSRF 保護を行う
 - JavaScript なしでも動作する（プログレッシブエンハンスメント）
+- Server Action は UI からだけでなく直接の POST でも呼べるので、Action の中で毎回認証・認可を確認する（公式）
 
 **コード例**:
 ```tsx
-// app/actions/user.ts
+// app/_actions/user.ts
 'use server';
 
-export async function createUser(formData: FormData) {
-  const name = formData.get('name') as string;
-  const email = formData.get('email') as string;
-  await db.user.create({ data: { name, email } });
+import { z } from 'zod';
+import { revalidatePath } from 'next/cache';
+import { redirect, unauthorized } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { createUser } from '@/app/_lib/dal/user.mutations'; // 権限の確認と書き込みは DAL で行う
+
+const CreateUserInput = z.object({
+  name: z.string().min(1).max(50),
+  email: z.email(),
+});
+
+export async function createUserAction(formData: FormData): Promise<void> {
+  const session = await verifySession();
+  if (!session) unauthorized(); // experimental.authInterrupts: true が前提
+
+  // 許可したフィールドだけを取り出す（formData.get() を as string で信用しない）
+  const parsed = CreateUserInput.safeParse({
+    name: formData.get('name'),
+    email: formData.get('email'),
+  });
+  if (!parsed.success) return; // 画面にエラーを返す場合は #2 の useActionState を使う
+
+  await createUser(parsed.data);
   revalidatePath('/users');
   redirect('/users');
 }
 
 // app/users/new/page.tsx
-import { createUser } from '@/app/actions/user';
+import { createUserAction } from '@/app/_actions/user';
 
 export default function NewUserPage() {
   return (
-    <form action={createUser}>
+    <form action={createUserAction}>
       <input name="name" type="text" required />
       <input name="email" type="email" required />
       <button type="submit">作成</button>
@@ -40,10 +61,12 @@ export default function NewUserPage() {
 
 **出典**:
 - [Next.js Docs: Server Actions and Mutations](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations) (Next.js公式)
+- [Next.js Docs: Mutating Data](https://nextjs.org/docs/app/getting-started/mutating-data) (Next.js 公式、Server Function は直接の POST で呼べるので毎回認証・認可を確認する) ※2026-10-25 確認
+  > "Server Functions are reachable via direct POST requests, not just through your application's UI. Always verify authentication and authorization inside every Server Function."
 
-**バージョン**: Next.js 14+
+**バージョン**: Next.js 14+（コード例の `unauthorized()` は 15.1+ で `experimental.authInterrupts: true` が前提）
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
@@ -72,17 +95,64 @@ Server Actions が適切なケースと API Route が引き続き必要なケー
 ### 2. `useActionState` でフォームの状態とエラーを管理する
 
 Server Actions の結果は `useActionState`（React 19）で管理する。フォームの送信結果が「サーバーからの応答内容だけ」で決まる場合は `useActionState` を使い、複数の分岐や条件付き遷移・サーバー呼び出しを伴わないアクションが混在する複雑な状態機械には `useReducer` を使う。
+`useActionState` に渡す Action は、第 1 引数に前回の状態、第 2 引数に `FormData` を受け取り、次の状態を返す形にする（#1 の `(formData) => void` の Action はそのまま渡せない）。
 
 **根拠**:
 - `useActionState` は pending・エラー・成功の各状態遷移を自動管理し、サーバーアクションの実行結果だけで次状態が決まるフォームでは `useReducer` の dispatch 処理を手書きする必要がなくなる
 - 状態遷移がサーバー応答以外の条件分岐を多く含む場合（複数アクション種別・ローカルのみの状態変更など）は `useReducer` の明示的な reducer 関数の方が見通しが良い
+- `useActionState` に渡した関数は、前回の状態（初回は `initialState`）を第 1 引数に、フォームデータを第 2 引数に受け取る（React 公式）
 
 **コード例**:
 ```tsx
+// app/_actions/user.ts — useActionState 用の Action（#1 と同じファイルに置く場合は import と CreateUserInput を共有する）
+'use server';
+
+import { z } from 'zod';
+import { revalidatePath } from 'next/cache';
+import { redirect, unauthorized } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { createUser } from '@/app/_lib/dal/user.mutations';
+
+const CreateUserInput = z.object({
+  name: z.string().min(1).max(50),
+  email: z.email(),
+});
+
+export type CreateUserState = {
+  errors?: { name?: string[]; email?: string[] };
+  message?: string;
+};
+
+export async function createUserWithState(
+  _prevState: CreateUserState,
+  formData: FormData,
+): Promise<CreateUserState> {
+  const session = await verifySession();
+  if (!session) unauthorized(); // experimental.authInterrupts: true が前提
+
+  const parsed = CreateUserInput.safeParse({
+    name: formData.get('name'),
+    email: formData.get('email'),
+  });
+  if (!parsed.success) {
+    return { errors: z.flattenError(parsed.error).fieldErrors, message: '入力内容を確認してください' };
+  }
+
+  await createUser(parsed.data);
+  revalidatePath('/users');
+  redirect('/users');
+}
+```
+
+```tsx
+// app/users/new/new-user-form.tsx
 'use client';
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
-import { createUser } from '@/app/actions/user';
+import { createUserWithState } from '@/app/_actions/user';
+import type { CreateUserState } from '@/app/_actions/user';
+
+const initialState: CreateUserState = {};
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -90,12 +160,13 @@ function SubmitButton() {
 }
 
 export default function NewUserForm() {
-  const [state, action] = useActionState(createUser, {});
+  const [state, action] = useActionState(createUserWithState, initialState);
   return (
     <form action={action}>
       <input name="name" />
       {state.errors?.name && <p>{state.errors.name[0]}</p>}
-      <input name="email" />
+      <input name="email" type="email" />
+      {state.errors?.email && <p>{state.errors.email[0]}</p>}
       {state.message && <p>{state.message}</p>}
       <SubmitButton />
     </form>
@@ -107,51 +178,92 @@ export default function NewUserForm() {
 > "useActionState wins when the form submits to a server action and the next state depends entirely on what the server returns. useReducer wins when the state machine has multiple branches, conditional transitions, or actions that do not involve server calls."
 > ([React `useActionState` in 2026: Replacing `useReducer` for Server-Driven Form Logic](https://dev.to/jsmanifest/react-useactionstate-in-2026-replacing-usereducer-for-server-driven-form-logic-4co6), セクション "useActionState vs useReducer") ※2026-09-27に実際にfetch成功
 
+> "When you use `useActionState`, the `reducerAction` receives an extra argument as its first argument: the previous or initial state. The submitted form data is therefore its second argument instead of its first."
+> ([React Docs: useActionState](https://react.dev/reference/react/useActionState), セクション "Troubleshooting") ※2026-10-25 確認
+
 **出典**:
 - [Next.js Docs: useActionState](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#server-side-form-validation) (Next.js公式)
+- [React Docs: useActionState](https://react.dev/reference/react/useActionState) (React 公式、Action の引数は前回の状態とフォームデータ) ※2026-10-25 確認
 - [React `useActionState` in 2026: Replacing `useReducer` for Server-Driven Form Logic](https://dev.to/jsmanifest/react-useactionstate-in-2026-replacing-usereducer-for-server-driven-form-logic-4co6) (dev.to、useActionState と useReducer の使い分け基準) ※2026-09-27に実際にfetch成功
 
-**バージョン**: Next.js 14+, React 18/19
+**バージョン**: Next.js 15+, React 19+
 **確信度**: 高
-**最終更新**: 2026-09-27
+**最終更新**: 2026-10-25
 
 ---
 
 ### 3. Server Actions は `'use server'` ファイルに集約する
 
-Server Actions を各コンポーネントファイルにインラインで定義するのではなく、専用の `actions/` ディレクトリに集約する。
+Client Component から呼ぶ Action と、複数の画面で使う Action は、専用の `app/_actions/` ディレクトリの `'use server'` ファイルに集約する。
+Server Component の中でのインライン定義（関数本体の先頭に `'use server'`）も公式にサポートされており、そのコンポーネントだけで使う小さな Action には使ってよい。どちらの書き方でも公開エンドポイントになるので、認証・認可・入力検証は省かない（#5）。
+
+**根拠**:
+- Client Component の中では Server Function を定義できない。Client Component から呼ぶ Action は `'use server'` を先頭に書いたファイルから import する必要がある（公式）
+- `'use server'` をファイル先頭に書くと、そのファイルの export がすべて Server Function になる。公開する関数の一覧がファイル単位で見えるので、レビューで認可漏れを探しやすい（export を絞る方法は #6）
+- 複数画面で使う Action をコンポーネントに散らすと、同じ処理の認可・検証が画面ごとに食い違いやすい
 
 **コード例**:
 ```
 app/
-├── actions/
+├── _actions/
 │   ├── user.ts     # 'use server' - ユーザー操作
 │   ├── post.ts     # 'use server' - 投稿操作
 │   └── auth.ts     # 'use server' - 認証アクション
 ```
 
+```tsx
+// インライン定義を使ってよい例: その Server Component だけで使う小さな Action
+// app/notes/page.tsx（Server Component）
+import { redirect } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { saveNote } from '@/app/_lib/dal/note.mutations';
+
+export default function NotesPage() {
+  async function addNote(formData: FormData) {
+    'use server';
+    const session = await verifySession(); // インラインでも公開エンドポイントなので認証する
+    if (!session) redirect('/login');
+    const note = String(formData.get('note') ?? '').trim();
+    if (note) await saveNote(session.userId, note);
+  }
+
+  return (
+    <form action={addNote}>
+      <input name="note" />
+      <button type="submit">追加</button>
+    </form>
+  );
+}
+```
+
 **出典**:
 - [Next.js Docs: Server Actions Organization](https://nextjs.org/docs/app/building-your-application/data-fetching/server-actions-and-mutations#behavior) (Next.js公式)
+- [Next.js Docs: Mutating Data — Creating Server Functions](https://nextjs.org/docs/app/getting-started/mutating-data#creating-server-functions) (Next.js 公式、Server Component 内のインライン定義と、Client Component では定義できない点) ※2026-10-25 確認
+  > "It's not possible to define Server Functions in Client Components. However, you can invoke them in Client Components by importing them from a file that has the `"use server"` directive at the top of it."
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-25
 
 ---
 
 ### 4. Server Actions で楽観的 UI 更新を実装する
 
 `useOptimistic` でサーバーの応答を待たずにUIを先行更新して体感速度を向上させる。
-**`useOptimistic` は Server Components + Server Actions + `revalidatePath` の組み合わせを前提に設計されている**——Client Component で手動 `setState` と併用すると二重カウントが発生する。
+`useOptimistic` に渡す確定状態（props、または `useState` の値）と同じデータを、別の state で二重に管理しない。確定状態は、Server Action 内の `revalidatePath` で更新された props で受け取るか、Action の結果を受けて同じ Transition の中で `useState` を更新する。
 
 **根拠**:
-- `useOptimistic` の pending エントリはトランジション完了後に base state で上書きされるが、Client Component 内で同じリストに `setState` で手動 append すると、pending 分と確定分が二重になる
+- `useOptimistic` の楽観的な値は Action の実行中だけ描画され、Transition が完了すると確定状態と同じレンダーで収束する（React 公式）。確定状態の更新を Transition の外で別途行うと、楽観的な分と確定した分が同時に表示され、二重カウントになる
+- 公式の例は、Client の `useState` を確定状態にして、`await` の後に `startTransition` の中で更新する形。Server Components + `revalidatePath` で props を更新する形もとれる。どちらでも、確定状態は 1 つにする
 - offline-first（IndexedDB 等）の設計を採用する場合は `useOptimistic` 自体が不要になるケースがある
 
 **コード例**:
 ```tsx
 'use client';
 import { useOptimistic, useTransition } from 'react';
+import { toggleLike } from '@/app/_actions/post'; // Action の中で revalidatePath し、新しい post が props で届く
+
+type Post = { id: string; liked: boolean; likeCount: number };
 
 export function LikeButton({ post }: { post: Post }) {
   const [optimisticPost, updateOptimistic] = useOptimistic(
@@ -181,31 +293,33 @@ export function LikeButton({ post }: { post: Post }) {
 
 **アンチパターン**:
 - `useOptimistic` と `useState` で同一リストを二重管理する（pending と確定の二重カウントが起きる）
-- Client Component 内で Server Action の応答後に `setState` で再 append する
+- Client Component 内で Server Action の応答後に、Transition の外で `setState` を使って再 append する
 
 **出典引用**:
-> "useOptimistic was designed assuming Server Components + Server Actions + revalidatePath, not Client Components with manual setState."
-> ([useOptimistic を導入して、結局外した話 — 手動 state 管理との二重カウント](https://zenn.dev/ysaya_dev/articles/useoptimistic2), Zenn, セクション "外した理由") ※2026-05-31に実際にfetch成功
+> "The optimistic and real state converge in the same render when the Transition completes."
+> ([React Docs: useOptimistic](https://react.dev/reference/react/useOptimistic)) ※2026-10-25 確認
 
 **出典**:
-- [React Docs: useOptimistic](https://react.dev/reference/react/useOptimistic) (React公式)
-- [useOptimistic を導入して、結局外した話](https://zenn.dev/ysaya_dev/articles/useoptimistic2) (Zenn、Client Component との非互換パターン解説) ※2026-05-31 fetch
+- [React Docs: useOptimistic](https://react.dev/reference/react/useOptimistic) (React公式、Client の useState を確定状態にする例を含む) ※2026-10-25 確認
+- [useOptimistic を導入して、結局外した話](https://zenn.dev/ysaya_dev/articles/useoptimistic2) (Zenn、手動 state 管理との二重カウントの事例) ※2026-05-31 fetch
 
-**バージョン**: Next.js 14+, React 18+
-**確信度**: 高
-**最終更新**: 2026-05-31
+**バージョン**: Next.js 15+, React 19+
+**確信度**: 中（二重カウントの事例は単一記事。確定状態の扱いは React 公式で確認）
+**最終更新**: 2026-10-25
 
 ---
 
-### 5. Server Actions を公開エンドポイントとして扱い、requireAuth + Zod + RLS の3段防御を必ず実装する
+### 5. Server Actions を公開エンドポイントとして扱い、認証・認可・入力検証を Action 内で必ず行う（RLS は構成に応じた追加の防御）
 
-`'use server'` はコードをサーバーで実行するディレクティブであり、エンドポイントを非公開にしない。すべての Server Action で **① 認証（requireAuth）・② 入力検証（Zod）・③ DB の Row Level Security（RLS）** の3層防御を実装する。コード側の認証・バリデーションが万一突破されても DB レベルで不正アクセスをブロックする設計にする。
+`'use server'` はコードをサーバーで実行するディレクティブであり、エンドポイントを非公開にしない。保護が必要な Server Action では **① 認証（セッションの確認）・② 入力検証（Zod）・③ 認可（操作対象の所有者・権限の確認。最終判定は DAL）** を、ビジネスロジックより先に行う。ログインしているだけで他人のデータを操作できる状態（IDOR）にしないため、認証だけで済ませず必ず認可まで行う。
+ログイン・新規登録のように未認証で呼ぶ Action では認証・認可の段はないが、入力検証は省かない。DB の Row Level Security（RLS）は、使える DB（Supabase / PostgreSQL 等）で、クエリと同じトランザクションにユーザー文脈を正しく設定できる場合に追加する防御として使う。
 
 **根拠**:
 - Server Action はビルド時にハッシュ化された POST エンドポイントとしてコンパイルされ、クライアントバンドルに含まれる
 - Next.js は CSRF 保護を提供するが、認証（セッション確認）・認可（権限チェック）・入力バリデーションは開発者の責任
 - UI で管理者ボタンを非表示にしても、エンドポイント自体はインターネット上の誰もが直接 POST 呼び出しできる
-- RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認証チェックが漏れても DB が行単位でアクセスを制御できる（多層防御の最終ライン）
+- RLS をデータベース層（Supabase / PostgreSQL）で有効化すると、コードの認可チェックが漏れても DB が行単位でアクセスを制御できる。ただしポリシーが参照するユーザー（テナント）文脈を、クエリと同じトランザクションで設定しないとガードとして成り立たない（後述の Prisma の落とし穴を参照）。RLS に対応していない DB では、DAL の認可と WHERE 句へのユーザー条件の追加で守る
+- 入力検証は Action の冒頭、ビジネスロジックより前に行う。大きなペイロードを受ける Action は、型と値域に加えてサイズの上限も検証する。デシリアライズ自体の脆弱性はアプリ側の検証では防げないので、フレームワークの更新で塞ぐ（`middleware.md` #5）
 - ロールベースの権限管理（RBAC）では、認証チェックを Server Action の中だけに置くのでは不十分。少なくとも①ルーティング層（未許可ロールをルート単位でブロック）②UI層（許可されない操作ボタン自体を出さない）③Server層（すべての Server Action 内部で `requirePermission()` 等により権限を再検証）の3層で防御する。UI層での非表示はあくまで見た目の制御であり、Server Action は「実体を伴うネットワークエンドポイント」であるためサーバー側の再検証を省略できない
 - OWASP の Next.js Security Cheat Sheet も Server Actions を独立して呼び出し可能な POST エンドポイントとして扱い、渡された引数を信頼しないことを公式原則として挙げている
 - Server Action はビルド時に ID が振られる公開エンドポイントであり、ID はビルドごとに導出されるため、デプロイをまたいだ古いページからの呼び出しは `Failed to find Server Action` になる。セルフホストでの対策は Rule #8（`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` をビルド時に固定する）を参照
@@ -220,19 +334,67 @@ export async function deleteUser(userId: string) {
   await db.users.delete(userId);
 }
 
-// Good: requireAuth + Zod + RLS の3段防御
+// Bad: 認証だけで認可がない（ログインしていれば、任意の userId を渡して他人を削除できる＝IDOR）
+'use server';
+import { unauthorized } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+
+export async function deleteUserAction(userId: string) {
+  const session = await verifySession();
+  if (!session) unauthorized();
+  await db.user.delete({ where: { id: userId } });
+}
+```
+
+```tsx
+// Good: app/_actions/user.ts — ① 認証 → ② 入力検証 → ③ 認可と削除は DAL
 'use server';
 import { z } from 'zod';
-import { requireAuth } from '@/lib/auth'; // 認証失敗時に unauthorized() をスロー
+import { revalidatePath } from 'next/cache';
+import { unauthorized } from 'next/navigation';
+import { verifySession } from '@/app/_lib/dal/auth';
+import { deleteUser } from '@/app/_lib/dal/user.mutations';
 
-const DeleteUserInput = z.object({ userId: z.string().uuid() });
+const DeleteUserInput = z.object({ userId: z.uuid() });
 
-export async function deleteUser(raw: unknown): Promise<void> {
-  const user = await requireAuth();                   // ① 認証（未認証で即スロー）
-  const { userId } = DeleteUserInput.parse(raw);      // ② Zod バリデーション
-  // ③ DB の RLS ポリシーが user.id を参照し行レベルで制御
-  await db.users.delete({ where: { id: userId } });   // RLS が最終ガード
+export async function deleteUserAction(raw: unknown): Promise<void> {
+  const session = await verifySession();          // ① 認証
+  if (!session) unauthorized();                   //   unauthorized() は experimental.authInterrupts: true が前提
+  const { userId } = DeleteUserInput.parse(raw);  // ② 入力検証
+  await deleteUser(userId);                       // ③ 認可は DAL で行う（下記）
   revalidatePath('/users');
+}
+
+// app/_lib/dal/user.mutations.ts — 最終的な認可は DAL で行う
+import 'server-only';
+import { forbidden, unauthorized } from 'next/navigation';
+import { verifySession } from './auth';
+
+export async function deleteUser(userId: string) {
+  const session = await verifySession();
+  if (!session) unauthorized();
+  // 管理者か本人だけが削除できる。ログインしているだけでは削除させない
+  if (session.role !== 'admin' && session.userId !== userId) forbidden();
+  await db.user.delete({ where: { id: userId } });
+}
+```
+
+```ts
+// app/_lib/dal/document.mutations.ts — RLS を併用する場合（Prisma + PostgreSQL の例）
+// ポリシー例: CREATE POLICY owner_only ON documents USING (owner_id = current_setting('app.user_id', true)::uuid);
+import 'server-only';
+import { unauthorized } from 'next/navigation';
+import { prisma } from '@/lib/prisma';
+import { verifySession } from './auth';
+
+export async function deleteDocument(documentId: string) {
+  const session = await verifySession();
+  if (!session) unauthorized();
+  await prisma.$transaction(async (tx) => {
+    // クエリと同じトランザクションの入口でユーザー文脈を設定する（SET LOCAL 相当）。設定しないとポリシーが効かない
+    await tx.$executeRaw`SELECT set_config('app.user_id', ${session.userId}, TRUE)`;
+    await tx.document.delete({ where: { id: documentId } });
+  });
 }
 ```
 
@@ -268,10 +430,14 @@ export async function deleteUser(raw: unknown): Promise<void> {
 
 > "更新する相手はセッションから取り、受け付ける項目は名前だけにします。"
 > ([AIに書かせたNext.jsのコードで起きやすいセキュリティの穴と、直し方](https://zenn.dev/yakankun/articles/nextjs-ai-code-security-pitfalls), セクション "1. Server Action は誰でも直接呼べる。更新する相手はセッションで決める（A02）") ※2026-10-10に実際にfetch成功（引用箇所は 2026-10-25 のマージ時に差し替え）
+- [RSC Is Not the Input Boundary](https://dev.to/lazarv/rsc-is-not-the-input-boundary-2aao) (dev.to / lazarv, 2026-05-09、Server Function の入力検証をビジネスロジックより先に行う・サイズ上限を設ける。`middleware.md` #5 から移した観点) ※2026-05-09に実際にfetch成功
+- [Next.js Docs: Authentication — Server Actions](https://nextjs.org/docs/app/guides/authentication#server-actions) (Next.js 公式、Server Action を公開 API と同じセキュリティ上の扱いにし、操作の可否を確認する) ※2026-10-25 確認
+  > "Treat Server Actions with the same security considerations as public-facing API endpoints, and verify if the user is allowed to perform a mutation."
+- [Next.js Docs: unauthorized](https://nextjs.org/docs/app/api-reference/functions/unauthorized) (Next.js 公式、`experimental.authInterrupts` が前提の experimental API) ※2026-10-25 確認
 
-**バージョン**: Next.js 14+
+**バージョン**: Next.js 14+（コード例の `unauthorized()` / `forbidden()` は 15.1+ で `experimental.authInterrupts: true` が前提）
 **確信度**: 高
-**最終更新**: 2026-10-10
+**最終更新**: 2026-10-25
 
 ---
 
@@ -313,7 +479,7 @@ export async function createPostAction(formData: FormData) {
     body: formData.get("body"),
   });
   if (!parsed.success) {
-    return { ok: false as const, error: parsed.error.flatten() };
+    return { ok: false as const, error: z.flattenError(parsed.error) };
   }
 
   // 3. DAL 経由で書き込み
@@ -328,7 +494,8 @@ export async function createPostAction(formData: FormData) {
 "use server";
 
 // この関数も公開エンドポイント化される（攻撃者が直接叩ける）
-export function calculateInternalScore(input: unknown) {
+// （'use server' ファイルの export は async 関数でなければならないので、同期関数の export はビルドエラーになる）
+export async function calculateInternalScore(input: unknown) {
   // ...
 }
 
@@ -346,26 +513,28 @@ export async function createPostAction(formData: FormData) {
 
 **出典**:
 - [Next.jsの考え方 / 7.1 セキュリティの大前提・7.2 公開を絞るためのファイル分割](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [Next.js Docs: Mutating Data — Creating Server Functions](https://nextjs.org/docs/app/getting-started/mutating-data#creating-server-functions) (Next.js 公式、ファイル先頭の `'use server'` はそのファイルのすべての export を Server Function にする。Server Function は直接の POST で呼べる) ※2026-10-25 確認
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（未使用 Server Action の自動削除は v15+）
-**確信度**: 高（v16 公式相当の知見）
-**最終更新**: 2026-05-16
+**確信度**: 高（export がすべて公開エンドポイントになる点は公式ドキュメントで確認）
+**最終更新**: 2026-10-25
 
 ---
 
 ### 7. `redirect()` を try/catch 内で呼ばない — NEXT_REDIRECT は再 throw が必要
 
-`redirect()` は即座にリダイレクトを実行する関数ではなく、`NEXT_REDIRECT` digest を持つ特殊なエラーをスロー する関数。Next.js フレームワーク層がこのエラーをキャッチしてリダイレクトを実行するため、try/catch ブロックで握り潰すとリダイレクトが無効になる。
+`redirect()` は即座にリダイレクトを実行する関数ではなく、特殊なエラーをスローする関数。Next.js フレームワーク層がこのエラーをキャッチしてリダイレクトを実行するため、try/catch ブロックで握り潰すとリダイレクトが無効になる。`notFound()` / `unauthorized()` / `forbidden()` も同じ仕組みで動く。
+try の外で呼ぶのが基本で、try の中で呼ぶ必要がある場合は、catch の先頭で `unstable_rethrow(error)` を呼んでフレームワークのエラーを投げ直す。
 
 > "redirect() は『その場でリダイレクトを実行する関数』ではなく、『特殊なエラーをスローする関数』"
 > ([Next.jsのredirect()をtry/catchの中で呼ぶと動かない理由と対処法3つ](https://zenn.dev/sato_frontend/articles/d9e458e947503d), セクション "redirect()が動かない理由") ※2026-06-16に実際にfetch成功
 
 **根拠**:
-- `redirect()` が throw するエラーオブジェクトは `error.digest === 'NEXT_REDIRECT'` で識別される
 - try/catch がこのエラーを捕捉して値を return すると、フレームワーク層にエラーが届かずリダイレクトが発火しない
 - Server Actions 内の try/catch でよく発生する落とし穴で、認証チェックの `redirect('/login')` が静かに無視される
+- `error.digest` や `error.message` を手で比較して判定すると、`notFound()` / `unauthorized()` など他のフレームワーク制御のエラーを取りこぼす。内部パス（`next/dist/...`）のユーティリティにも依存しない。公式の `unstable_rethrow` は catch の先頭で呼ぶと、フレームワークが処理すべきエラーだけを投げ直す
 
 **コード例**:
 ```typescript
@@ -391,15 +560,19 @@ export async function updateAction(id: string, data: Input) {
     return { success: false, error: 'INTERNAL_ERROR' };
   }
 }
+```
 
-// Alternative: catch 内で NEXT_REDIRECT を再 throw する
+```typescript
+// Alternative: try の中で呼ぶ必要がある場合は、catch の先頭で unstable_rethrow を呼ぶ
+import { unstable_rethrow } from 'next/navigation';
+
 export async function updateAction(id: string, data: Input) {
   try {
     await requireAuth();
     const result = await updateService(id, data);
     return { success: true, data: result };
   } catch (error) {
-    if (error instanceof Error && error.message === 'NEXT_REDIRECT') throw error; // 再 throw
+    unstable_rethrow(error); // redirect() / notFound() などのフレームワークのエラーだけを投げ直す
     return { success: false, error: 'INTERNAL_ERROR' };
   }
 }
@@ -407,14 +580,17 @@ export async function updateAction(id: string, data: Input) {
 
 **アンチパターン**:
 - 認証チェック (`requireAuth()`, `notFound()`) を try 内に置き、エラーハンドリングと混在させる
-- `isRedirectError()` ユーティリティ（`next/dist/client/components/redirect`）を使わずに手動で `NEXT_REDIRECT` を判定する
+- `error.digest === 'NEXT_REDIRECT'` や `error.message` の比較、内部パスの `isRedirectError()` で手動判定する（`unstable_rethrow` を使う）
 
 **出典**:
 - [Next.jsのredirect()をtry/catchの中で呼ぶと動かない理由と対処法3つ](https://zenn.dev/sato_frontend/articles/d9e458e947503d) (Zenn sato_frontend) ※2026-06-16に実際にfetch成功
+- [Next.js Docs: unstable_rethrow](https://nextjs.org/docs/app/api-reference/functions/unstable_rethrow) (Next.js 公式、catch の先頭で呼んでフレームワークの内部エラーを投げ直す) ※2026-10-25 確認
+  > "This method should be called at the top of the catch block, passing the error object as its only argument."
+- [Next.js Docs: unauthorized](https://nextjs.org/docs/app/api-reference/functions/unauthorized) (Next.js 公式、`try/catch` で囲むと割り込みが抑止されるので `unstable_rethrow` を使う) ※2026-10-25 確認
 
-**バージョン**: Next.js 13+ (App Router)
-**確信度**: 高
-**最終更新**: 2026-06-16
+**バージョン**: Next.js 13+ (App Router)（`unstable_rethrow` は名前のとおり unstable API）
+**確信度**: 高（公式ドキュメントで確認）
+**最終更新**: 2026-10-25
 
 ---
 
