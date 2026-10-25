@@ -337,3 +337,49 @@ export async function uploadAvatar(formData: FormData) {
 ```
 
 **確信度**: 既存（高）→ 高（根本原因の理解が深まった）
+
+---
+
+### 6. Vercel では Middleware が本文を読まない場合 `skipMiddlewareRequestBody` で転送を省く
+
+Vercel の Routing Middleware（Next.js の `proxy.ts`、v15 以前の `middleware.ts` を含む）は、既定ではリクエストボディを Middleware に転送する。
+Middleware が認証・リダイレクト・ヘッダー付与のみでボディを読まないなら、`vercel.json`（または `vercel.ts`）で `skipMiddlewareRequestBody` を有効にしてボディ転送を省く。ボディは Vercel Functions と rewrite 先には従来どおり届く。
+
+**根拠**:
+- Middleware 呼び出しへのボディ転送が減り、Fast Origin Transfer の使用量が下がる
+- 大きなボディを持つリクエストで TTFB が改善しうる
+- Rule #1（Middleware は認証チェックとリダイレクトに限定）に従っていればボディを読む必要は通常なく、設計方針と整合する
+- 既定値は `false` のため、有効化するまで既存プロジェクトには影響しない
+
+**注意**:
+- Middleware 内で `request.json()` / `request.formData()` / `request.text()` 等を呼ぶ場合は有効化しない
+- 設定変更後は再デプロイが必要
+
+**コード例**:
+```json
+// Good: vercel.json（Middleware がボディを読まない場合のみ）
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "skipMiddlewareRequestBody": true
+}
+```
+
+```typescript
+// Good: vercel.ts（@vercel/config 導入済みの場合）
+import type { VercelConfig } from '@vercel/config/v1';
+
+export const config: VercelConfig = {
+  skipMiddlewareRequestBody: true,
+};
+```
+
+**出典引用**:
+> "Enable this option only if your Routing Middleware doesn't read request bodies."
+> ([Skip sending request bodies to Routing Middleware](https://vercel.com/changelog/skip-sending-request-bodies-to-routing-middleware), Vercel Changelog, セクション "Requirement") ※2026-10-08に実際にfetch成功
+
+**出典**:
+- [Skip sending request bodies to Routing Middleware](https://vercel.com/changelog/skip-sending-request-bodies-to-routing-middleware) (Vercel Changelog 2026-10-08) ※2026-10-08 fetch
+
+**バージョン**: Vercel デプロイ限定（セルフホストには適用されない）
+**確信度**: 高
+**最終更新**: 2026-10-08
