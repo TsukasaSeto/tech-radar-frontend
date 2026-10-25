@@ -325,3 +325,59 @@ for (const imagePath of images) {
 **最終更新**: 2026-05-06
 
 ---
+
+### 6. `images.minimumCacheTTL` のデフォルト変更を把握し、更新頻度の高い画像では明示的に設定する
+
+Next.js 16.0.0 で `next/image`（`/_next/image` 経由で配信される最適化画像）の `minimumCacheTTL` デフォルト値が
+60 秒から 14,400 秒（4時間）に変更された。OGP 画像のように差し替え頻度が高い画像は、
+オリジンの `Cache-Control: max-age` が短くても `minimumCacheTTL` の値が下限として優先されるため、
+アップデート後に反映まで最大 4 時間かかるようになるケースがある。
+
+**根拠**:
+- `minimumCacheTTL` は最適化済み画像をサーバー側でキャッシュする**最小秒数**であり、オリジンの `max-age` がこれより長い場合のみオリジン側が優先される（`max-age` が短くても `minimumCacheTTL` を下回ることはない）
+- Next.js 16 でのデフォルト変更に気づかずアップグレードすると、SNS 等の OGP 画像プレビューが古いまま長時間残る事故につながる
+- 対象画像の更新頻度に応じて `next.config.ts` で明示的に上書きするのが安全
+
+**コード例**:
+```ts
+// next.config.ts
+const nextConfig = {
+  images: {
+    // OGP 画像など頻繁に差し替わる画像がある場合は明示的に短くする
+    // （Next.js 16 のデフォルトは 14400 秒 = 4時間）
+    minimumCacheTTL: 60,
+  },
+};
+```
+
+```tsx
+// Bad: 差し替え頻度の高い OGP 画像を /_next/image 経由で配信する
+// → Next.js 16 では minimumCacheTTL（既定 14,400 秒）が下限になり、最大 4 時間古い画像が配信される
+export const metadata = {
+  openGraph: {
+    images: [`/_next/image?url=${encodeURIComponent("/og.png")}&w=1200&q=100`],
+  },
+};
+
+// Good: next/og の Route Handler を直接指定する（/_next/image のキャッシュ層を通らない）
+export const metadata = {
+  openGraph: {
+    images: ["/api/og"],
+  },
+};
+```
+
+**出典**:
+- [Next.js 16 で OGP 画像が 4 時間キャッシュされた話と minimumCacheTTL 移行](https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale) (Zenn、`images.minimumCacheTTL` のデフォルト変更実測とOGP画像への影響、対策コード例) ※2026-09-14に実際にfetch成功
+
+> "`minimumCacheTTL` はその変換済み画像をサーバー側でキャッシュする最小秒数。"
+> ([Next.js 16 で OGP 画像が 4 時間キャッシュされた話と minimumCacheTTL 移行](https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale), セクション "minimumCacheTTL とは") ※2026-09-14に実際にfetch成功
+
+> "`minimumCacheTTL` は「最小値」なのでオリジンが長い `Cache-Control: max-age` を返す場合はそちらが優先される。"
+> ([Next.js 16 で OGP 画像が 4 時間キャッシュされた話と minimumCacheTTL 移行](https://zenn.dev/cosoado/articles/nextjs16-image-cache-ttl-4h-ogp-stale), セクション "対策") ※2026-09-14に実際にfetch成功
+
+**バージョン**: Next.js 16+（デフォルト値変更）
+**確信度**: 中
+**最終更新**: 2026-09-14
+
+---
