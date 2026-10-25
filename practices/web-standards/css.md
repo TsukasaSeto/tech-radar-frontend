@@ -918,6 +918,7 @@ CSS-in-JS ライブラリ（styled-components 等）はコンポーネントの�
 - CSS Modules はビルド時にスタイルを静的なCSSファイルへ抽出するため、ランタイムでのスタイル計算が不要になる
 - 大規模移行は feature flag による段階的ロールアウト（社内→社員→一般ユーザー）と Visual Regression Testing での出力比較を組み合わせることで安全に進められる
 - codemod や AI支援ツールによる自動書き換えで、数千箇所規模の移行も現実的な工数で実行できる
+- 移行期間中はブリッジパッケージ（GitHub の例では `@primer/styled-react`）で移行済み・未移行のコンポーネントを共存させると、画面単位で段階的に切り替えられる
 
 **コード例**:
 ```tsx
@@ -939,6 +940,7 @@ function Button() {
 **アンチパターン**:
 - 大規模な CSS-in-JS 移行を一括切り替えで行い、Visual Regression Testing なしでデプロイする（本番で見た目の差分に気づけない）
 - feature flag を使わず全ユーザーに一斉ロールアウトし、問題発生時に切り戻せない状態を作る
+- 性能上の問題が出ていない小規模なコードベースで既存の CSS-in-JS 基盤を書き換える（移行コストも大きく、投資対効果が出るのは大規模化してから）
 
 **出典引用**:
 > "With CSS Modules, styles would be authored in a CSS file alongside the JavaScript source for the component."
@@ -946,6 +948,6 @@ function Button() {
 
 **バージョン**: フレームワーク非依存（CSS Modules は Webpack/Vite 等のバンドラでネイティブサポート）
 **確信度**: 高（公式 GitHub Engineering Blog、パターン1採用）
-**最終更新**: 2026-09-25
+**最終更新**: 2026-09-26
 
 ---
