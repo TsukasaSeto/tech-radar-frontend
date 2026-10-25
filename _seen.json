@@ -4957,5 +4957,9 @@
   "https://zenn.dev/joemike/articles/nextjs-mobile-lighthouse-avg-57-all-red-2026",
   "https://zenn.dev/yorusuzu/articles/claude-code-p-exit-code-is-error-subtype",
   "https://zenn.dev/norman6464/articles/claude-code-allowedtools-verification-path",
-  "https://zenn.dev/aicoding_guide/articles/acg-claude-md-location"
+  "https://zenn.dev/aicoding_guide/articles/acg-claude-md-location",
+  "https://zenn.dev/matsutake_prgrm/articles/nextjs-font-japanese-preload-explosion",
+  "https://dev.to/naveedkumbhar/how-an-unauthenticated-nextjs-rce-turned-our-managed-container-into-a-botnet-scanner-395n",
+  "https://dev.to/livasticvm2primary/githubs-nov-2-pullrequesttarget-policy-check-the-trust-boundary-before-fixing-ci-9p7",
+  "https://medium.com/@jsmanifest/typescript-6-0-noimplicitoverride-is-now-default-what-your-class-hierarchies-must-fix-41e0011ed622"
 ]
