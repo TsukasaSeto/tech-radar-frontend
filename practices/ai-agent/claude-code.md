@@ -4015,8 +4015,6 @@ docker run --rm -m 256m my-claude-code-sandbox claude -p "big-allocation-task"
 > "上限を超える確保はそのまま完走し、Bash ツール結果に確保成功マーカーがそのまま出力されました。"
 > ([CLAUDE_CODE_TOOL_MEMORY_LIMIT はmacOSでは効かず、--debugも無言だった](https://zenn.dev/clopy/articles/claude-tool-memory-limit-macos-gate), セクション "観測結果: silent-gap") ※2026-08-31に実際にfetch成功
 
-**取り込み元**: パターン1c採用（非公式記事だが公式環境変数 `CLAUDE_CODE_TOOL_MEMORY_LIMIT` の実挙動をバージョン明記の上で再現実験している）
-
 **バージョン**: Claude Code v2.1.247（2026-08-31時点で記録された挙動、macOS 限定）
 **確信度**: 中（公式環境変数の実測検証記事、単独ソースのパターン1c採用）
 **最終更新**: 2026-08-31
@@ -4062,8 +4060,6 @@ EOF
 **出典引用**:
 > "実効上限は固定ではなく、セッションが進むほど縮む"
 > ([Claude Code の Bash は長いヒアドキュメントを黙って切る — 閾値は固定ではなかった](https://zenn.dev/genkunjc/articles/claude-code-heredoc-truncation), セクション "先に結論") ※2026-09-07に実際にfetch成功
-
-**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の Bash ツールの実挙動を検証し、`~/.claude/settings.json` の PreToolUse hook 設定を直接示している）
 
 **バージョン**: Claude Code（2026-09-07時点で観測された挙動、バージョン非明記）
 **確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
@@ -4126,8 +4122,6 @@ model_auto_compact_token_limit = 500000
 > "For that model, the value takes precedence over a top-level `autoCompactWindow` in the same settings file. Requires Claude Code v2.1.288 or later"
 > ([Settings reference](https://code.claude.com/docs/en/settings-reference), Claude Code 公式 docs, `modelSettings` の項) ※2026-10-25 確認（routine-followup マージ時の追加）
 
-**取り込み元**: パターン1c採用（Claude Code / Codex の公式ドキュメント（code.claude.com/docs、developers.openai.com/codex 等）を参照し、具体的なCLIコマンド・環境変数・設定キーを直接示す検証記事）
-
 **バージョン**: Claude Code / Codex CLI（記事内で参照された公式ドキュメント時点）
 **確信度**: 中
 **最終更新**: 2026-10-15
@@ -4180,8 +4174,6 @@ def variants(email: str) -> list[str]:
 > "コンテキストにあるものはモデルが書き出せます。コミット identity への混入や自発的な出力は GitHub Issue #81138 に実報告があり"
 > ([Claude Code はあなたのメールアドレスを毎回モデルに渡している — 出口をフックで機械的に塞いだ話](https://zenn.dev/minedia/articles/07dab654a07022), セクション "背景") ※2026-09-24に実際にfetch成功
 
-**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の hook システム（PreToolUse/PostToolUse/SessionStart）と `~/.claude.json` の `oauthAccount.emailAddress` という具体的な設定/挙動を実装込みで示している）
-
 **バージョン**: Claude Code（2026-09-24時点で観測された挙動、バージョン非明記）
 **確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
 **最終更新**: 2026-09-24
@@ -4221,8 +4213,6 @@ claude doctor
 **出典引用**:
 > "v2.1.282 の `claude doctor` がこの設定に触れないため、差が出るかどうか以前に観測できませんでした"
 > ([Claude Code v2.1.282 の「設定ファイル経由の改ざん」対策を、旧版と並べて claude doctor で確かめた](https://zenn.dev/motani/articles/claude-code-v2-1-282-settings-security-fix), Zenn, セクション "結果") ※2026-09-25に実際にfetch成功
-
-**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の特定バージョン間のセキュリティ設定挙動を `claude doctor` の実出力で検証している）
 
 **バージョン**: Claude Code v2.1.282+
 **確信度**: 中（公式ツールの実挙動検証記事、単独ソースのパターン1c採用）
@@ -4341,8 +4331,6 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 
 > "Requires Claude Code v2.1.295 or later."
 > ([Hooks reference](https://code.claude.com/docs/en/hooks), Claude Code 公式 docs, `onFailure` の項) ※2026-10-25 確認（routine-followup マージ時の追加）
-
-**取り込み元**: パターン1c採用（非公式記事だが公式ツール Claude Code の `settings.json` hook 設定スキーマ（`onFailure`）と exit code の挙動を実測検証し、実際の設定ファイルを直接示している）
 
 **バージョン**: Claude Code v2.1.295+（検証は 2.1.303 / Windows 11 / Git Bash）
 **確信度**: 中（単独ソースのパターン1c採用。検証環境は Windows のみ）

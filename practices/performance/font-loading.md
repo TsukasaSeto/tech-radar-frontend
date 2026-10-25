@@ -397,8 +397,6 @@ const notoSansJP3 = Noto_Sans_JP({ weight: ['400', '700'], subsets: ['latin'], p
 > "700 の日本語118ファイルは、直前の `/* latin */` を引き継いで、latin として preload されていました。"
 > ([next/fontで日本語フォントを使ったら、preloadが121本出てLCPが9.6秒になった](https://zenn.dev/matsutake_prgrm/articles/nextjs-font-japanese-preload-explosion), セクション "preload されたのは、2つ目のウェイトの日本語だけだった") ※2026-10-19に実際にfetch成功
 
-**取り込み元**: パターン1c採用（非公式記事だが `next/font/google` の型定義・ビルドエラーメッセージという公式APIの実挙動を実測し、Next.js PR #44594を典拠に示している）
-
 **バージョン**: Next.js 13+ (`next/font`)
 **確信度**: 中（非公式記事単独だが公式APIの型・エラーメッセージの直接検証）
 **最終更新**: 2026-10-19

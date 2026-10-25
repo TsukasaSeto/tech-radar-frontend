@@ -869,8 +869,6 @@ await expect(page.locator('#checkout-cta')).toMatchAriaSnapshot(`
 > "A page can pass colour-contrast and label audits while the primary checkout button remains a nameless control"
 > ([Audit the accessibility tree, not only the Lighthouse a11y score](https://dev.to/apogeewatcher/audit-the-accessibility-tree-not-only-the-lighthouse-a11y-score-76e), セクション "Lighthouse score vs. tree") ※2026-09-13に実際にfetch成功
 
-**取り込み元**: パターン1c採用（非公式記事だが Chrome DevTools のアクセシビリティツリー表示・Playwright 公式の ARIA スナップショット機能（`toMatchAriaSnapshot`）・Lighthouse 公式ドキュメントを根拠に、具体的な API 使用例を直接示している）
-
 **バージョン**: Playwright（ARIA snapshots 機能）
 **確信度**: 中（公式機能の検証記事、単独ソースのパターン1c採用）
 **最終更新**: 2026-09-13
