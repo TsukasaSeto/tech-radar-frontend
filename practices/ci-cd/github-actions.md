@@ -605,6 +605,7 @@ GitHub Actions の OIDC（OpenID Connect）で AWS に直接フェデレーシ�
 - 同じ OIDC 短命トークンの原則は **Azure（Microsoft Entra ID）でも同様**: フェデレーション資格情報（Federated Credentials）を使うと、GitHub Actions が発行する OIDC トークンを Entra ID が検証し、Azure 向けの短命 OAuth 2.0 アクセストークンに交換する。クライアントシークレットを保存する方式と異なり、長期秘密の保管自体が不要になる。ただし OIDC トークンと Azure のアクセストークンは別物であり、「誰であるか」を確認する認証（フェデレーション資格情報の責務）と「何ができるか」を決める認可（Azure RBAC の責務）は別レイヤーである点に注意する
 - **OIDC 導入後も `sub` クレーム自体の形式変更を追う必要がある**: GitHub は 2026-07-15 以降に作成・rename されたリポジトリで `sub` のデフォルト形式を「オーナー名/リポジトリ名（可変）」から「オーナーID/リポジトリID を付加した immutable subject claim」に変更した（例: `repo:octocat/my-repo:ref:refs/heads/main` → `repo:octocat@123456/my-repo@456789:ref:refs/heads/main`）。目的はリポジトリ名の再利用（削除→別オーナーが同名で再作成）によるなりすましを防ぐこと。信頼ポリシーの `sub` 条件を名前ベースで書いている既存環境は、移行時に**新形式を先に追加し旧形式を残したまま切り替え、最後に旧形式を削除する**順序を守らないと、切り替え中に正当なワークフローの認証が失敗する
 - **EC2 への運用アクセスにも同じ「長期クレデンシャルを持たない」原則を延長できる**: OIDC で発行した短命トークンで IAM ロールを assume し、そのロールの権限で `aws ssm send-command` を実行すれば、SSH ポート開放・EC2 固定 IP・GitHub Secrets への長期 SSH 秘密鍵保存のいずれも不要になる。SSM Agent 経由の内部通信のみで完結するため、インバウンドのネットワーク経路自体が不要になる点が OIDC 単体（AssumeRole のみ）との違い
+- **フェデレーションは「侵害されたジョブ」を信頼できるものにしない**: OWASP は、信頼ポリシー（どの外部ワークロードが資格情報を取得できるか）と権限ポリシー（その資格情報で何ができるか）を別々に設計するよう求めている。`iss` / `aud` / `sub` を厳密に絞っても、デプロイ用ロールが管理者権限なら補えない。`id-token: write` は**トークン要求を許可するだけ**で、クラウド権限そのものは付与しないため、クラウドアクセスが必要なジョブ単位で付ける。また発行されたクラウド資格情報はジョブや OIDC トークンの終了とは別の有効期限を持つ。信頼できない Pull Request のコードは、本番アクセスを取得できるジョブから切り離す
 
 **コード例**:
 ```yaml
@@ -727,8 +728,15 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - [GitHub Actions OIDCのsubが変わった — 2026年7月15日以降を止めずに移行する](https://zenn.dev/kmn/articles/8e62a62ba08bde) (Zenn KMN、`gh api`での`use_immutable_subject`切替と新旧`sub`併記による無停止移行手順) ※2026-08-09に実際にfetch成功
 - [GitHub ActionsからAzureへ安全に接続する 〜Entra ID・OIDC・フェデレーション資格情報を理解する〜](https://qiita.com/dev_mtech/items/aebc5be97d0151121a7d) (Qiita、Azure向けOIDCフェデレーション、認証と認可の分離) ※2026-08-22に実際にfetch成功
 - [【ポート開放・固定IP不要】GitHub Actions × AWS (OIDC, SSM) × Dockerで作るセキュアなEC2自動デプロイ環境](https://qiita.com/eguchiri/items/3ec5be26ec61234e4418) (Qiita、OIDC発行の短命トークン + SSM Session ManagerでEC2への運用アクセスもポート開放なしに実現) ※2026-09-23に実際にfetch成功
+- [OWASP Workload Identity Federation Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Workload_Identity_Federation_Cheat_Sheet.md) (OWASP CheatSheetSeries 公式、PR #2509 で追加。信頼ポリシーと権限ポリシーの分離、`id-token: write` の意味、侵害ジョブは信頼できない) ※2026-10-03 fetch
 
 **出典引用**:
+> "Validating a token against the configured trusted issuer does not by itself authorize production access."
+> ([Workload Identity Federation Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Workload_Identity_Federation_Cheat_Sheet.md), セクション "Understand the Trust Boundary") ※2026-10-03に実際にfetch成功
+
+> "In GitHub Actions, set `id-token: write` at the job level; it permits token requests and does not itself grant cloud permissions."
+> ([Workload Identity Federation Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Workload_Identity_Federation_Cheat_Sheet.md), セクション "Limit Credential Exposure and Permissions") ※2026-10-03に実際にfetch成功
+
 > "OIDC（OpenID Connect）を使うと、GitHub Actions が実行される際にAWSへの短期トークン（一時的なクレデンシャル）を動的に発行できます。"
 > ([GitHub Actions × OIDC で実現するセキュアなCI/CDパイプラインの作成](https://zenn.dev/kingdom0927/articles/fce8b036fead5f), セクション "なぜ OIDC か？") ※2026-07-05に実際にfetch成功
 
@@ -768,7 +776,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 
 **バージョン**: GitHub Actions, aws-actions/configure-aws-credentials v4+, Google Cloud KMS, GCP Workload Identity Federation, Docker Hub OIDC federation, immutable subject claims（2026-07-15以降の新規リポジトリでデフォルト化）, Azure Microsoft Entra ID Federated Credentials, AWS Systems Manager (SSM) Session Manager, vercel/vcr-action/login@v1
 **確信度**: 高
-**最終更新**: 2026-09-26
+**最終更新**: 2026-10-03
 
 ---
 
