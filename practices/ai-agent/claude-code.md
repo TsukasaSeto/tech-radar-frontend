@@ -3464,6 +3464,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - 5つ目の抜け道として **空白1つの追加だけで完全一致 deny ルールが外れる** ことが実測で確認されている。`"deny": ["Bash(touch /tmp/denyprobe/repo/marker.txt)"]` に対し、コマンド中の空白を1つ増やしただけの `touch  /tmp/denyprobe/repo/marker.txt`（スペース2個）が 9/9 回すり抜けた。同条件で前置マッチ形式 `"deny": ["Bash(touch:*)"]` に書き換えると、空白追加・引用符付きパス・相対パス化など 21 パターンの変形すべてをブロックできた。すり抜けた実行は `permission_denials` に0件のまま記録されず、終了コードも0でエラー表示も無いため、ログ監視だけでは検知できない
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
 - `sandbox.filesystem.denyRead` の glob（例: `**/.env`）は、展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になる（Claude Code v2.1.283 時点で未修正との報告）。対策は (1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）
+- 作業フォルダの外を守る `deny` を `Edit(../shared/**)` のように `../` で書くと、公式のパス記法（`//path` / `~/path` / `/path` / `path`）に該当せず、警告も出ないまま書き込みが止まらない場合がある（Windows / Claude Code 2.1.296 の実測）。ファイルシステムのルートからの絶対パスを `//` で書く（Windows は `//c/work/...`、macOS / Linux は `//Users/...` や `//home/...`）。書いた規則が効くかはダミーファイルへの書き込みで試し、AI の返答ではなくファイルのハッシュが変わったかで判定する。なお `deny` は組み込みツール向けのため、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない（OS 権限やサンドボックスと併用する）
 
 **コード例**:
 ```json
@@ -3523,12 +3524,13 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - [allowlist が破れる4パターン — Claude Code / Codex / Cursor の実CVE](https://qiita.com/ryoji9702/items/238ce9ef6af93691d818) (Qiita、GMO Connect株式会社所属著者、CLI allowlist の構造的バイパス4パターンの実CVE整理) ※2026-08-18 fetch
 - [Codexの PreToolUse フックにdenyを返しても、bashコマンドは実行されていた話](https://zenn.dev/usevelar/articles/e5468e768100d0) (Zenn、Codex CLI の bash 実行フックが deny を無視する再現報告、Windows環境) ※2026-08-21 fetch
 - [書いた deny ルールが、一度も参照されていなかった](https://zenn.dev/quintetkit/articles/permission-rule-allows-more) (Zenn quintetkit、`Write()` / `NotebookEdit()` / `Glob()` へのパスパターン deny が評価されないことの再検証) ※2026-09-12 fetch
+- [Claude Code の deny に `../` を書いたら、隣のフォルダへの書き込みが止まらなかった（2.1.296で実測）](https://zenn.dev/emilk1225/articles/73356c9b0e156d) (Zenn emilk1225、`../` 記法の deny が効かず `//` 絶対パスなら止まった実測。Windows / 非対話モードのみの検証) ※2026-10-11 fetch
 - [禁止コマンドを一字一句で書いたら、空白を1つ増やすだけで9回とも素通りした](https://zenn.dev/numarn/articles/deny-rule-exact-string-bypass-handson) (Zenn、完全一致 deny ルールの空白バイパスをハンズオン実測、前置マッチ形式なら21パターン全ブロックを確認) ※2026-09-23 fetch
 - [Claude Code の Linux sandbox で denyRead が「黙って無効化」される条件と対策](https://zenn.dev/mckosei/articles/202609-claude-code-linux-sandbox-denyread) (Zenn、glob 展開中の EACCES による fail-open と 3 つの回避策) ※2026-09-28 fetch
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-09-28
+**最終更新**: 2026-10-11
 
 ---
 
