@@ -58,6 +58,7 @@ user.name; // strictNullChecks: null かもしれないのにアクセスでき�
 - `arr[0]` は配列が空の場合 `undefined` になるが、`strict: true` だけでは型が `T` のまま
 - 境界外アクセスは実行時エラーの主な原因のひとつ
 - 配列アクセス後に undefined チェックが強制され、バグを防げる
+- AI エージェントが大半を書くコードベースでも効果が確認されている: `strict` に 4 フラグを足して約 202 コミットを検証した事例では、効いた跡が見つかったのはこのフラグだけで、AI は `!` ではなく `??` フォールバックやガード節で `undefined` を処理していた
 
 **コード例**:
 ```json
@@ -84,10 +85,13 @@ if (first !== undefined) {
 
 **出典**:
 - [TypeScript tsconfig reference: noUncheckedIndexedAccess](https://www.typescriptlang.org/tsconfig#noUncheckedIndexedAccess) (TypeScript公式)
+- [noUncheckedIndexedAccess など tsconfig フラグを 4 つ足して AI に書かせた。効いたのは 1 つだった](https://zenn.dev/kana001_bit/articles/loomit-strict-tsconfig) (Zenn、AI 生成コードでの効果検証) ※2026-10-20 fetch
+  > "効いた跡が見つかったのは `noUncheckedIndexedAccess` だけでした。"
+  > (同記事, セクション "今回の結果")
 
 **バージョン**: TypeScript 4.1+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-20
 
 ---
 
@@ -100,6 +104,7 @@ if (first !== undefined) {
 - オプショナル（プロパティが存在しない）と `undefined` 代入を区別できる
 - `in` 演算子での存在チェックが正確になる
 - APIのオプショナルフィールドの扱いが厳密になる
+- 一方でコストも大きい: 約 20,000 行のコードベースで検出できたエラーは 1 件、回避のための条件付きスプレッドが約 111 箇所に増え、事例の著者は不採用に倒す予定としている。導入前に既存コードでの書き換え量を計測してから判断する
 
 **コード例**:
 ```json
@@ -127,10 +132,12 @@ const config: Config = { theme: 'dark' }; // OK
 
 **出典**:
 - [TypeScript tsconfig reference: exactOptionalPropertyTypes](https://www.typescriptlang.org/tsconfig#exactOptionalPropertyTypes) (TypeScript公式)
+- [noUncheckedIndexedAccess など tsconfig フラグを 4 つ足して AI に書かせた。効いたのは 1 つだった](https://zenn.dev/kana001_bit/articles/loomit-strict-tsconfig) (Zenn、費用対効果の反例) ※2026-10-20 fetch
+  （原文引用ではなく要旨。同記事, セクション "exactOptionalPropertyTypes"）
 
 **バージョン**: TypeScript 4.4+
 **確信度**: 中
-**最終更新**: 2026-05-05
+**最終更新**: 2026-10-20
 
 ---
 
