@@ -1144,3 +1144,50 @@ jobs:
 **バージョン**: axe-core（WCAG 2.2 AA ルールセット）
 **確信度**: 中（axe-core 自体は業界標準だが、記事の具体的な実装は単独ソース）
 **最終更新**: 2026-09-19
+
+---
+
+### 14. AIエージェントによるコミット量増加でCIが律速になる場合、まずゲートジョブを軽くしてからシャーディングする
+
+AIコーディングエージェントの普及でPR・コミットの生成速度が上がり、検証（CI）がボトルネックになるケースが増えている。対処の優先順位は「まず全体をブロックする小さなゲートジョブ（lint・typecheck・変更検知等）を軽量化し、その後にテストシャーディングへ進む」。ゲートジョブが遅いままシャード数だけ増やしても、律速要因はゲート側に残る。
+
+**根拠**:
+- 後続の並列ジョブはすべてゲートジョブの完了を待つため、ゲートの所要時間はそのままクリティカルパスに乗る。シャード数を増やしても待ち時間は短くならず、待機を含めたランナー時間はシャード数ぶん積み上がる（例: 8 シャードが 26 秒のゲートを待つと、壁時計では 26 秒だがランナー時間では約 8 倍を消費する）
+- 変更検知・チェックアウトの浅い取得（`fetch-depth: 1` やsparse/blobless checkout）でゲートジョブ自体の所要時間を削減できる
+- 静的チェック（lint/typecheck/format/依存監査）は互いに依存しないが、短いチェックごとにジョブを分ける（matrix で展開するのも同じ）とチェックアウト・依存インストールがジョブ数だけ重複する。1 ジョブの中で順に実行してセットアップを 1 回にまとめる（課金面は Rule #12、同一ジョブ内の並列化は Rule #11、テストシャーディングは Rule #10 を参照）
+- セットアップコスト（依存インストール・キャッシュ復元）を十分削減できてから初めてテストシャーディングの効果が最大化される。セットアップが遅いままシャード数を増やすと、シャードごとに重複するセットアップコストが積み上がる
+- ネイティブ実装のコンパイラ／型チェッカーへの切り替えや、フル型グラフ構築を避けるAST解析ベースのlintルール書き換えなど、ツールチェーン自体の高速化も律速緩和に効く
+
+**コード例（短い静的チェックを 1 ジョブにまとめる）**:
+```yaml
+jobs:
+  # Bad: lint / typecheck / format を別ジョブや matrix に分け、セットアップをジョブ数だけ繰り返す
+  # Good: 1 ジョブにまとめ、チェックアウトと依存インストールを 1 回で済ませる
+  fast-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run format:check
+      - run: npm run audit:deps
+```
+
+**出典引用**:
+> "If eight test shards cannot start until one 26-second gate finishes, that gate is on the critical path eight times over."
+> ([AI Coding Agents Made CI the Bottleneck. Here Is the Fix, Step by Step.](https://dev.to/jamilxt/ai-coding-agents-made-ci-the-bottleneck-here-is-the-fix-step-by-step-1koj), セクション "Lever 1: gate jobs, the tiny jobs that block everything") ※2026-09-22に実際にfetch成功
+
+> "Agents have made it exponentially faster to ship code, but validating those changes hasn't quite kept up at the same rate."
+> ([AI coding has made CI a bottleneck, so we reworked ours to keep up](https://linear.app/now/ci-bottleneck-reworked), セクション "Introduction") ※2026-09-22に実際にfetch成功
+
+**出典**:
+- [AI Coding Agents Made CI the Bottleneck. Here Is the Fix, Step by Step.](https://dev.to/jamilxt/ai-coding-agents-made-ci-the-bottleneck-here-is-the-fix-step-by-step-1koj) (dev.to jamilxt、計測→ゲート最適化→セットアップ削減→バッチ化→シャーディングの優先順位とYAML例) ※2026-09-22に実際にfetch成功
+- [AI coding has made CI a bottleneck, so we reworked ours to keep up](https://linear.app/now/ci-bottleneck-reworked) (Linear公式ブログ、sparse/blobless checkout・ネイティブ型チェッカーへの切替・AST解析ベースのlint書き換え・7つの短いチェックを2ジョブにバッチ化した実例) ※2026-09-22に実際にfetch成功
+
+**バージョン**: GitHub Actions（全プラン共通）
+**確信度**: 高（Linear公式ブログ + dev.to、異なる著者2記事・コード例あり）
+**最終更新**: 2026-09-22
