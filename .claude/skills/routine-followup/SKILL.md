@@ -28,6 +28,8 @@ description: Use when the user wants to review and merge open PRs produced by th
    c. _seen.json PR を rebase → URL dedup + 削除検知 → push → merge
 3. マージ済 feedback ファイルを読んで改善提案を抽出
 4. 改善提案をユーザーに提示、承認分を .memo/prompt-v12.md に反映
+
+※ 未処理ペアが多いとき（目安 5 組以上）は、2 の代わりに「滞留時の手順」で進める
 ```
 
 ## Step 1: PR 一覧化と分類
@@ -44,6 +46,8 @@ gh pr list
 ```
 
 未処理ペアがなければスキルを終了する（feedback 読み取りステップへも進まない）。
+
+`gh pr list` は既定で 30 件までしか返さないため、件数がちょうど 30 なら `--limit 300` で取り直す。未処理ペアが目安 5 組以上ある、または全ブランチの merge base が同じ（main が止まっていた）場合は、Step 2 の代わりに「滞留時の手順」に進む。
 
 ## Step 2: ペアごとのレビュー＆マージ
 
@@ -175,6 +179,96 @@ git pull --ff-only origin main
 ### 2-4. ペア完了後
 
 次のペアへ進む前に、現在の todo を完了マークし、次ペアの中間確認に進む。
+
+## 滞留時の手順（未処理ペアが多いとき）
+
+main が長く更新されないまま Routine が毎日走ると、未処理ペアが溜まる。各回の Routine は古い main を基準に動くため、次の問題が重なる。
+
+- `_seen.json` が未マージなので、36h 窓が重なる隣接日の PR が同じ記事を再処理し、同じルールの二重強化や同趣旨の新規ルールが生じる
+- 新規ルールがすべて同じ番号（例: claude-code.md の #50）で採番される
+- Step 2 の流れで 1 本ずつ rebase すると、ほぼ毎回 `_seen.json` の末尾と採番が衝突する
+
+そのため「全件を一時 worktree で先に統合する → まとめて確認を取る → PR ごとに機械的に push・merge する」の順で進め、判断が要る作業（重複の除外・採番・内容の修正）を push 前に済ませる。
+
+### 滞留-1. 事前調査
+
+```bash
+# 分岐元の確認: 全件が同じ SHA なら滞留
+for b in $(git branch -r --format='%(refname:short)' | grep -E 'origin/(practice-update|seen-json-update)/'); do
+  git merge-base main "$b"
+done | sort | uniq -c
+
+# 隣接日重複の候補: practices に追加された URL のうち、複数の PR に出るもの
+for b in $(git branch -r --format='%(refname:short)' | grep 'origin/practice-update/' | sort); do
+  git diff main "$b" -- practices/ | grep '^+' | grep -oE 'https?://[^ )>"`]+' | sort -u | sed "s#^#${b##*/}\t#"
+done > /tmp/practice-urls.tsv
+cut -f2 /tmp/practice-urls.tsv | sort | uniq -d
+```
+
+- `_seen.json` の削除検知（2-3 の A）を全ブランチで実行し、PR 間で重複する URL の件数も数えておく
+- 内容レビューは、期間を分けてサブエージェントに並列で依頼する。観点は、公式ドキュメント・原文との照合による正しさ、main 既存ルールとの重複、書式、changelog と差分の整合、既存内容の欠落。重大 / 中 / 軽微で報告させる
+- 報告をもとに、指摘の扱い（統合時に直す / 誤りを除外するだけ / 重複処理だけ）をユーザーに確認する
+
+### 滞留-2. 一時 worktree で日付順に統合
+
+```bash
+git worktree add <scratchpad>/wt -b tmp/integrate-YYYY-MM-DD main
+jq . _seen.json | cmp - _seen.json   # jq の整形が main と同一か先に確認する
+```
+
+worktree から `git config` を実行すると、本体の `.git/config` に書き込まれる。diff3 などはコマンド単位で指定する（`git -c merge.conflictstyle=diff3 merge ...`）。
+
+日付の古い順に、1 PR = 1 コミットで積む。PR 番号・squash の件名・本文は、コミットとは別にファイルへ記録しておく。
+
+- practice PR: `git -c merge.conflictstyle=diff3 merge --squash origin/practice-update/YYYY-MM-DD` の後、コンフリクトの解消・採番の振り直し・重複の除外・レビュー指摘の修正を行い、changelog に注記してコミットする
+- _seen.json PR: rebase はしない。現在の `_seen.json` に「PR が自分の merge base から追加した URL のうち未登録のもの」だけを PR 内の順序で末尾に足し、`jq` で整形し直す。`_seen.json` 以外のファイル（feedback 等）は PR から取り込む。追加が 0 件になった PR は merge せずクローズ候補にする
+
+```bash
+b=origin/seen-json-update/YYYY-MM-DD
+git show "$(git merge-base main "$b"):_seen.json" | jq -r '.[]' > /tmp/prbase.txt
+git show "$b:_seen.json" | jq -r '.[]' > /tmp/pr.txt
+jq -r '.[]' _seen.json > /tmp/cur.txt
+awk 'NR==FNR{s[$0]=1;next} !s[$0]' /tmp/prbase.txt /tmp/pr.txt \
+  | awk 'NR==FNR{s[$0]=1;next} !s[$0]++' /tmp/cur.txt - > /tmp/to_add.txt
+cat /tmp/cur.txt /tmp/to_add.txt | jq -R . | jq -s . > _seen.json
+```
+
+changelog への注記は、`## 追加・強化されたルール` 節の末尾に `### マージ時の修正（routine-followup）` 小節を作り、除外・統合・振り直し・修正の内容を箇条書きにする。サマリ行には調整後の件数を併記する。
+
+コミットごとに次を確認する: コンフリクトマーカーが残っていない、採番が 1..N の連番、各ルールの前に `---` がある、ルールごとに最終更新が 1 行、`_seen.json` は 2-3 の C の 4 条件。
+
+注意点:
+
+- 新規ルールを除外・統合すると、それ以降に同じファイルへ追加される新規ルールの番号がすべて変わる。除外・統合の判断はレビュー結果が揃ってから始め、途中で判断を変えたらその PR から統合をやり直す
+- macOS の BSD sed は `\|` による選択が効かない。置換は `-e` を分けて書く
+- ファイル末尾の `---` の有無はファイルごとに異なる。main のそのファイルに合わせる
+
+### 滞留-3. 最終検証と確認
+
+- `_seen.json` が「main の base ∪ 全 PR の追加分」と一致する（sort して比較）。削除 0、重複 0
+- 全 practices の採番とコンフリクトマーカー
+- 各 changelog の `Rule #N` が最終状態の見出しを指している
+- 実行計画（PR 番号・種別・統合コミット・件名。クローズする PR も含む）と修正内容の一覧をユーザーに示し、GO を取る
+
+### 滞留-4. PR ごとに push → squash merge
+
+古い順に、各 PR のブランチを「現在の main + その PR の統合結果」の 1 コミットに置き換えてから merge する。各 merge の後に main のツリーが統合結果と一致しなければ、その時点で止める。
+
+```bash
+tree=$(git rev-parse "<統合コミット>^{tree}")
+git fetch origin main "<branch>" --quiet
+old=$(git rev-parse "origin/<branch>")
+new=$(git commit-tree "$tree" -p origin/main -m "<件名>")
+git push --force-with-lease="refs/heads/<branch>:$old" origin "$new:refs/heads/<branch>"
+# gh pr view <PR#> --json headRefOid,mergeStateStatus が "$new CLEAN" になるまで待つ
+gh pr merge <PR#> --squash --subject "<件名>" --body-file <本文ファイル> --match-head-commit "$new"
+git fetch origin main --quiet
+[ "$(git rev-parse 'origin/main^{tree}')" = "$tree" ] || echo "STOP: main tree differs"
+```
+
+- 件数が多いときはスクリプトにしてバックグラウンドで流し、ログで進捗を確認する
+- 追加 0 件の `_seen.json` PR は `gh pr close <PR#> --comment "<理由>"` で閉じる
+- 完了後、ローカル main を `git pull --ff-only` で追従させ、worktree と一時ブランチを削除する
 
 ## Step 3: feedback ファイルのレビュー
 
