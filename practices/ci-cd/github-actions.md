@@ -881,6 +881,7 @@ const jwt = `${message}.${Buffer.from(signature, 'base64').toString('base64url')
 - バージョンコメントがないと fork リポジトリの不審なコミットと区別できない
 - SmartRound の供給チェーン監査基盤でも「アクションのコミット SHA 参照」を必須チェック項目として実装している
 - `pinact v4` の `--verify-comment` オプションで CI 上の SHA とバージョンコメントの整合性を自動検証できる
+- SHA ピン留めで守れるのは「参照先コミットの差し替え」だけ。Action が実行時にダウンロードするバイナリ、可変タグで参照するコンテナイメージ、composite action 内部のタグ参照は対象外のため、バイナリはチェックサム検証・イメージは `@sha256:` ダイジェスト指定とし、組織設定の「Enforce SHA Pinning」ポリシーで composite 内の `uses:` までタグ参照を拒否する
 
 **コード例**:
 ```yaml
@@ -916,9 +917,15 @@ rules:
 > "Actions pinned to commit SHAs (40-character hex) rather than version tags like @v1"
 > ([サプライチェーン攻撃対策の「実効」を継続検証するGitHub監査基盤を内製した話](https://zenn.dev/smartround_dev/articles/478c195bf914b6), セクション "GitHub Actions Security") ※2026-05-26に実際にfetch成功
 
+**出典**:
+- [GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f) (Zenn nishino_hiroki、SHA Pinning の守備範囲外: 実行時取得バイナリ・可変タグのコンテナ・composite 内参照) ※2026-10-10に実際にfetch成功
+
+> "問題は、Action が動き始めてから外から何か実行ファイルを取得するような場合です。"
+> ([GitHub ActionsのSHA Pinningだけで本当に大丈夫ですか？](https://zenn.dev/nishino_hiroki/articles/d7570d3bb3408f), セクション "SHA Pinning で守れないもの") ※2026-10-10に実際にfetch成功
+
 **バージョン**: GitHub Actions 全バージョン
 **確信度**: 高
-**最終更新**: 2026-05-26
+**最終更新**: 2026-10-10
 
 ---
 

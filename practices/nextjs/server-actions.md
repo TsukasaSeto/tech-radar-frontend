@@ -210,6 +210,7 @@ export function LikeButton({ post }: { post: Post }) {
 - OWASP の Next.js Security Cheat Sheet も Server Actions を独立して呼び出し可能な POST エンドポイントとして扱い、渡された引数を信頼しないことを公式原則として挙げている
 - Server Action はビルド時に ID が振られる公開エンドポイントであり、ID はビルドごとに導出されるため、デプロイをまたいだ古いページからの呼び出しは `Failed to find Server Action` になる。セルフホストでの対策は Rule #8（`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` をビルド時に固定する）を参照
 - **Prisma + PostgreSQL の RLS では、対話型 `$transaction` の中でテナント文脈が外側のトランザクションと別になる落とし穴がある**: 公式の Client extensions レシピは全クエリを `[SET, query]` のバッチトランザクションで包むため、`$transaction` 内ではクエリが外側とは別のトランザクションで走り、原子性が壊れる。トランザクションの入口で `set_config('app.tenant_id', $1, TRUE)`（`SET LOCAL` 相当）を1回実行し、`AsyncLocalStorage` で「適用済み」を印付けして拡張側をパススルーにする。`current_setting('app.tenant_id', true)` は未設定で空文字ではなく **NULL** を返すため、ポリシーで `= ''` と比較せず、NULL との比較が常に偽になる fail closed を前提にする。テーブル所有者にもポリシーを効かせるには `FORCE ROW LEVEL SECURITY` が必要（単一記事の報告・確信度は中）
+- フォームの hidden 項目（`userId` / `role` 等）は改ざん可能。更新対象のユーザーは `getCurrentUser()` のセッションから決め、受け付けるフィールドは Zod で許可したものだけに絞る（AI 生成コードは hidden 項目の ID でそのまま UPDATE し `role` まで受け取る実装になりがち）
 
 **コード例**:
 ```tsx
@@ -263,10 +264,14 @@ export async function deleteUser(raw: unknown): Promise<void> {
 
 > 「つまり **外側の `$transaction` とは別のトランザクションで走る**。テナントの文脈は付きますが、`order.create` と `stock.update` が同じトランザクションにいる保証が無くなり、原子性が壊れます。」
 > ([Prisma で Postgres の RLS を入れたら、公式レシピ通りでもトランザクションの中で効かなかった話](https://zenn.dev/glaciermelt/articles/prisma-postgres-rls-interactive-transaction), セクション "罠 1: 対話型トランザクションの中で効かない") ※2026-10-03に実際にfetch成功
+- [AIに書かせたNext.jsのコードで起きやすいセキュリティの穴と、直し方](https://zenn.dev/yakankun/articles/nextjs-ai-code-security-pitfalls) (Zenn yakankun、hidden 項目の userId/role を信用せずセッションから対象を決める・許可フィールドのみ更新) ※2026-10-10に実際にfetch成功
+
+> "更新する相手はセッションから取り、受け付ける項目は名前だけにします。"
+> ([AIに書かせたNext.jsのコードで起きやすいセキュリティの穴と、直し方](https://zenn.dev/yakankun/articles/nextjs-ai-code-security-pitfalls), セクション "1. Server Action は誰でも直接呼べる。更新する相手はセッションで決める（A02）") ※2026-10-10に実際にfetch成功（引用箇所は 2026-10-25 のマージ時に差し替え）
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-10-03
+**最終更新**: 2026-10-10
 
 ---
 
