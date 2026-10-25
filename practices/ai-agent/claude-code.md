@@ -4068,6 +4068,10 @@ Codex では `/status` ・ `/statusline` に加え、設定ファイルの `mode
 - 自動要約（compaction）は会話序盤の指示を失わせることがあるため、いつ・どの粒度で発生するかを公式コマンドで可視化しておく必要がある
 - `/compact` には要約時に何を重視するかを明示的な指示として渡せる。省略時の暗黙要約より情報欠落を抑えられる
 - 自作のファイル永続化による引き継ぎ戦略（Rule #14）と公式の autocompact 設定は排他ではなく、制御レイヤーが異なるため併用すべき対策
+- 閾値の設定経路は複数ある。`/autocompact <value>` は現在のモデルの値を `modelSettings` に保存し（`claude --autocompact <value>` はその起動限り）、`modelSettings` 内のモデル別 `autoCompactWindow`（v2.1.288+、100000〜1000000 または `"auto"`）は同じ設定ファイルのトップレベル `autoCompactWindow` より優先される（公式 settings リファレンス）。サブエージェントの frontmatter の `autoCompactWindow` は継承した閾値より早める方向にのみ効く（v2.1.296+）
+- `idleCompaction` は既定で有効で、離席中の長い会話をプロンプトキャッシュが切れる前に要約する。止めたい場合は `false` にし、対象とする最小サイズは `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS` で調整する
+- statusLine の使用率は全コンテキストウィンドウ基準のため、表示が半分でもコンパクトされうる。使用率だけでタイミングを予測しない
+- `500k` のような表記が使えるのはコマンド／フラグだけで、環境変数・frontmatter には整数で書く
 
 **コード例**:
 ```bash
@@ -4085,16 +4089,33 @@ export CLAUDE_CODE_AUTO_COMPACT_WINDOW=500000
 # Codex: config.toml で自動圧縮の閾値を設定
 model_auto_compact_token_limit = 500000
 ```
+```jsonc
+// Claude Code: モデル別に閾値を指定する（settings.json。/autocompact もここに保存する）
+{
+  "modelSettings": {
+    "claude-opus-5-5": { "autoCompactWindow": 200000 }
+  }
+}
+
+// 離席中の自動要約を止める場合
+{ "idleCompaction": false }
+```
 
 **出典引用**:
 > "コンテキストが埋まると自動で要約（compaction）が走るが、会話の序盤にあった指示は失われることがある"
 > ([コーディングエージェントを使う上でのコンテキスト管理入門 — Claude CodeとCodexの公式ドキュメントから「なぜ必要か」「放置するとどうなるか」「どのコマンドで管理するか」を整理する](https://qiita.com/Takuya__/items/85659512e93f4d8fa3ef), セクション "コンテキスト管理の必要性") ※2026-09-12に実際にfetch成功
 
+> "表示がまだ半分でもコンパクトされるので、使用率だけを見てコンパクトのタイミングを判断しないようにしてください。"
+> ([Claude Codeの自動コンパクト、何で・どこで・いつ効かせるか（/autocompact・autoCompactWindow・idle…）](https://zenn.dev/zozotech/articles/1a26d1775c06f7), セクション "注意点：statusLineの使用率とコンパクトのタイミングはずれる") ※2026-10-15に実際にfetch成功
+
+> "For that model, the value takes precedence over a top-level `autoCompactWindow` in the same settings file. Requires Claude Code v2.1.288 or later"
+> ([Settings reference](https://code.claude.com/docs/en/settings-reference), Claude Code 公式 docs, `modelSettings` の項) ※2026-10-25 確認（routine-followup マージ時の追加）
+
 **取り込み元**: パターン1c採用（Claude Code / Codex の公式ドキュメント（code.claude.com/docs、developers.openai.com/codex 等）を参照し、具体的なCLIコマンド・環境変数・設定キーを直接示す検証記事）
 
 **バージョン**: Claude Code / Codex CLI（記事内で参照された公式ドキュメント時点）
 **確信度**: 中
-**最終更新**: 2026-09-12
+**最終更新**: 2026-10-15
 
 ---
 

@@ -1143,6 +1143,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - 月次告知で「high 深刻度を含む」と分かった時点で、次回リリース日までにアップグレード検証環境を用意しておく
 - ad-hoc（緊急）パッチの告知は深刻度に関わらず最優先でトリアージする
 - 告知に「Critical を含む」と書かれていたら、公開当日にアドバイザリを読んで対象バージョンを確認し、同日中に patch を適用できるよう日程を空けておく（詳細は公開当日まで出ない前提で計画する）
+- 告知の「回避策なし」「Cache Components / Server Actions を使うアプリのみ影響」といった適用条件を確認し、自アプリが該当しなくても（告知が "upgrade immediately even if ..." と明記する場合）アップグレードを優先する
 
 **出典引用**:
 > "Today we are moving to a formal security release program, with updates that teams can plan around."
@@ -1162,10 +1163,12 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - [Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026) (Next.js 公式ブログ、上流依存の Critical 2件・High 1件を対象とする 2026-10-14 の臨時アップデート事前告知) ※2026-10-08 fetch
 - [Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/nextjs-security-update-october-14-2026) (Next.js 公式ブログ、out-of-band 臨時リリース) ※2026-10-14 fetch
   > "Updates are now available in v16.4.1 (Active LTS) and v15.5.28 (Maintenance LTS) to address these issues. Please patch your Next.js dependencies to maintain the security of your applications." (セクション冒頭)
+  > "There is no known workaround for affected applications. You should upgrade immediately even if your application does not have similar functions."
+  > (セクション "Impact" — Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays)
 
 **バージョン**: Next.js 16.2+ / 15.5+（`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外。2026-09-30 の修正版は 16.3.8 / 15.5.27）
 **確信度**: 高
-**最終更新**: 2026-10-14
+**最終更新**: 2026-10-15
 
 ---
 

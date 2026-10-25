@@ -320,6 +320,7 @@ export const metadata = { title: 'Dashboard', description: '...' };
 **根拠**:
 - `layout.tsx` はファイル数を増やすためではなく、「ナビゲーション形式が変わる」または「新しい共通ロジックが必要」な場合にのみ追加する
 - 3つの責務を意識することで、認証ガードの位置・Provider のスコープ・ネストされたヘッダー表示などの設計判断が明確になる
+- `layout.tsx` はクライアント遷移のたびに再実行されず、ブラウザに保持される。ゲートとなる layout の `redirect()` 先を**同じ layout の配下**に置くと、遷移先でも layout が再評価されず、リダイレクトが繰り返されて `_rsc` リクエストが連続発行される無限ループになる（ページ単体のテストでは検出しづらい）
 - Expo Router でも同様の設計が適用でき、クロスプラットフォームでのレイアウト設計知識が共通化できる
 
 **3つの責務**:
@@ -363,16 +364,23 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   );
 }
 
+// 注意: redirect 先（例: MFA 登録ページ）はゲートのある layout の配下に置かず、
+// route group（例: app/(mfa-enrollment)/app/account/mfa/page.tsx）で layout の外に出す。
+// URL は変わらず、layout だけが分離される。
+
 // アンチパターン: layout.tsx を「ファイル整理のため」だけに追加しない
 // ナビゲーション変更・Provider追加・共通ロジックの追加がなければ不要
 ```
 
 **出典**:
 - [Expo Router / Next.js App Router のレイアウト設計を責務で整理する](https://zenn.dev/kaji_kaji/articles/file-based-routing-layout-design) (Zenn kaji_kaji / 2026-05-07) ※2026-05-07に実際にfetch成功
+- [Next.js App Router：layout で redirect する先をその layout の配下に置くと、クライアント遷移で無限ループする](https://qiita.com/20051215kaito/items/3ea9e7765fe60d98f244) (Qiita 20051215kaito、layout ゲートの redirect 先を route group で layout 外へ出す。単一記事) ※2026-10-15 fetch
+  > "App Router は、共通の layout をクライアント遷移のたびに作り直しません。"
+  > (セクション "原因")
 
 **バージョン**: Next.js 14+, App Router
 **確信度**: 高
-**最終更新**: 2026-05-07
+**最終更新**: 2026-10-15
 
 ---
 
