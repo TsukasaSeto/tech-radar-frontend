@@ -337,6 +337,7 @@ Next.js 16.0.0 で `next/image`（`/_next/image` 経由で配信される最適�
 - `minimumCacheTTL` は最適化済み画像をサーバー側でキャッシュする**最小秒数**であり、オリジンの `max-age` がこれより長い場合のみオリジン側が優先される（`max-age` が短くても `minimumCacheTTL` を下回ることはない）
 - Next.js 16 でのデフォルト変更に気づかずアップグレードすると、SNS 等の OGP 画像プレビューが古いまま長時間残る事故につながる
 - 対象画像の更新頻度に応じて `next.config.ts` で明示的に上書きするのが安全
+- 典型的な影響ケースは OGP 画像を `/_next/image?url=...` 経由で配信している構成。`og:image` に `next/og` の Route Handler の URL を直接指定すれば `/_next/image` のキャッシュ層を通らず、`minimumCacheTTL` の影響を受けない
 
 **コード例**:
 ```ts
@@ -378,6 +379,6 @@ export const metadata = {
 
 **バージョン**: Next.js 16+（デフォルト値変更）
 **確信度**: 中
-**最終更新**: 2026-09-14
+**最終更新**: 2026-09-15
 
 ---
