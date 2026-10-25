@@ -4214,3 +4214,56 @@ claude doctor
 **最終更新**: 2026-09-25
 
 ---
+
+### 53. 無人の `claude -p` は終了コード 0 を成功とみなさず、`permission_denials` と成果物の実在まで確認する
+
+cron / launchd / CI から回す `claude -p` は、ツール拒否が **終了コード 0・`is_error: false`・`subtype: success`** のまま「仕事が済んでいない」状態で終わりうる。判定は `--output-format json`（または `stream-json`）で受け、終了コード → `is_error` / `subtype` → `permission_denials` → 成果物の実在、の順に確認する。あわせて、検証コマンド（`go test` 等）を `--allowedTools` に **検証の経路ごと**（実行コマンドと、その入力を書く `Edit(path)`）含めないと、エージェントは検証を黙ってスキップしたまま 0 で終了する。Rule #29（完了報告を生出力で構成する）が報告の形式を扱うのに対し、このルールは非対話実行で「失敗が失敗として現れない」ことへの機械的検知を扱う。
+
+**根拠**:
+- 引数誤り・認証なし・存在しないモデル・`--max-turns` / `--max-budget-usd` 超過は終了コード 1 になるが、ツール拒否は終了コード 0 のまま、頼んだファイルが作られていなかった（実測、Claude Code 2.1.293）
+- 認証なしでは `is_error: true` でも `subtype` は `success` だった。`subtype` だけで成否を判断すると見逃す
+- `-p` では承認プロンプトに答える人がおらず拒否は黙ってモデルに返り、実行は続く。検証コマンドが allow に無いと、検証なしで 0 終了する
+- `--output-format text` では `permission_denials` が見えない
+
+**コード例**:
+```bash
+# Good: 検証の経路（実行コマンド + 入力を書く Edit）を allow に含め、構造化出力で受ける
+export LC_ALL=en_US.UTF-8  # launchd 等では LANG 未設定で wc -m がバイト数になる
+
+claude -p "/write-article ..." \
+  --permission-mode default \
+  --allowedTools "Read Glob Grep Edit(articles/**) Edit(verify/**) Bash(go test:*) Bash(go vet:*)" \
+  --output-format json > result.json
+code=$?
+
+# 1) 終了コード  2) is_error / subtype  3) permission_denials  4) 成果物
+[ "$code" -eq 0 ] \
+  && jq -e '.is_error == false and ((.permission_denials // []) | length == 0)' result.json >/dev/null \
+  && test -s articles/today.md \
+  || { echo "claude -p failed or was silently denied"; exit 1; }
+
+# Bad: 終了コードだけで成功扱いにする
+claude -p "..." --output-format text && echo done
+```
+
+**アンチパターン**:
+- `subtype == "success"` だけで成功と判断する
+- `Write(path)` で許可を組む（公式ドキュメント上、パスルールの照会は `Edit(path)` / `Read(path)` のみ）
+- 検証コマンドだけ allow に入れ、その入力ファイルを書く `Edit(...)` を入れない
+
+**出典引用**:
+> "ツールの拒否は、終了コード 0、`is_error: false`、`subtype: success` のまま、仕事が済んでいませんでした。"
+> ([claude -p の失敗は終了コードで分かるか](https://zenn.dev/yorusuzu/articles/claude-code-p-exit-code-is-error-subtype), セクション "まとめ") ※2026-10-18に実際にfetch成功
+
+> "In a `-p` run with no host, these requests are denied either way, and the flag also tells Claude not to retry them."
+> ([go test を許可したのに一度も走らない](https://zenn.dev/norman6464/articles/claude-code-allowedtools-verification-path), 引用元 "Turn off permission prompts in unattended runs") ※2026-10-18に実際にfetch成功
+
+**出典**:
+- [claude -p の失敗は終了コードで分かるか: is_error・subtype・permission_denials を条件別に実測](https://zenn.dev/yorusuzu/articles/claude-code-p-exit-code-is-error-subtype) (Zenn、終了コード / is_error / subtype の条件別実測) ※2026-10-18に実際にfetch成功
+- [go test を許可したのに一度も走らない：無人の claude -p に検証させるなら、許可は「検証の経路」ごと組む](https://zenn.dev/norman6464/articles/claude-code-allowedtools-verification-path) (Zenn、検証経路を含む allowedTools 設計) ※2026-10-18に実際にfetch成功
+
+**バージョン**: Claude Code 2.1.x（2.1.293 で実測）
+**確信度**: 高（異なる著者 2 記事 + コード例、パターン2）
+**最終更新**: 2026-10-18
+
+---
