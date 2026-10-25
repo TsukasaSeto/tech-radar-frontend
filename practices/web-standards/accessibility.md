@@ -840,3 +840,39 @@ alt="image of the login screen with the SSO button highlighted"
 **最終更新**: 2026-08-24
 
 ---
+
+### 11. Lighthouse の a11y スコアだけでなく、アクセシビリティツリーを直接監査する
+
+Lighthouse の accessibility スコアが緑でも、スクリーンリーダーや AI エージェントが実際にタスクを完了できる保証にはならない。ロール・アクセシブルネーム・状態から成るアクセシビリティツリーはスコアとは別物であり、重要な操作導線（決済ボタン等）では個別に監査する必要がある。`div` で組んだクリック可能要素は見た目上は問題なくても、名前を持たずツリー上に存在しない・または匿名のコントロールとしてしか現れないことがある。
+
+**根拠**:
+- 色コントラストやラベル監査に合格していても、肝心の購入・送信ボタンが無名のコントロールのままというケースが起こりうる
+- Hydration 後にしか現れないコンテンツやランドマーク欠落は、静的な Lighthouse スコアだけでは検出できない
+
+**コード例**:
+```ts
+// Good: Playwright の ARIA スナップショットをCIのベースラインとして固定し、
+// アクセシビリティツリーの意図しない変化を検知する
+await expect(page.locator('#checkout-cta')).toMatchAriaSnapshot(`
+  - button "Complete purchase"
+`);
+
+// Bad: クリックハンドラだけ付けた div をボタン代わりに使う
+// <div onClick={handleSubmit}>Complete purchase</div>
+// → 見た目のレビューは通るが、アクセシビリティツリー上では無名のまま
+```
+
+**出典引用**:
+> "A pricing call to action built as a clickable div with no name may look perfect in a design review and still be absent or anonymous in the tree."
+> ([Audit the accessibility tree, not only the Lighthouse a11y score](https://dev.to/apogeewatcher/audit-the-accessibility-tree-not-only-the-lighthouse-a11y-score-76e), セクション "Lighthouse score vs. tree") ※2026-09-13に実際にfetch成功
+
+> "A page can pass colour-contrast and label audits while the primary checkout button remains a nameless control"
+> ([Audit the accessibility tree, not only the Lighthouse a11y score](https://dev.to/apogeewatcher/audit-the-accessibility-tree-not-only-the-lighthouse-a11y-score-76e), セクション "Lighthouse score vs. tree") ※2026-09-13に実際にfetch成功
+
+**取り込み元**: パターン1c採用（非公式記事だが Chrome DevTools のアクセシビリティツリー表示・Playwright 公式の ARIA スナップショット機能（`toMatchAriaSnapshot`）・Lighthouse 公式ドキュメントを根拠に、具体的な API 使用例を直接示している）
+
+**バージョン**: Playwright（ARIA snapshots 機能）
+**確信度**: 中（公式機能の検証記事、単独ソースのパターン1c採用）
+**最終更新**: 2026-09-13
+
+---
