@@ -628,3 +628,89 @@ export default defineConfig({
 **最終更新**: 2026-08-15
 
 ---
+
+### 9. E2E テストは `console` / `pageerror` イベントを監視し、ブラウザ内部の異常も失敗条件にする
+
+E2E テストは最終画面の見た目だけでなく、テスト実行中の `console.error` と `pageerror`（未捕捉例外）を収集し、それぞれ空配列であることをアサーションで強制する。ビジネス上意図されたメッセージ（バリデーション表示等）とプログラムの異常（未処理例外）を区別した上で、後者をゼロ件に保つ運用にすることで、「画面は正しく表示されたが内部では何か壊れている」状態を検出できる。
+
+**根拠**:
+- 画面が期待通り表示されていても、ブラウザ内部で `console.error` や未捕捉例外（`pageerror`）が発生している場合がある。見た目のアサーションだけでは検出できない
+- ビジネス上意図されたメッセージと、プログラムの異常を区別した上で、後者をゼロ件に保つ
+- 監視ロジックはテストケースごとではなく E2E のセットアップ/フィクスチャ層に共通実装し、監視漏れを防ぐ
+
+**コード例**:
+```ts
+// fixtures.ts
+import { test as base, expect } from '@playwright/test';
+
+export const test = base.extend<{ failOnConsoleErrors: void }>({
+  failOnConsoleErrors: [async ({ page }, use) => {
+    const errors: string[] = [];
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text());
+    });
+    page.on('pageerror', (err) => {
+      errors.push(err.message);
+    });
+    await use();
+    expect(errors, `console/pageerror errors detected: ${errors.join(', ')}`).toEqual([]);
+  }, { auto: true }],
+});
+```
+
+**出典引用**:
+> 「テストが最後まで進み、期待した画面が表示されたとしても、ブラウザ内部では問題が起きている可能性があります」
+> ([console warning／pageerrorもE2Eの失敗条件にする【第39回】](https://qiita.com/mild_bonobo5557/items/57647eb7b494f0458940), 記事本文/導入部) ※2026-09-19に実際にfetch成功
+
+**出典**:
+- [console warning／pageerrorもE2Eの失敗条件にする【第39回】](https://qiita.com/mild_bonobo5557/items/57647eb7b494f0458940) (Qiita) ※2026-09-19 fetch
+
+**バージョン**: Playwright（`page.on('console')` / `page.on('pageerror')`、全バージョン共通）
+**確信度**: 中（Playwright 公式 API の正しい用法だが、単一著者・単一記事のみで独立ソースでの裏付けなし）
+**最終更新**: 2026-09-19
+
+---
+
+### 10. E2E は Chromium 単体で終わらせず、WebKit エンジンと実機モバイルまで確認する
+
+Playwright の `devices[]` によるモバイルエミュレーションだけでなく、`webkit` プロジェクトも `playwright.config.ts` に追加し、Safari 系エンジン特有のレンダリング・入力・フォーカス・イベント処理の差分を検出する。エミュレーションでの一次確認に加え、実機 Safari での確認をリリースゲートに組み込む。アクセシビリティ要件（タッチターゲットサイズ・コントラスト等）は `web-standards/accessibility.md` の該当ルールを参照し、本ルールでは重複記述しない。
+
+**根拠**:
+- Chromium 系ブラウザのみの E2E では、Safari/WebKit 特有のレンダリング崩れ・フォーカス順序・タッチイベントの差分を検出できない
+- `devices['iPhone 13']` 等のエミュレーションは一次スクリーニングとして有効だが、実機での挙動と完全には一致しないため、最終確認は実機（または実機に近い環境）で行う
+- 横スクロールの発生有無は `scrollWidth` / `clientWidth` の比較で機械的に検証できる
+
+**コード例**:
+```ts
+// playwright.config.ts
+import { defineConfig, devices } from '@playwright/test';
+
+export default defineConfig({
+  projects: [
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'mobile-safari', use: { ...devices['iPhone 13'] } },
+  ],
+});
+```
+
+```ts
+// 横スクロール発生の機械的検出
+const hasHorizontalScroll = await page.evaluate(
+  () => document.documentElement.scrollWidth > document.documentElement.clientWidth
+);
+expect(hasHorizontalScroll).toBe(false);
+```
+
+**出典引用**:
+> 「主対象の利用環境で遊び続けられることを確認する」
+> ([Chromiumだけで終わらせない――WebKit・iPhone・A11yまで確認する【第40回】](https://qiita.com/mild_bonobo5557/items/ad1cd95d6eb702bfdccf), 該当セクション) ※2026-09-19に実際にfetch成功
+
+**出典**:
+- [Chromiumだけで終わらせない――WebKit・iPhone・A11yまで確認する【第40回】](https://qiita.com/mild_bonobo5557/items/ad1cd95d6eb702bfdccf) (Qiita、アクセシビリティ関連の主張は `web-standards/accessibility.md` #1/#2/#3/#7 と重複するため本ルールでは多ブラウザ/実機確認の観点のみ採用) ※2026-09-19 fetch
+
+**バージョン**: Playwright（`devices`、マルチプロジェクト構成、全バージョン共通）
+**確信度**: 中（Playwright 公式 API 使用だが単一著者・単一記事のみ）
+**最終更新**: 2026-09-19
+
+---

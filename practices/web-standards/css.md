@@ -218,6 +218,7 @@ Viewport幅ではなく親コンテナの幅に応じてスタイルを変化さ
 - メディアクエリはビューポート幅に依存するため、コンポーネントの再利用時にスタイルが崩れやすい
 - Container Queries はコンポーネントが置かれたコンテキスト（親の幅）を基準にできる
 - Chrome 105+、Firefox 110+、Safari 16+ でサポートされておりモダンブラウザでは実用段階
+- Container Query Units（`cqi` / `cqw` 等）を使うと、コンテナ幅に対して相対的にフォントサイズ等をフルード化できる（例: `clamp(1rem, .5rem + 3cqi, 2rem)`）。認知度に対して実採用率が低いというギャップがあり、メディアクエリのブレークポイントをそのまま流用してしまう書き方の慣性が主因
 
 **コード例**:
 ```css
@@ -278,10 +279,12 @@ function ProductCard() {
 **出典**:
 - [CSS Containment Module Level 3: Container queries](https://www.w3.org/TR/css-contain-3/#container-queries) (W3C Spec)
 - [CSS container queries - MDN Web Docs](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_containment/Container_queries) (MDN Web Docs / 2023)
+- [Container queries observe the component, not the viewport](https://dev.to/leobaniak/container-queries-observe-the-component-not-the-viewport-3chn) (dev.to、Container Query Units によるフルードタイポグラフィと実採用率ギャップの指摘) ※2026-09-19 fetch
+  > "Media queries answer the browser. Container queries answer the box."
 
 **バージョン**: Chrome 105+, Firefox 110+, Safari 16+
 **確信度**: 高
-**最終更新**: 2026-05-06
+**最終更新**: 2026-09-19
 
 ---
 
