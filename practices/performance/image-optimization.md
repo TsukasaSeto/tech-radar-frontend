@@ -407,11 +407,14 @@ export const metadata = {
 `next/image` の Image Optimization は `images.remotePatterns` に許可した外部 URL をサーバー側で取得して最適化する。
 このため、許可リストに載ったホストが攻撃者に制御され得る場合（ユーザー投稿コンテンツのホスト、ワイルドカード許可など）、プライベート IP 帯へのリクエストを誘発する SSRF の経路になる。
 Next.js 2026-09 セキュリティリリース（CVE-2026-94483、High）で修正済みのため、`remotePatterns` を使っているアプリは必ずパッチを適用し、あわせてパターンを最小化する。
+旧 `images.domains` は Next.js 14 で非推奨化済みで、プロトコル・ポート・パスを絞れない。Next.js 16 へ上げて警告が出たら `remotePatterns` へ移し、`hostname: '**'` のような全許可で警告だけ消さない。`protocol` / `port` / `pathname` / `search` を省略すると `**` が暗黙に適用される点にも注意する。
 
 **根拠**:
 - 公式アドバイザリは「許可リスト済みの攻撃者制御 URL が Image Optimization 中の SSRF（例: プライベート IP 帯）につながる」と説明している
 - `images.remotePatterns` を設定していなければ影響を受けないため、許可範囲を狭めること自体が攻撃面の縮小になる
 - 修正版は v16.3.8（Active LTS）と v15.5.27（Maintenance LTS）
+- 公式 docs は `domains` を「悪意あるユーザーからアプリを守るため、厳格な `remotePatterns` に置き換えて Next.js 14 から非推奨」と説明し、`protocol` などを省略した場合の暗黙の `**` を「意図しない URL を最適化されうるため非推奨」としている
+- ローカル画像側は `images.localPatterns` で許可パスを絞れる。公式の例（`search: ''`）では許可パス以外は 400 Bad Request になり、クエリ文字列も許可されない
 
 **コード例**:
 ```ts
@@ -449,9 +452,13 @@ npm install next@15.5.27  # 15.5 系
 
 **出典**:
 - [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js 公式ブログ) ※2026-09-30に実際にfetch成功
+- [next/image API Reference](https://nextjs.org/docs/app/api-reference/components/image) (Next.js 公式 docs、`domains` の非推奨化・`remotePatterns` 省略時の暗黙の `**`・`localPatterns`) ※2026-10-26に実際にfetch成功
+  > "Deprecated since Next.js 14 in favor of strict remotePatterns in order to protect your application from malicious users."
+  > (セクション "Deprecated configuration options > domains")
+- [Next.js 16 で images.domains 廃止 — 3 アプリを remotePatterns に書き直す](https://zenn.dev/cosoado/articles/nextjs16-images-domains-to-localpatterns) (Zenn、Next.js 16 で警告が出た際に `hostname: '**'` で通してしまう失敗例。公式 docs で裏取りした範囲のみ反映) ※2026-10-26 fetch
 
 **バージョン**: Next.js 16.3.8+ / 15.5.27+
 **確信度**: 高（公式ブログ）
-**最終更新**: 2026-09-30
+**最終更新**: 2026-10-26
 
 ---
