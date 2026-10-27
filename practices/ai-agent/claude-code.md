@@ -4574,6 +4574,7 @@ cron / launchd / CI から回す `claude -p` は、ツール拒否が **終了�
 - `-p` では承認プロンプトに答える人がおらず拒否は黙ってモデルに返り、実行は続く。検証コマンドが allow に無いと、検証なしで 0 終了する
 - `--output-format text` では `permission_denials` が見えない
 - 公式 docs によれば v2.1.302 より前は、フィーチャーフラグを取得しない構成（サードパーティプロバイダーや `DISABLE_TELEMETRY` など）で `-p` 実行が auto モードで始まりうる場合があった。以後は Manual 固定のため、挙動をバージョン間で揃えたいなら `--permission-mode` を明示する
+- `--json-schema` 付きの `claude -p` でも、スキーマ違反の指示でモデルが諦めると `subtype: "success"`・終了コード 0 のまま `structured_output` キーが無い結果になりうる。わざと違反させた 33 回のうち終了コード 1 になったのは 1 回だけだったと報告されている（Claude Code 2.1.296 / Haiku）。`subtype == "success"` かつ `structured_output` に値がある場合だけ成功とみなす
 
 **コード例**:
 ```bash
@@ -4618,10 +4619,11 @@ claude -p "..." --output-format text && echo done
 - [2026-10-20 の公式ドキュメント更新：`claude -p` のデフォルトモード変更とフック仕様の詳細化](https://qiita.com/akihidem/items/bade09c0b3fe3e36bf9c) (Qiita、公式 docs 更新の要約。上記公式 docs で裏取り) ※2026-10-26 fetch
 - [claude -p の失敗は終了コードで分かるか: is_error・subtype・permission_denials を条件別に実測](https://zenn.dev/yorusuzu/articles/claude-code-p-exit-code-is-error-subtype) (Zenn、終了コード / is_error / subtype の条件別実測) ※2026-10-18に実際にfetch成功
 - [go test を許可したのに一度も走らない：無人の claude -p に検証させるなら、許可は「検証の経路」ごと組む](https://zenn.dev/norman6464/articles/claude-code-allowedtools-verification-path) (Zenn、検証経路を含む allowedTools 設計) ※2026-10-18に実際にfetch成功
+- [claude -p --json-schema の成否は、終了コードではなく structured_output で判定する](https://zenn.dev/masaki_mori72/articles/7682a6c0f13528) (Zenn、`--json-schema` 利用時も exit 0 + `success` で出力が無い失敗がある・`structured_output` の有無で判定する観点) ※2026-10-27 fetch
 
 **バージョン**: Claude Code 2.1.x（2.1.293 で実測。権限モードの既定は 2.1.302+ で Manual）
 **確信度**: 高（異なる著者 2 記事 + コード例、パターン2）
-**最終更新**: 2026-10-26
+**最終更新**: 2026-10-27
 
 ---
 
@@ -4687,5 +4689,62 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 **バージョン**: Claude Code v2.1.295+（検証は 2.1.303 / Windows 11 / Git Bash）
 **確信度**: 中（単独ソースのパターン1c採用。検証環境は Windows のみ）
 **最終更新**: 2026-10-21
+
+---
+
+### 55. `permissions.deny` / `ask` の書式ミスは黙ってスキップされる — 設定変更後は `claude doctor` の "Invalid settings" 節を確認し、出力が無いことを正しさの証拠にしない
+
+`permissions` のルールが `Tool` または `Tool(content)` の形になっていない（閉じ括弧の閉じ忘れ、閉じ括弧の後ろの文字など）と、Claude Code はそのルールだけをスキップし、同じファイルの他の設定は有効なままにする。つまり書いた `deny` は一切効かない。スキップは `claude doctor` の出力と対話起動時のダイアログに出るが、`claude -p` では標準エラー出力に出なかったと報告されている。`deny` / `ask` を編集したら `claude doctor` を実行して "Invalid settings" 節を確認し、重要な `deny` は実際に拒否されることまで 1 回試す。
+
+**根拠**:
+- 公式 docs は、書式が壊れたルールは「スキップされ、`claude doctor` に列挙される」と説明している。設定ファイルの問題は、ファイル全体が無効になる Error と、個別エントリだけがスキップされる Warning（例: malformed permission rule）に分かれる
+- 出典記事は Claude Code 2.1.293 / Windows 11 / Haiku、各ケース 1 回の実測で、閉じ忘れ・閉じ括弧の後ろの文字・小文字のツール名・綴り違い・全角括弧・余分な `)` の 6 種類すべてで `Read` の `deny` が効かなかったと報告している（`Bash` で試したのは閉じ忘れのみ）。同じ配列にある正しい `deny` は効いた
+- 同記事では `claude doctor` の終了コードは 0 で、末尾の `N warnings found` にも数えられなかった。ツール名の綴り違い・全角括弧・余分な `)` は `doctor` に何も出なかったが `deny` は効かなかった。出力が無いことは正しいルールの証明にならない
+- 記事の検証は 2.1.293 で、公式 docs は 2.1.302 時点。他の版・OS・対話モードでの挙動は確認されていない。`ask` の閉じ忘れも効かなかったが 1 ケースのみ
+
+**コード例**:
+```jsonc
+// .claude/settings.json
+{
+  "permissions": {
+    "deny": [
+      // Good: 閉じ括弧で終わる
+      "Read(./secrets/**)",
+      "Bash(rm -rf *)"
+
+      // Bad: いずれもスキップされ deny が効かない
+      // "Read(./secrets/**",     // 閉じ括弧の閉じ忘れ
+      // "Bash(ls) x",            // 閉じ括弧の後ろに文字
+      // "read(./secrets/**)"     // ツール名が小文字
+    ]
+  }
+}
+```
+
+```bash
+# Good: 設定を変えたら doctor で Invalid settings 節を確認し、終了コードや警告件数では判定しない
+claude doctor | sed -n '/Invalid settings/,/^$/p'
+```
+
+**アンチパターン**:
+- `claude doctor` の終了コードや `N warnings found` の件数で不正なルールの有無を判定する
+- `claude -p` の標準エラー出力が空であることを、設定が正しい根拠にする
+- `deny` を書いただけで、実際に拒否されるかを一度も確かめない
+
+**出典引用**:
+> "Claude Code skips the rule and lists it in the invalid-settings dialog when an interactive session starts, and in claude doctor output"
+> ([Errors](https://code.claude.com/docs/en/errors), セクション "Malformed Tool(content) rule") ※2026-10-27に実際にfetch成功
+
+> "doctor に何も出ないことは、そのルールが正しい、という意味ではありません"
+> ([Claude Codeの Invalid permission rule was skipped を実測: 書式ミスのdenyは効かない](https://zenn.dev/yorusuzu/articles/claude-code-invalid-permission-rule-skipped), セクション "3-3. doctor に出なかった 4 つの書式") ※2026-10-27に実際にfetch成功
+
+**出典**:
+- [Errors](https://code.claude.com/docs/en/errors) (Claude Code 公式 docs、Malformed Tool(content) rule はスキップされ doctor に列挙される) ※2026-10-27 fetch
+- [Settings](https://code.claude.com/docs/en/settings) (Claude Code 公式 docs、Settings Error / Settings Warning の区別) ※2026-10-27 fetch
+- [Claude Codeの Invalid permission rule was skipped を実測: 書式ミスのdenyは効かない](https://zenn.dev/yorusuzu/articles/claude-code-invalid-permission-rule-skipped) (Zenn、6 種類の壊し方で deny が効かない実測・doctor の見落とし挙動) ※2026-10-27 fetch
+
+**バージョン**: Claude Code 2.1.x（2.1.293 / Windows 11 で実測。公式 docs は 2.1.302 時点）
+**確信度**: 高（公式 docs がスキップ挙動を明記。パターン1、検証記事は補足出典）
+**最終更新**: 2026-10-27
 
 ---
