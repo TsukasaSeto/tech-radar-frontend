@@ -1172,6 +1172,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - 各脆弱性には**影響条件**が明記される（例: SSRF は `images.remotePatterns` 設定時のみ、Draft Mode 漏えいは Cache Components / `experimental.useCache` 有効時のみ、MCP エンドポイントの情報漏えいは `next dev` のみ）。自アプリの設定と突き合わせて優先度を決める
 - 月次枠とは別に、上流依存（upstream dependencies）の脆弱性修正は out-of-band の臨時リリースになることがある。2026-10-08 には「10/14 に Critical 2件・High 1件（うち2件は上流調整のため9月リリースから延期）を修正する臨時アップデート」が事前告知され、詳細アドバイザリ（影響範囲・対象バージョン・手順）は当日公開とされた。告知日と公開日の間にアップグレード検証環境と担当を確保しておく
 - 月次の枠外でも out-of-band の臨時リリースが出る。2026-10-14 には 9月リリースから上流依存の遅延で見送られた修正を含む v16.4.1 / v15.5.28 が公開され、`use cache` 関数が typed array を複数返す場合の認証不要 RCE（Critical、回避策なし）、SVG の Image Optimization 経由の RCE（Critical、Next.js を glibc 系 Linux で動かしている場合に影響。回避策は Next.js が使う `sharp` を 0.35.5 以上にすること）、Server Actions を使う App Router の DoS（High）を修正した。告知を見たら次の月次枠を待たず、当日中に使用中の系列の修正版へ更新する（`npm install next@16.4.1` / `npm install next@15.5.28`。`next@latest` は 15 系から 16 系のようにメジャーを跨ぐので緊急パッチには使わない）
+- 2026-10-27 の事前告知は、11/3（火）の月次リリースで medium 7 件を修正すると予告し、詳細アドバイザリ・影響バージョン・手順はリリースと同時に公開するとした。深刻度が medium でも、告知日から公開日までに検証環境と担当を確保し、公開後に対象バージョンを確認してから適用する
 
 **運用への組み込み方**:
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
@@ -1195,6 +1196,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - [Next.js May 2026 security release](https://vercel.com/changelog/next-js-may-2026-security-release) (Vercel 公式 changelog、13 件のアドバイザリ・修正版 15.5.18 / 16.2.6、パッチ適用だけが完全な緩和策) ※2026-10-25 確認
 - [Next.js Security Update for a Critical Upstream Issue](https://nextjs.org/blog/nextjs-security-update-september-22-2026) (Next.js 公式ブログ、`next/og` RCE の out-of-band 緊急パッチの実例) ※2026-09-23 fetch
 - [September 2026 Security Release](https://nextjs.org/blog/september-2026-security-release) (Next.js 公式ブログ、9/30 リリースで修正された 7 件（high 1・medium 5・low 1）と `next dev` MCP エンドポイントの修正) ※2026-09-30 fetch
+- [Upcoming Next.js November Security Release](https://nextjs.org/blog/upcoming-nextjs-security-release-november-2026) (Next.js 公式ブログ、11/3 に medium 7 件の月次リリースを事前告知) ※2026-10-28 fetch
 - [Upcoming Next.js September Security Release](https://nextjs.org/blog/upcoming-nextjs-security-release-september-2026) (Next.js 公式ブログ、9/29・9/30 の追記: 16.3.7 にはセキュリティ修正が含まれない、critical・high の 2 件は後日のリリースに回す) ※2026-10-25 確認（routine-followup マージ時の修正）
 - [Upcoming Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/upcoming-nextjs-security-update-october-2026) (Next.js 公式ブログ、上流依存の Critical 2件・High 1件を対象とする 2026-10-14 の臨時アップデート事前告知) ※2026-10-08 fetch
 - [Next.js Security Update for Upstream Vulnerabilities](https://nextjs.org/blog/nextjs-security-update-october-14-2026) (Next.js 公式ブログ、out-of-band 臨時リリース。SVG の Image Optimization RCE は glibc 系 Linux が条件) ※2026-10-25 確認
@@ -1204,7 +1206,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 
 **バージョン**: Next.js 16.2+ / 15.5+（2026-10-14 時点の修正版は 16.4.1 / 15.5.28。`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-10-28
 
 ---
 

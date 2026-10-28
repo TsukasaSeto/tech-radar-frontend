@@ -70,12 +70,13 @@ const DataChart = dynamic(
 ### 2. バンドルアナライザーで依存関係のサイズを可視化する
 
 バンドルの中身を可視化し、肥大化した依存ライブラリを特定・置き換えする。
-Next.js 16 の既定である Turbopack のビルドでは `next analyze`（16.1+）を使う。`@next/bundle-analyzer` は Webpack プラグインなので、`next build --webpack` でビルドする場合（と v15 以前の Webpack ビルド）に限って使う。
+Next.js 16 の既定である Turbopack のビルドでは `next analyze`（16.1+）を使う。Next.js 16.4+ では、Turbopack のモジュールグラフを使う agent skill `next-bundle-optimizer` で AI エージェントにインポート関係を調査・修正させることもできる（既定は報告のみ、`fix` で適用）。`@next/bundle-analyzer` は Webpack プラグインなので、`next build --webpack` でビルドする場合（と v15 以前の Webpack ビルド）に限って使う。
 
 **根拠**:
 - バンドルサイズの問題は可視化しなければ発見が困難
 - 特定のライブラリ（moment.js、lodash など）が不必要に大きいことがある
 - tree-shaking が効かない形でインポートしているケースを発見できる
+- `next analyze` は実行した分析のスナップショットを自動保存し、差分で最適化の効果や機能追加・依存更新後のバンドル増加を測れる。`lazy(() => import(...))` で遅延化したつもりでも、同じバンドル内の別モジュールが静的 import していれば初期ロードに残る（Next.js 16.4 公式ブログ）
 - Turbopack は Webpack プラグインに対応しないため、Turbopack のビルドに `@next/bundle-analyzer` を組み込んでもレポートは出ない
 
 **コード例**:
@@ -130,9 +131,12 @@ const formatted = dayjs(date).format('YYYY-MM-DD');
 - [Next.js Docs: Optimizing package bundling](https://nextjs.org/docs/app/guides/package-bundling) (Next.js公式、Turbopack 用の `next analyze` と Webpack 用の `@next/bundle-analyzer`) ※2026-10-25 確認
 - [Next.js Docs: Turbopack](https://nextjs.org/docs/app/api-reference/turbopack) (Next.js公式、"Turbopack does not support webpack plugins."、`--webpack` フラグ) ※2026-10-25 確認
 
-**バージョン**: Next.js 16.1+（`next analyze`）。Webpack ビルドの `@next/bundle-analyzer` は 13+（`next.config.ts` は 15+）
+- [Ship less JavaScript in Next.js with your AI agent](https://nextjs.org/blog/ship-less-javascript-with-ai) (Next.js 公式ブログ、16.4 の `next-bundle-optimizer` skill・スナップショット比較・遅延化が静的 import で無効になる例)
+  > "However, if any other module in the same bundle statically imports ./HeavyComponent, its code still loads upfront." (セクション "Bundle analysis, now for agents") ※2026-10-28 fetch
+
+**バージョン**: Next.js 16.1+（`next analyze`）、16.4+（`next-bundle-optimizer` skill・スナップショット比較）。Webpack ビルドの `@next/bundle-analyzer` は 13+（`next.config.ts` は 15+）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-10-28
 
 ---
 
