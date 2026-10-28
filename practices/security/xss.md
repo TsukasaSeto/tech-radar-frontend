@@ -540,3 +540,57 @@ function Field(untrusted) {
 **最終更新**: 2026-10-01
 
 ---
+
+---
+
+### 7. CSP の `require-trusted-types-for 'script'` で DOM XSS シンクへの生文字列代入をブラウザに拒否させる
+
+`dangerouslySetInnerHTML` や `innerHTML` に渡す HTML は Rule #1 のとおり DOMPurify でサニタイズするが、サニタイズ関数の呼び忘れまでは防げない。
+Trusted Types を CSP で強制（`require-trusted-types-for 'script'`）し、サニタイズを Trusted Types ポリシー内（`createHTML`）に集約すると、ポリシーを経由しない文字列の代入をブラウザ側で拒否できる。
+Trusted Types 自体はサニタイズ機能を持たない。`TrustedHTML` は「ポリシーを通った」ことしか示さないため、入力をそのまま返すポリシーを書かない。導入時は `Content-Security-Policy-Report-Only` で違反を洗い出してから強制に切り替える。
+
+**根拠**:
+- Trusted Types は、インジェクションシンクに渡す値が開発者の指定した変換関数を通ったことを保証する仕組みで、クライアントサイド（DOM-based）XSS の対策になる（MDN）
+- 変換関数を書くだけでは、シンクに文字列を直接渡すコードは止められない。CSP の `require-trusted-types-for` を併用して初めて「必ず型付きの値を渡す」ことを強制できる（MDN）
+- Zenn の記事は、Trusted Types は DOMPurify などによるサニタイズの代替ではなく、DOMPurify（`RETURN_TRUSTED_TYPE: true`）と組み合わせてサニタイズの強制だけを担わせる構成を示している（記事の主張。React 19.3 で `dangerouslySetInnerHTML` が `TrustedHTML` を直接受け取れるという記述は公式未確認のため採用していない）
+- MDN は Trusted Types を Baseline 2026（2026-02 以降、最新のブラウザで動作）と表示している。未対応の古いブラウザではポリシーが文字列を返すだけなので、ポリシー内のサニタイズは必ず実行される
+
+**コード例**:
+```ts
+// Good: サニタイズをポリシーに集約し、HTML シンクへはポリシー経由の値だけを渡す
+// Content-Security-Policy: require-trusted-types-for 'script'; trusted-types app-html
+import DOMPurify from 'dompurify';
+
+const policy = window.trustedTypes
+  ? window.trustedTypes.createPolicy('app-html', {
+      createHTML: (input: string) => DOMPurify.sanitize(input),
+    })
+  : { createHTML: (input: string) => DOMPurify.sanitize(input) };
+
+element.innerHTML = policy.createHTML(userInput) as string;
+
+// Bad: ポリシーを通さずに文字列を直接代入する（強制時は TypeError）
+element.innerHTML = userInput;
+
+// Bad: 入力をそのまま返すポリシー（TrustedHTML でもサニタイズされない）
+window.trustedTypes?.createPolicy('app-html', { createHTML: (input: string) => input });
+```
+
+**アンチパターン**:
+- `require-trusted-types-for` だけを設定し、ポリシーの中身（サニタイズ）を実装しない
+- Trusted Types の導入をもって `dangerouslySetInnerHTML` の利用基準（Rule #1）を緩める
+
+**出典引用**:
+> "In order to enforce that a trusted type must always be passed, you include the require-trusted-types-for directive in your CSP."
+> ([Trusted Types API](https://developer.mozilla.org/en-US/docs/Web/API/Trusted_Types_API), MDN, セクション "Using a CSP to enforce trusted types") ※2026-10-28に実際にfetch成功
+
+> "Trusted Types自体にサニタイズ機能はありません。"
+> ([ReactのHTML表示とDOM-based XSS対策：Trusted TypesとSanitizer API](https://zenn.dev/chot/articles/a383b983ac3ad6), Zenn, セクション "Trusted Types") ※2026-10-28に実際にfetch成功
+
+**出典**:
+- [Trusted Types API](https://developer.mozilla.org/en-US/docs/Web/API/Trusted_Types_API) (MDN) ※2026-10-28 fetch
+- [ReactのHTML表示とDOM-based XSS対策：Trusted TypesとSanitizer API](https://zenn.dev/chot/articles/a383b983ac3ad6) (Zenn、chot Inc. tech blog、補足出典) ※2026-10-28 fetch
+
+**バージョン**: Trusted Types は Baseline 2026（MDN 表記）
+**確信度**: 高
+**最終更新**: 2026-10-28
