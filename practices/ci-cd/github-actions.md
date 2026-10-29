@@ -1347,9 +1347,9 @@ runs:
 
 ---
 
-### 16. GitHub Actions の依存は workflow dependency lockfile（`actions.lock`）で固定し、CI で鮮度を検証する（public preview）
+### 16. GitHub Actions の依存は workflow dependency lockfile（`actions.lock`）で固定し、CI で鮮度を検証する（2026-10-28 GA）
 
-タグやブランチは後から動かせるため、同じ `uses:` 参照でも次回実行時に別コードを指しうる。GitHub が 2026-10-14 に public preview で公開した workflow dependency lockfile は、レビュー済みのコミットを `.github/workflows/actions.lock` に記録し、workflow ファイル側は通常の参照のまま実行時は記録済みコミットを使わせる。Rule #9 の SHA ピン留めを `uses:` ごとに手で書き換える代わりに、推移的依存（アクション内部の `uses:`）と呼び出す reusable workflow まで一括で固定できる（reusable workflow の中の依存は、その workflow を定義しているリポジトリの lockfile が固定する）。
+タグやブランチは後から動かせるため、同じ `uses:` 参照でも次回実行時に別コードを指しうる。GitHub が 2026-10-14 に public preview で公開し、2026-10-28 に一般提供（GA）とした workflow dependency lockfile は、レビュー済みのコミットを `.github/workflows/actions.lock` に記録し、workflow ファイル側は通常の参照のまま実行時は記録済みコミットを使わせる。Rule #9 の SHA ピン留めを `uses:` ごとに手で書き換える代わりに、推移的依存（アクション内部の `uses:`）と呼び出す reusable workflow まで一括で固定できる（reusable workflow の中の依存は、その workflow を定義しているリポジトリの lockfile が固定する）。
 
 **根拠**:
 - 公式 changelog: ロックは「依存が安全か」を判定しない。`Locking does not determine whether the dependency itself is safe, so review dependencies before locking them.` — ロック前のレビューが前提
@@ -1358,7 +1358,7 @@ runs:
 - Dependabot version updates は onboard 済み workflow の lockfile エントリを同じ PR で再生成する。ロック更新が人手の作業にならない
 - lockfile は「差分を読む人がいて初めてセキュリティ統制になる」。レビュー時は変更された `commit`、`owner_id` / `repo_id` の変化、新規の推移的 `uses:`、`workflows` セクションから消えた workflow を確認する
 - reusable workflow の呼び出しは lockfile に記録されるが、reusable workflow の中の依存は呼び出し側の lockfile の対象外で、定義しているリポジトリの lockfile が担う（公式）。共有 workflow を置くリポジトリから先に onboard する。なお第三者検証記事は、拡張 v0.2.0 で job レベルの reusable workflow 呼び出しが記録されなかったと報告しているため、生成された lockfile に呼び出しが入っているかを確認する
-- 制約（preview 時点）: 対象は GitHub Enterprise Cloud（データレジデンシー含む）/ Team / Free で、GHES は含まれない（公式 changelog）。コンテナイメージのタグがロックされない点は第三者検証記事による
+- 制約（GA 時点）: 対象は GitHub Enterprise Cloud（データレジデンシー含む）/ Team / Free で、GHES は含まれない（preview 時の公式 changelog。GA の changelog も同じプランを挙げている）。GA 後は Enterprise / organization / repository の管理者が「Require lockfile」ポリシーで導入を強制できる（公式 changelog）。コンテナイメージのタグがロックされない点は第三者検証記事による
 
 **コード例**:
 ```bash
@@ -1385,6 +1385,7 @@ dependencies:
 
 **アンチパターン**:
 - lockfile を生成しただけでレビューせずマージする（悪意ある更新を固定化しうる）
+- `@v7` や `@v7.0.1` のようなタグ参照のまま放置する（タグは force push で書き換えられうる。2026 年 3 月の `aquasecurity/trivy-action` への攻撃では、ほとんどのバージョンタグが書き換えられたと報告されている）
 - onboard していない workflow があるのに「SHA ピン留めは不要になった」と判断して Rule #9 を外す
 
 **出典引用**:
@@ -1394,13 +1395,18 @@ dependencies:
 > "A lockfile is only a security control if someone reads the diff."
 > ([What Are GitHub Actions Lockfiles, and Do They Replace SHA Pinning?](https://dev.to/alisa_hester_1/what-are-github-actions-lockfiles-and-do-they-replace-sha-pinning-3kg0), セクション "Verifying and reviewing changes") ※2026-10-24に実際にfetch成功
 
+> "Lockfiles help protect against unexpected dependency changes, but they don’t determine whether a dependency is safe. Review dependencies before locking them."
+> ([GitHub Actions workflow lockfiles are generally available](https://github.blog/changelog/2026-10-28-github-actions-workflow-lockfiles-are-generally-available/), GitHub Changelog 本文) ※2026-10-29に実際にfetch成功
+
 **出典**:
 - [GitHub Actions: Workflow lockfiles in public preview](https://github.blog/changelog/2026-10-14-github-actions-workflow-lockfiles-in-public-preview/) (GitHub Changelog 公式、機能概要・有効化手順・対象プラン) ※2026-10-24に実際にfetch成功
+- [GitHub Actions workflow lockfiles are generally available](https://github.blog/changelog/2026-10-28-github-actions-workflow-lockfiles-are-generally-available/) (GitHub Changelog 公式、2026-10-28 に GA。Require lockfile ポリシー・stale 検証・Dependabot 連携) ※2026-10-29に実際にfetch成功
+- [GitHub Actions で checkout@v7 のようなバージョン指定を書くのはやめよう！ 時代は actions.lock！](https://zenn.dev/progate/articles/24b1140180300c) (Zenn / Progate Tech Blog、タグ書き換え事例と、lockfile が内部アクションの依存まで固定できる点の解説) ※2026-10-29に実際にfetch成功
 - [What Are GitHub Actions Lockfiles, and Do They Replace SHA Pinning?](https://dev.to/alisa_hester_1/what-are-github-actions-lockfiles-and-do-they-replace-sha-pinning-3kg0) (dev.to、`--verify` 検証・レビュー観点・reusable workflow の制約を第三者検証) ※2026-10-24に実際にfetch成功
 - [Locking action dependencies in a repository's workflows](https://docs.github.com/en/actions/how-tos/secure-your-work/lock-workflow-dependencies) (GitHub Docs、onboard 済み workflow では Dependabot の version update が同じ PR で lockfile エントリを再生成する。workflow の onboard は Dependabot が代行しない。reusable workflow の依存は定義側のリポジトリの lockfile が担い、共有 workflow のリポジトリから先に onboard する) ※2026-10-25 確認
 - [Workflow dependency lockfiles](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles) (GitHub Docs、onboard 済み workflow は全依存が lockfile に必要。推移的依存と reusable workflow を固定し、reusable workflow の中の依存は定義側の lockfile。lockfile を導入したリポジトリでは workflow ファイル内の SHA ピン留めは不要) ※2026-10-25 確認
 - [Enforcing lockfiles for action dependencies](https://docs.github.com/en/actions/how-tos/administer/enforce-workflow-lockfiles) (GitHub Docs、PR で `gh actions-lock --verify` を実行し、lockfile が古いとエラーで終了するので必須チェックにできる) ※2026-10-25 確認
 
-**バージョン**: GitHub Actions workflow dependency lockfiles（public preview、2026-10-14〜）/ `gh-actions-lock` 拡張（pre-1.0）
-**確信度**: 高（機能、ロック前レビューの前提、SHA ピン留めとの関係、`--verify`、reusable workflow の扱い、Dependabot による再生成は GitHub 公式。コンテナイメージのタグと拡張 v0.2.0 の挙動は第三者検証記事のみ。preview 機能のため仕様変更の可能性あり）
-**最終更新**: 2026-10-25
+**バージョン**: GitHub Actions workflow dependency lockfiles（public preview 2026-10-14〜、GA 2026-10-28〜）/ `gh-actions-lock` 拡張（pre-1.0）
+**確信度**: 高（機能、ロック前レビューの前提、SHA ピン留めとの関係、`--verify`、reusable workflow の扱い、Dependabot による再生成は GitHub 公式。コンテナイメージのタグと拡張 v0.2.0 の挙動は第三者検証記事のみ。GA 済みだが拡張は pre-1.0 のため仕様変更の可能性あり）
+**最終更新**: 2026-10-29
