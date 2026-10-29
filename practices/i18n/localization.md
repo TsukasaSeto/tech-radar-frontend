@@ -489,3 +489,55 @@ containsLocaleAware('café', 'cafe', 'fr-FR');  // → true
 **バージョン**: 全モダンブラウザ
 **確信度**: 高
 **最終更新**: 2026-10-25
+
+---
+
+### 5. 「見た目通りの文字数」は `.length` やスプレッドではなく `Intl.Segmenter`（`granularity: "grapheme"`）で数える
+
+文字数制限・カウンター表示・切り詰め（truncate）で `String.prototype.length` を使うと、絵文字・結合文字・タイ語のような文字体系で見た目とずれる。人が「1 文字」と認識する単位（書記素クラスタ）で数える・分割するには `Intl.Segmenter` に `granularity: "grapheme"` を指定する。`Intl.Segmenter` は Baseline の Widely available で、ポリフィルなしで使える。
+
+**根拠**:
+- `.length` は UTF-16 コード単位の数を返す。`"👨‍👩‍👧‍👦".length` は 11、`"🇯🇵".length` は 4、`"e\u0301".length` は 2 になり、いずれも見た目は 1 文字（記事の検証結果）
+- `[...str].length`（コードポイント単位）はサロゲートペアしか解決しない。結合文字や ZWJ で連結した絵文字は複数のコードポイントなので、`[..."👨‍👩‍👧‍👦"].length` は 7 のまま（記事の検証結果）
+- `Intl.Segmenter` は grapheme / word / sentence の粒度で locale-sensitive に分割できる（MDN）。`segment()` の各要素は `{ segment, index, input }` で、文字数以外に「N 文字目で安全に切る」用途にも使える（記事）
+- TypeScript では `tsconfig.json` の `lib` が `es2021` 以前だと `Intl.Segmenter` の型定義が含まれず型エラーになる、と記事が報告している。`es2022` 以降の `lib`（または `ES2022.Intl`）を指定する
+- 注意: 書記素の分割結果は実行環境の Unicode / ICU のバージョンに依存しうるため、サーバー側の文字数上限検証と完全一致させたい場合は、同じ環境（Node.js 等）で同じ方法で数える
+
+**コード例**:
+```ts
+// Good: 書記素クラスタ単位で数える（Segmenter は再利用する）
+const graphemeSegmenter = new Intl.Segmenter('ja', { granularity: 'grapheme' });
+
+export function countGraphemes(text: string): number {
+  let count = 0;
+  for (const _ of graphemeSegmenter.segment(text)) count++;
+  return count;
+}
+
+countGraphemes('😀e\u0301あいう'); // 5
+countGraphemes('👨‍👩‍👧‍👦');         // 1
+countGraphemes('🇯🇵');              // 1
+
+// Bad: コード単位・コードポイント単位で数える
+'👨‍👩‍👧‍👦'.length;        // 11（UTF-16 コード単位）
+[...'👨‍👩‍👧‍👦'].length;   // 7（ZWJ 連結は解決できない）
+```
+
+**アンチパターン**:
+- 文字数カウンターや `maxLength` 相当のバリデーションを `.length` だけで実装する
+- 「スプレッド構文で絵文字は数えられる」と判断して合成文字・ZWJ 絵文字を検証しない
+
+**出典引用**:
+> "Intl.Segmenterは、文字列を「書記素クラスタ（grapheme cluster）」単位に分割するためのAPIです。"
+> ([Intl.Segmenterで見た目通りの文字数を正確にカウントする](https://zenn.dev/ushi_osushi/articles/intl-segmenter-grapheme-count), Zenn、セクション "Intl.Segmenterで正確にカウント") ※2026-10-29に実際にfetch成功
+
+> "The Intl.Segmenter object enables locale-sensitive text segmentation, enabling you to get meaningful items (graphemes, words or sentences) from a string."
+> ([Intl.Segmenter - JavaScript | MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/Segmenter), 冒頭の概要) ※2026-10-29に実際にfetch成功
+
+**出典**:
+- [Intl.Segmenter - JavaScript | MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/Segmenter) (MDN、API の定義と Baseline: Widely available) ※2026-10-29に実際にfetch成功
+- [Intl.Segmenterで見た目通りの文字数を正確にカウントする](https://zenn.dev/ushi_osushi/articles/intl-segmenter-grapheme-count) (Zenn、`.length` / スプレッドとの比較検証、TypeScript の `lib` 注意点) ※2026-10-29に実際にfetch成功
+
+**バージョン**: Baseline Widely available（全モダンブラウザ）、TypeScript は `lib: es2022` 以降
+**確信度**: 高（API と対応状況は MDN。`.length` の挙動の数値・`lib` の注意は個人記事の検証）
+**最終更新**: 2026-10-29

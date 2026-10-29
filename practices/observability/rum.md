@@ -373,6 +373,57 @@ observer.observe({ type: 'longtask' }); // LoAF に移行することを推奨
 
 ---
 
+### 6. SPA のルート遷移（soft navigation）の Web Vitals は、ブラウザが報告する遷移単位の LCP・CLS・INP で計測し、ページロードと分けて評価する
+
+ページロード単位の Web Vitals は「ユーザーが着地したページ」しか測れない。SPA ではその後の遷移（soft navigation）が閲覧の大半を占めるため、遷移ごとの LCP・CLS・INP を計測し、Sentry v11 などの計測ツールでは遷移種別（ページロード / soft navigation / bfcache 復元）で分けて評価する。
+
+**根拠**:
+- Chrome は soft navigation を「ユーザー操作で開始され、URL が目に見えて変わり、画面が描画される遷移」と定義している。この判定ヒューリスティクスは確定版ではなく、ブラウザごとに異なりうる（Sentry）
+- 遷移スパンの終了は「アプリがアイドルになった時点」で、ユーザーが新ルートを見られた時点とは一致しない。Sentry の例では、LCP は 0.65s、遷移スパンは 2.85s で終わっており、ルート単位の体感はスパン長では測れない
+- ページロードの CLS / INP は「ページを開いている間ずっと」を対象にするため、SPA では後から遷移した先のレイアウトシフトが着地ページのスコアに混ざる。soft navigation の Web Vitals を有効にすると、ページロードの Vitals は最初の soft navigation で確定し、以降は遷移先ルートに帰属する（Sentry）
+- 設定ページや決済の 2 ステップ目のように、クリックでしか到達しないページは、ページロード単位の Vitals にはほぼ載らない。Sentry の自社アプリでは、ページビューの約 62% が soft navigation（Sentry）
+- soft navigation は文書リクエストがなく JS が既に実行中のため、ページロードより速く出やすい。混在させると全体スコアが見かけ上改善する（Sentry の例: 全遷移の p75 LCP 2.48s に対し soft navigation のみで 1.17s）。両者は比較せず、ページロード用の good / poor 閾値を soft navigation に当てはめない
+- 既存のダッシュボード・アラートは遷移種別（Sentry では `browser.navigation.type` 属性。soft navigation は `soft-navigation`、bfcache 復元は `back-forward-cache`）で絞り込む。ページロードのアラートを維持するには、この 2 値を除外する
+- 制約: Chromium 151 以降のみが soft navigation を報告する（記事執筆時点）。結果はその割合のユーザーを表し、ブラウザの判定はルーターの遷移と一致しない（Sentry の自社アプリでは Chrome のルート変更の約 4 分の 3 が該当）
+
+**コード例**:
+```ts
+// Good: Sentry JavaScript SDK v11。browserTracingIntegration で soft navigation の LCP / CLS / INP が既定で有効
+import * as Sentry from '@sentry/browser';
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+  tracesSampleRate: 1.0, // 本番では Rule #2 のサンプリング戦略に従う
+  integrations: [Sentry.browserTracingIntegration()],
+});
+
+// ページ全体の寿命で 1 組の Vitals に戻したい場合のみ、soft navigation を無効化する
+// integrations: [Sentry.browserTracingIntegration(), Sentry.webVitalsIntegration({ softNavigations: false })]
+
+// Bad: soft navigation を含む全遷移を 1 つの p75 にまとめて、ページロード用の閾値で評価する
+// （遷移種別で絞り込まないダッシュボード / アラート）
+```
+
+**アンチパターン**:
+- SPA のルート遷移の速さを「遷移スパンの長さ」だけで判断する（アプリがアイドルになった時点で終わるため、ユーザーが見えた時点とずれる）
+- v11 へ上げた後に全体スコアが改善した理由を調べず、成果として報告する（遷移種別の構成が変わっただけの可能性がある）
+
+**出典引用**:
+> "Chrome now reports web vitals for soft navigations, and JavaScript SDKs v11 capture Largest Contentful Paint (LCP), Cumulative Layout Shift (CLS), and Interaction to Next Paint (INP) for each one."
+> ([Measuring soft navigation web vitals](https://blog.sentry.io/measuring-soft-navigation-web-vitals/), Sentry Blog、セクション "TL;DR") ※2026-10-29に実際にfetch成功
+
+> "Soft navigations are Chromium-only for now, and the heuristics for what counts as one may still change."
+> ([Measuring soft navigation web vitals](https://blog.sentry.io/measuring-soft-navigation-web-vitals/), Sentry Blog、セクション "Measuring the whole journey") ※2026-10-29に実際にfetch成功
+
+**出典**:
+- [Measuring soft navigation web vitals](https://blog.sentry.io/measuring-soft-navigation-web-vitals/) (Sentry Blog、Sentry SDK v11 の soft navigation Web Vitals) ※2026-10-29に実際にfetch成功
+
+**バージョン**: Sentry JavaScript SDK v11+（`browserTracingIntegration`）、soft navigation の報告は Chromium 151+
+**確信度**: 高（Sentry SDK の挙動は提供元である Sentry の公式ブログ。soft navigation のブラウザ仕様は発展途上のため変更の可能性あり）
+**最終更新**: 2026-10-29
+
+---
+
 ## 関連プラクティス
 
 - [`performance/core-web-vitals.md`](../performance/core-web-vitals.md) - LCP・INP・CLS の最適化手法
