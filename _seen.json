@@ -5022,5 +5022,7 @@
   "https://zenn.dev/aishift/articles/aaf1293baffb9b",
   "https://zenn.dev/nyaomaru/articles/typescript-runtime-validation-comparison",
   "https://zenn.dev/ushi_osushi/articles/intl-segmenter-grapheme-count",
-  "https://zenn.dev/aldagram_tech/articles/c49627d2b063b8"
+  "https://zenn.dev/aldagram_tech/articles/c49627d2b063b8",
+  "https://vercel.com/blog/simplifying-runtime-caching-on-vercel",
+  "https://vercel.com/changelog/data-cache-is-moving-to-runtime-cache"
 ]
