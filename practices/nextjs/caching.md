@@ -13,6 +13,7 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 **根拠**:
 - 各キャッシュ層は独立しており、適切な層を無効化しないと古いデータが表示される
 - デフォルトが変わったバージョン（13→15）があるため明示的な指定が安全
+- **Vercel にデプロイする場合、Data Cache は Runtime Cache に移行する（2026-10-30 告知）**: `fetch` キャッシュと `unstable_cache` はコード変更なしで Runtime Cache に切り替わる。リージョンごとに独立したキャッシュで、ミス時に他リージョンは参照されない。移行後はこれまで無課金だった Data Cache の読み書きが Runtime Cache 料金で課金されるため、移行前に Observability で読み書き量を確認し、不要な読み書きを減らす
 - **開発モードでの検証は Data Cache の挙動を隠す**: `fetch` リクエストに `cache-control: no-cache` ヘッダーが付く場合（開発モードのハードリロード等）、`options.cache` / `options.next.revalidate` / `options.next.tags` は無視される。そのためローカル開発では「DB更新後すぐ最新が表示される」ように見えても、本番相当の環境では Data Cache が効いたまま古いデータが表示され続けるバグに気づけない
 
 **コード例**:
@@ -26,13 +27,21 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 **出典**:
 - [Next.js Docs: Caching Overview](https://nextjs.org/docs/app/building-your-application/caching) (Next.js公式)
 - [Next.js App Router で DB を更新しても表示データが古いまま — 原因はサーバー側の Data Cache だった](https://zenn.dev/miyuyu/articles/nextjs-data-cache-not-updated) (Zenn yuyami-ya、開発モードで `no-cache` ヘッダーが付くと cache オプションが無視され本番との挙動差でバグを見逃す原因を解説) ※2026-07-08に実際にfetch成功
+- [Data Cache is moving to Runtime Cache](https://vercel.com/changelog/data-cache-is-moving-to-runtime-cache) (Vercel Changelog、移行時期・課金変更) ※2026-10-30に実際にfetch成功
+- [Simplifying runtime caching on Vercel](https://vercel.com/blog/simplifying-runtime-caching-on-vercel) (Vercel Blog、リージョン別キャッシュとタグ無効化の仕組み) ※2026-10-30に実際にfetch成功
+
+> "Next.js fetch caching and unstable_cache will switch over on every version without code changes."
+> ([Data Cache is moving to Runtime Cache](https://vercel.com/changelog/data-cache-is-moving-to-runtime-cache), 冒頭) ※2026-10-30に実際にfetch成功
+
+> "Each region has its own cache."
+> ([Simplifying runtime caching on Vercel](https://vercel.com/blog/simplifying-runtime-caching-on-vercel), セクション "How Runtime Cache works") ※2026-10-30に実際にfetch成功
 
 > "開発モードでは、`fetch` リクエストに `cache-control: no-cache` ヘッダーが含まれる場合、`options.cache` / `options.next.revalidate` / `options.next.tags` は無視されます"
 > ([Next.js App Router で DB を更新しても表示データが古いまま](https://zenn.dev/miyuyu/articles/nextjs-data-cache-not-updated), セクション "なぜローカルでは最新が出たのか") ※2026-07-08に実際にfetch成功
 
 **バージョン**: Next.js 14+
 **確信度**: 高
-**最終更新**: 2026-07-08
+**最終更新**: 2026-10-30
 
 ---
 
