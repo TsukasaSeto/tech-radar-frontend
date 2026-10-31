@@ -18,6 +18,7 @@ App Router ではアプリ側が `createRoot` を呼ばないので、React 19 �
 - ウィザード（`npx @sentry/wizard@latest -i nextjs`）が `instrumentation.ts` と `app/global-error.tsx` を自動生成する
 - `onRequestError = Sentry.captureRequestError` で Server Components・middleware / proxy のエラーを捕捉できる（`@sentry/nextjs` 8.28.0+、Next.js 15+）
 - Source Map が自動アップロードされ、本番でも可読なスタックトレースが得られる
+- `output: "standalone"` の Docker イメージでは、`.next/standalone` に `instrumentation.js` が含まれず `register()` が走らないため、サーバー側の Sentry が一度も初期化されなかった事例が報告されている（Next.js 16.4.2 + Turbopack + `@sentry/nextjs` 10.76.2 での 1 件の観測で、上流の既知問題かは未確認）。`captureException` はイベント ID を返しても送信されず、`Sentry.flush()` が `false` を返す。導入後と大きなアップグレード後は、server / edge / browser の各ランタイムからテストエラーを送り、本番と同じ起動方法（standalone なら `.next/standalone/server.js`）で `flush()` の戻り値と Sentry 側の到着を確認する
 - `withSentryConfig` が `next.config.ts` をラップし、ビルド時に設定が適用される（v11 では `@sentry/nextjs/config` から import する。v10 以前は `@sentry/nextjs`）
 - `Sentry.setUser()` / `Sentry.setTag()` でユーザーコンテキストを付与すると、イベントを個人レベルでフィルタ・検索できる
 - React 19 の `onUncaughtError` は「レンダリング中に投げられ Error Boundary で捕捉されなかったエラー」、`onCaughtError` は「Error Boundary が捕捉したエラー」、`onRecoverableError` は「React が自動回復したエラー（ハイドレーションミスマッチ等）」が対象。イベントハンドラや `setTimeout` などの非同期コードの例外は Error Boundary も root オプションも経由しないので、グローバルハンドラで拾う。root オプションで Sentry にブリッジできるのは、自前で `createRoot` を呼ぶ SPA（Vite など）の場合に限る
@@ -113,10 +114,13 @@ export default function GlobalError({
 - [React: Component（Error Boundary が捕捉しないエラー）](https://react.dev/reference/react/Component) (React 公式、イベントハンドラ・非同期コードは対象外) ※2026-10-25 確認
 - [getsentry/sentry-javascript packages/nextjs README](https://raw.githubusercontent.com/getsentry/sentry-javascript/develop/packages/nextjs/README.md) (Sentry 公式 develop ブランチ、React 19 の `createRoot` エラーハンドラ統合パターン) ※2026-05-06 fetch
 - [React × Sentry でエラーを逃さない実践パターン](https://zenn.dev/levi/articles/4ace7342e2f77f) (Zenn levi) ※2026-05-06 fetch
+- [Sentry never ran on my Next.js server, and the dashboard looked fine](https://dev.to/asermu/sentry-never-ran-on-my-nextjs-server-and-the-dashboard-looked-fine-1gpa) (dev.to asermu、standalone 出力で `instrumentation.js` が欠落し server Sentry が未初期化。単一の個人記事のため補足根拠) ※2026-10-31 fetch
+  > "Check Sentry.flush()'s return value in a test route. An event id alone proves nothing."
+  > (同記事、末尾 "What I'd tell past me")
 
 **バージョン**: @sentry/nextjs 8.28+（v11 基準）, Next.js 15+（`onRequestError`。v11 の最小対応は Next.js 14）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-10-31
 
 ---
 

@@ -193,6 +193,7 @@ test('商品を検索して詳細を開く', async ({ searchAction }) => {
 - 前のテストが失敗したとき、後続テストが誤った状態でスタートして偽陰性になる
 - テストの独立性は再実行可能性（Idempotency）を保証する
 - サーバー側の状態（カートなど）を書き換えるテストで全テストが 1 つの storageState（同じアカウント）を共有すると、並列実行したテスト同士が互いのカートを消し合ってフレーキーになる。Playwright 公式は、サーバー側の状態を変えるテストにはワーカーごとに別アカウントで認証する方法を推奨している（状態を変えないテストは 1 アカウントの共有でよい）
+- ローカルで E2E を走らせるときも、開発サーバーが `.env.local` の本番 Supabase `SERVICE_ROLE_KEY` を読んでいると、テスト経由の insert が RLS を迂回して本番テーブルに届く、と報告されている。E2E 用の `webServer` は本番キーを含まない専用の環境変数ファイル（ローカル DB など）で起動し、テスト作成データには `[TEST]` のような識別プレフィックスを付けて `globalTeardown` で削除できるようにする
 
 **コード例**:
 ```ts
@@ -260,10 +261,13 @@ test('商品をカートに追加して購入できる', async ({ page }) => {
 **出典**:
 - [Playwright Docs: Test Isolation](https://playwright.dev/docs/test-isolation) (Playwright公式)
 - [Playwright Docs: Authentication](https://playwright.dev/docs/auth) (Playwright公式、"Moderate: one account per parallel worker" — "This is the recommended approach for tests that modify server-side state.") ※2026-10-25 確認
+- [ローカル Playwright テストが本番 Supabase DB に書き込む罠](https://zenn.dev/joemike/articles/supabase-playwright-test-data-pollution-2026) (Zenn joemike、E2E の接続先 DB 隔離と `[TEST]` プレフィックス。単一の個人記事のため補足根拠) ※2026-10-31 fetch
+  > ".env.local に本番 SERVICE_ROLE_KEY が入ったままローカル Playwright テストを走らせると、本番テーブルに直接 insert されます。"
+  > (同記事、冒頭「結論：この3つを確認する」)
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-10-31
 
 ---
 
