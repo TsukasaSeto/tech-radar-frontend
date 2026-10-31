@@ -14,6 +14,7 @@
 - 1 ファイルで全ジョブを管理すると node セットアップ・cache キーなどの共通化が容易
 - ジョブを分けるとジョブ数だけ checkout と依存インストールが重複し、課金も 1 分未満切り上げでジョブごとに積み上がる（Rule #12）
 - ジョブ間の依存（`needs:`）で並列化と直列化を制御できる
+- テストコマンドを `python3 scripts/test_sample.py || true` のように書き換えると、テストが落ちても右側の `true` が成功してステップが緑になり、失敗が CI に届かない、と報告されている。`ci.yml` の `test` / `typecheck` / `lint` ステップには `|| true` や `continue-on-error: true` を付けず、ゲートとして残したいステップは意図せず緑にならないかをレビューで確認する
 - failed run の調査も 1 ファイル内なら追いやすい
 
 **標準テンプレート**（pnpm + Node セットアップは Composite Action に切り出して共通化する）:
@@ -85,10 +86,13 @@ jobs:
 - [GitHub Actions: Workflow syntax](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions) (GitHub Docs)
 - [GitHub: Composite actions](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action) (GitHub Docs)
 - [pnpm/setup](https://github.com/pnpm/setup) (pnpm 公式、v3 は pnpm v11+ 専用。`cache` / `install` / `node-version-file` 入力。pnpm 10 以前は `pnpm/action-setup` を使う) ※2026-10-25 確認
+- [CIに載っているテストが、落ちても緑だった](https://zenn.dev/miyakona/articles/ci-tests-failure-propagation) (Zenn miyakona、`|| true` / `continue-on-error: true` で失敗が CI に届かなくなる例。単一の個人記事のため補足根拠) ※2026-10-31 fetch
+  > "テストは走ります。ただ、落ちても右側のtrueが成功するため、ステップは緑です。"
+  > (同記事、冒頭の `python3 scripts/test_sample.py || true` の例)
 
 **バージョン**: GitHub Actions（例は Node 24、pnpm 11、actions/checkout v7 / actions/setup-node v7 / pnpm/setup v3）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-10-31
 
 ---
 
