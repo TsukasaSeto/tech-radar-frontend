@@ -203,6 +203,7 @@ DAL の戻り値は必ず DTO（Data Transfer Object）に整形し、公開し�
 - DTO 境界を明示することで、DB スキーマ変更時に Client への影響を DAL 内で吸収できる
 - 「DAL は DTO を返す」というルールがあると、Server Component → Client Component に渡す props の型設計が自然に整う
 - RSC Payload の肥大化抑制にもなる（不要フィールドを落とす）
+- Client Component に渡した props は HTML 内の RSC ペイロード（`self.__next_f.push(...)`）にそのまま載る。静的書き出し環境で、props に含めたスラッシュ無しの `path` 文字列を Google が拾い続けた事例が報告されている（描画側のリンク・canonical を整えても、渡したデータの中身は消えない）。渡すデータの形は読み込み口で一箇所にそろえる
 - OWASP の Next.js Security Cheat Sheet も同じ境界を明示的な原則として挙げている（後述の出典引用）
 
 **コード例**:
@@ -262,6 +263,9 @@ export const getUser = cache(async (id: string) => {
 > ([OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37), セクション "Control Data Crossing into the Browser") ※2026-08-31に実際にfetch成功
 
 **出典**:
+- [Next.js の静的書き出しで、Google がスラッシュ無しの URL を拾い続けた原因は RSC ペイロードの中の path だった](https://qiita.com/hiraokashi/items/4babf257f79a2d55b76f) (Qiita個人記事、props が RSC ペイロードとして HTML に入る点) ※2026-11-01に実際にfetch成功
+  > "App Router では、Server Component から Client Component に渡した props が、RSC ペイロードとしてそのまま HTML に入ります"
+  > (セクション "結論")
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、DTO による明示的なフィールド境界を「Control Data Crossing into the Browser」として原則化) ※2026-08-31に実際にfetch成功
 - [Next.js Docs: How to implement authentication — Using Data Transfer Objects](https://nextjs.org/docs/app/guides/authentication#using-data-transfer-objects-dto) (Next.js公式、必要なフィールドだけを返す DTO の推奨) ※2026-10-25 確認
@@ -270,7 +274,7 @@ export const getUser = cache(async (id: string) => {
 
 **バージョン**: Next.js 16+
 **確信度**: 高（Next.js 公式ガイドの DTO 推奨 + OWASP公式チートシート）
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-01
 
 ---
 

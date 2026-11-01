@@ -351,6 +351,7 @@ export default function DashboardPage() {
 **根拠**:
 - React の Error Boundary は render 中の例外のみキャッチし、イベントハンドラ内の例外はキャッチしない（別途処理が必要）
 - フォールバックなしでは画面が空白になりユーザー体験を著しく損なう
+- Error Boundary を置いていない SPA では、`lazy` import したルートのモジュールトップレベルで例外が出ると、レイアウトごとツリーが外れて画面全体が白くなると報告されている（zod 4.3 以降の `.pick()` が refine 済みスキーマで例外を投げた事例。型チェック・lint・ビルドは通っていた）。ルート単位の境界を置けば影響を該当画面に閉じ込められる
 - `react-error-boundary` の `onError` コールバックで Sentry 等への報告を一元化できる
 
 **コード例**:
@@ -417,10 +418,13 @@ export function AppErrorBoundary({ children }: { children: React.ReactNode }) {
 **出典**:
 - [react-error-boundary](https://github.com/bvaughn/react-error-boundary) (Brian Vaughn / GitHub)
 - [React Docs: Error Boundaries](https://react.dev/reference/react/Component#catching-rendering-errors-with-an-error-boundary) (React公式)
+- [zod 4.3 から、refine 済みスキーマの .pick() が例外を投げる](https://zenn.dev/kana001_bit/articles/zod-pick-refined-white-screen) (Zenn個人記事、境界なしで画面全体が白くなる事例) ※2026-11-01に実際にfetch成功
+  > "落ちたときにエラー表示ではなく真っ白になるのは、エラー境界（ErrorBoundary）をどこにも置いていなかったからです。"
+  > (セクション "画面全体が白くなった理由と、チェックを通っていた理由")
 
 **バージョン**: react-error-boundary 4+, React 18+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-01
 
 ---
 
