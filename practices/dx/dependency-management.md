@@ -183,6 +183,7 @@ CI が fail してから気づくより、ローカルの commit 時点で検知
 - すべて自動マージすると大規模 breaking change を見逃す
 - すべて手動レビューだと CI / レビュー疲労
 - 自動化と慎重さのバランスをポリシーで明文化する
+- 更新ボット自体が黙って止まることがある。Mend ホスト版 Renovate が OOM で強制終了され、エラー通知なしで 3 週間 PR が出なかった事例が報告されている。「一定日数ボットの PR が動かなければ issue を立てる」見張りの workflow を別に置くと停止に気づける（設定側でできるのは schedule の窓を広げて機会を増やす程度）
 
 **更新ポリシー**:
 更新タイプごとの自動マージの範囲（patch は公開から 7 日たった版を CI green で自動マージ、本番依存の minor と major は人がレビュー、セキュリティ修正は待機期間・スケジュールの外で即時 PR）と、Renovate / Dependabot の設定例は [`security/dependency-security.md`](../security/dependency-security.md) #2 を正本とする。ここでは range の決め方と、major 更新の進め方を扱う。
@@ -232,6 +233,9 @@ CI が fail してから気づくより、ローカルの commit 時点で検知
 > ([内定者インターンがUIライブラリを20バージョン分アップデートするまで](https://tech.smarthr.jp/entry/2026/07/10/103000), セクション "何度もやるうちに「うまくいく流れ」が見えてきた") ※2026-07-10に実際にfetch成功
 
 **出典**:
+- [Renovateが3週間PRを出していなかった。OOMで黙って止まるので、見張りを置いた](https://zenn.dev/playpark/articles/renovate-oom-schedule-watchdog) (Zenn個人記事、ボット停止の検知) ※2026-11-01に実際にfetch成功
+  > "止まったこと自体は防げないので、止まったら気づく仕組みを別に持つことにした。"
+  > (セクション "窓を広げても、再発は防げない")
 - [semver](https://semver.org/) (Semantic Versioning)
 - [Renovate Docs](https://docs.renovatebot.com/) (Mend)
 - [Renovate: Configuration Options](https://docs.renovatebot.com/configuration-options/) (Mend、`rangeStrategy` の `update-lockfile` / `in-range-only`) ※2026-10-25 確認
@@ -240,7 +244,7 @@ CI が fail してから気づくより、ローカルの commit 時点で検知
 
 **バージョン**: パターン
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-01
 
 ---
 
