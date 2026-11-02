@@ -307,6 +307,7 @@ const HeavyResultList = memo(function HeavyResultList({ query }: { query: string
 - eslint-plugin-react-hooks の Compiler 系ルール（`purity` / `refs` / `immutability` / `incompatible-library` など。単一の `react-compiler` ルールではなく個別ルールに分かれている）を Oxlint の JS プラグインとして読み込むと、コンパイラ非互換パターンをデプロイ前に静的検出できる
 - `"use no memo";` ディレクティブで非互換ファイルを明示的にオプトアウトでき、互換性の問題範囲を局所化できる
 - **Interior Mutability 問題**: TanStack Table など「参照は安定しているが内部状態を変更する」ライブラリのオブジェクトを子コンポーネントに props として渡すと、Compiler が参照変化を検出できず再レンダリングをスキップする。修正はオブジェクト自体を渡すのをやめ `table.getHeaderGroups()` のような**派生値（新しい参照が生まれる）を props に渡す**こと。`"use no memo"` はこの問題の根本解決にならない
+- 導入前の実装を Compiler の ON/OFF で比較する（テストを両設定で実行し差分を見る）と非互換箇所を見つけやすい。報告された事例では、React Hook Form の `register()` の戻り値（ref コールバック）が Compiler にメモ化され、`reset()` 後に終了アニメーション中の入力欄へ編集値が残った。検証環境は React 19.2.8 / babel-plugin-react-compiler 1.0.0 / React Hook Form 7.82.0 で、他の組み合わせへ一般化しない
 
 **コード例**:
 ```ts
@@ -385,12 +386,13 @@ export function Panel({ table }) {
 - [Oxlint: JS Plugins](https://oxc.rs/docs/guide/usage/linter/js-plugins.html) (Oxc公式、`jsPlugins` と `{ name, specifier }` の別名指定) ※2026-10-25 確認
 - [React Compiler 1.0 Is Here — And It Changes Everything You Know About Performance](https://medium.com/@Ardhendu_init_/react-compiler-1-0-is-here-and-it-changes-everything-you-know-about-performance-59a0f5554a36) (Medium、v1.0 stable と新規プロジェクト setup) ※2026-06-17 fetch
 - [React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79) (Medium kshahbaghi、Interior Mutability 問題・派生値を渡すパターン・TanStack Table / react-hook-form 事例) ※2026-06-23 fetch
+- [React Compiler 導入で画面が更新されなくなった話](https://developers.cyberagent.co.jp/blog/archives/67298/) (CyberAgent Developers Blog、ON/OFF 比較と React Hook Form 事例、単一記事) ※2026-11-02 fetch
 
 > "if a library returns a mutable object with a stable reference, do not pass that object as a prop to a child component"
 > ([React Compiler Broke Our Tables, And "use no memo" Is Not the Fix](https://medium.com/@kshahbaghi/react-compiler-broke-our-tables-and-use-no-memo-is-not-the-fix-f8d849f6eb79), セクション "Key Rule") ※2026-06-23に実際にfetch成功
 
 **バージョン**: React 19+, React Compiler 1.0 (stable), Oxlint 0.x
 **確信度**: 高（annotation モードでの段階導入は公式で確認）/ 実測値と Interior Mutability の事例は 中（各 1 記事）
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-02
 
 ---
