@@ -331,6 +331,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - 悪意あるパッケージ警告は「インストール後に検知して報告する」だけでは、危険なインストール経路そのものを止めたとは言えない。警告を受けたら CI を止めるだけでなく、`package.json` に安全なバージョン範囲（例: 問題の `3.0.0` を除外するなら `^3.0.1` のように下限を引き上げる。npm の semver range に `!=` 演算子はない）か安全な版の固定を明示し、以後同じ警告付きバージョンへ誤って戻れない「バイパス不能なゲート」に固定する
 - 個人のローカル開発環境でも、行動解析型スキャナーを `npm`/`pnpm` コマンド自体に shell alias でかぶせておくと「実行するたびに」検査が効く。指示や記憶に頼る運用（「怪しいパッケージは手動で確認する」）は忘れられるが、alias と pre-commit フックは忘れない
 - **自分が公開しているパッケージが乗っ取られた場合の対応は「消費者側」と手順が異なる**: 侵入経路（GitHub Actions の脆弱性等）を塞がないまま publish 権限や `latest` タグだけ戻しても、同じ経路から再度汚染される。deprecate は新規インストールの大半を防ぐが「解決策」ではなく、既存インストール済み環境には別途通知が必要
+- Vercel は 2026-11-02 から、ビルドで依存インストールの前（lockfile、ビルドキャッシュからの復元時も含む）と最中（該当する公開 npm のダウンロードをブロック）に、マルウェアや脆弱性を理由に選定した特定バージョンのブロックリストと照合する。全プランで設定不要。検知するとデプロイを失敗させ、パッケージとバージョンをエラーに表示し、汚染された可能性のあるビルドキャッシュの無効化を試みる。対応は依存を安全なバージョンへ更新し lockfile を更新して再デプロイする。ホスティング側のブロックリストは最終防衛線として働くが、チーム側の `--ignore-scripts` や lockfile 検査の代わりにはならない
 
 **個人開発環境でのエイリアス例**:
 ```bash
@@ -522,6 +523,7 @@ updates:
 - [Snyk: npm security best practices](https://snyk.io/blog/ten-npm-security-best-practices/) (Snyk Blog)
 - [pnpm: Settings - onlyBuiltDependencies](https://pnpm.io/package_json#pnpmonlybuiltdependencies) (pnpm Docs、v10 での許可リスト)
 - [pnpm: Build Settings](https://pnpm.io/settings/build) (pnpm 公式、`allowBuilds` は v10.26.0 で追加、`onlyBuiltDependencies` などは v11 で削除、`strictDepBuilds` 既定 true) ※2026-10-25 確認
+- [Blocking malicious npm packages before and during installation](https://vercel.com/changelog/blocking-malicious-npm-packages-before-and-during-installation) (Vercel Changelog、ビルド時のブロックリスト照合と失敗時の挙動) ※2026-11-02 fetch
 - [pnpm: Dependency Resolution Settings](https://pnpm.io/settings/dependency-resolution) (pnpm 公式、`minimumReleaseAge` は v10.16.0 で追加・既定は v11 から 1440／それ以前は 0、`minimumReleaseAgeExclude` のバージョン指定、`trustPolicy` は v10.21.0 で追加・既定 off、`blockExoticSubdeps` は v10.26.0 で追加) ※2026-10-25 確認
 - [pnpm: Settings](https://pnpm.io/settings) (pnpm 公式、「Only auth and registry settings are read from `.npmrc` files.」) ※2026-10-25 確認
 - [pnpm v10.0.0 release notes](https://github.com/pnpm/pnpm/releases/tag/v10.0.0) (pnpm 公式、依存の lifecycle script を既定で実行しない) ※2026-10-25 確認
@@ -624,7 +626,7 @@ npm view @scope/package@1.2.4 version
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-02
 
 ---
 
