@@ -835,3 +835,53 @@ export const ensureStatic = 'navigation';
 **最終更新**: 2026-10-06
 
 ---
+
+### 12. Cache Components では `use cache` 関数を `unstable_cache` 内から呼ばず、識別子（テナント・ユーザー）をバイナリ引数で渡さない — 16.4.5 / 15.5.29 へ更新する
+
+2026-11-03 の公式セキュリティリリースで、Cache Components が有効なアプリのキャッシュ境界を越えた漏えいが 3 件修正された。`unstable_cache` の内側と外側から同じ公開 `use cache` 関数を呼ぶ構成、ネストした `use cache` で内側が root parameter を読む構成、バイナリ引数でユーザーを区別する構成が該当する。修正版（v16.4.5 / v15.5.29）へ更新したうえで、テナント・ロケール・ユーザーをキャッシュ関数に渡す設計は下記の形に寄せる。
+
+**根拠**:
+- High（GHSA-mfr8-8qww-v76h）: 同じ公開 `use cache` 関数を直接呼び出しと `unstable_cache` 内の両方から呼ぶと、コールドなキャッシュ充填中に並行した `unstable_cache` 経由の呼び出しが、root parameter を確認されないまま別リクエストの結果を受け取り、保存・配信されうる。root parameter でテナントを分けている場合は他テナントのデータが含まれうる
+- Medium（GHSA-vc7v-qv4w-wrv8）: ネストした公開 `use cache` で、内側が root parameter を読みつつ早い値と遅い非同期値を返し、外側が遅い値を待たずに終わると、内側の root parameter 依存が記録される前に外側のエントリが保存され、テナント・サイト・ロケール固有の内容が別の値のリクエストへ配信されうる
+- Medium（GHSA-rhh4-g77r-r9qj）: 異なるバイナリ引数が同じキャッシュ識別になりうる。その引数でユーザーやアカウントを区別し、他の識別入力が一致すると、他ユーザーのキャッシュ結果を受け取る／自分の結果を他ユーザーに配信させることができる（無関係なキャッシュエントリへの任意アクセスではない）
+- 記事が示す影響条件は「Cache Components 有効」「root parameter／セキュリティ上重要な引数を扱う」。条件に当たらないアプリは影響を受けないが、修正版への更新自体は条件に関係なく行う（`middleware.md` Rule #5 の方針と同じ）
+
+**コード例**:
+```tsx
+// Good: ユーザー・テナントの識別子は文字列などのプリミティブで渡し、
+//       use cache 関数は unstable_cache でラップしない（どちらか一方に統一する）
+async function getTenantPosts(tenantId: string) {
+  'use cache'
+  cacheTag(`posts:${tenantId}`)
+  return db.posts.findMany({ where: { tenantId } })
+}
+
+// Bad: 同じ関数を直接呼びつつ、unstable_cache 内からも呼ぶ
+const viaLegacy = unstable_cache(async () => getTenantPosts(await currentTenant()), ['posts'])
+
+// Bad: ユーザーの識別を Uint8Array / Buffer 等のバイナリ引数に頼る
+async function getProfile(userKey: Uint8Array) {
+  'use cache'
+  return db.profile.find(userKey)
+}
+```
+
+**アンチパターン**:
+- 修正版へ更新せず、アプリが「条件に当たらないはず」と判断して放置する
+- マルチテナント構成で、移行途中の `unstable_cache` と `use cache` の併用を放置する（Rule #3 / #6 の移行は同じ関数を二重に包まない形で完了させる）
+
+**出典引用**:
+> "Applications with Cache Components enabled can disclose cached content across root-parameter values when the same public use cache function is called both directly and from inside unstable_cache."
+> ([November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release), セクション "Cross-tenant cache disclosure when combining unstable_cache and use cache (High Severity)") ※2026-11-03に実際にfetch成功
+
+> "Distinct binary arguments passed to a use cache function can produce the same cache identity."
+> ([November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release), セクション "Cross-user cache disclosure and poisoning through binary use cache arguments (Medium Severity)") ※2026-11-03に実際にfetch成功
+
+**出典**:
+- [November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release) (Next.js 公式ブログ、2026-11-03公開。修正版 v16.4.5 / v15.5.29) ※2026-11-03に実際にfetch成功
+
+**バージョン**: Next.js 16.4.5+ / 15.5.29+（Cache Components 有効時）
+**確信度**: 高（Next.js 公式ブログ）
+**最終更新**: 2026-11-03
+
+---

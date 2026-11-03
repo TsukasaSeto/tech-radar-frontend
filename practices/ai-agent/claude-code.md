@@ -4635,6 +4635,8 @@ Claude Code の hook は既定では「壊れても操作が通る」fail-open �
 - 実測（Claude Code 2.1.303）で、既定では「スクリプト欠落 / exit 1 / タイムアウト / `{"hookSpecificOutput": }` を出力して exit 0」の全てが素通りし、`onFailure: "block"` ではこれらが全て阻止された
 - stdout は `{` で始まり `}` で終わる単一 JSON のときだけ JSON として解釈される。`{"hookSpecificOutput": 1`（閉じ括弧なし）や平文は失敗ではなく plain text 扱いとなり、block 指定でも素通りする
 - 有効な allow JSON を出しても exit 1 なら失敗扱い（Node の未捕捉例外は exit 1）。exit 2 は `onFailure` に関係なく阻止され stderr が理由として表示される
+- 別環境（Claude Code 2.1.316 / Windows 11 / Git Bash）の検証でも、PreToolUse フックで操作を止めたのは exit 2 だけで、検査スクリプトが exit 1・exit 3・例外で落ちると 3 回中 3 回とも操作が実行された。`onFailure: "block"` を付けると exit 1・例外・ファイル名の打ち間違いのいずれでも 0 回（阻止）だった。「検査で見つかったら exit 1」と書いた秘密情報チェックが `git push` を止められなかった実例が報告されている
+- 判定スクリプトが分割モジュールの import に失敗すると、main() の try/catch に届く前に Python が exit 1 で終わる。「exit 1 だけ通し、他の非ゼロは拒否」でも、異常終了と正常な答えが同じ値になりうるため、判定スクリプトは正常に動けば常に exit 0 で `found` / `none` を出力し、フックは「exit 0 かつ `none`」のときだけ通す（通す条件を 1 つに絞る）設計が報告されている
 - `onFailure` は `command` / `http` hook のみ有効。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
 
 **コード例**:
@@ -4686,9 +4688,16 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 > "Requires Claude Code v2.1.295 or later."
 > ([Hooks reference](https://code.claude.com/docs/en/hooks), Claude Code 公式 docs, `onFailure` の項) ※2026-10-25 確認（routine-followup マージ時の追加）
 
-**バージョン**: Claude Code v2.1.295+（検証は 2.1.303 / Windows 11 / Git Bash）
-**確信度**: 中（単独ソースのパターン1c採用。検証環境は Windows のみ）
-**最終更新**: 2026-10-21
+> "Claude Code の PreToolUse フックで操作を止めるのは終了コード2だけです。"
+> ([exit 1でClaude Codeフックは止まるか33回試した](https://zenn.dev/ai_jarvis/articles/88ffbd67ebdec1), セクション冒頭（原因の説明）) ※2026-11-03に実際にfetch成功
+
+**出典**:
+- [exit 1でClaude Codeフックは止まるか33回試した](https://zenn.dev/ai_jarvis/articles/88ffbd67ebdec1) (Zenn、2.1.316 で exit 1 / 3 / 例外が素通りし、`onFailure: "block"` で阻止) ※2026-11-03 fetch
+- [「該当なし」と「判定器が落ちた」が同じ終了コード1だった](https://zenn.dev/itaraiguma/articles/deny-hook-exit-code-matcher-fail-open) (Zenn、判定結果を終了コードでなく出力に載せて fail-closed にする設計) ※2026-11-03 fetch
+
+**バージョン**: Claude Code v2.1.295+（検証は 2.1.303・2.1.316 / Windows 11 / Git Bash）
+**確信度**: 中（パターン1c採用。検証環境は Windows のみ。2 つの独立した検証で exit 1 の素通りを確認）
+**最終更新**: 2026-11-03
 
 ---
 
@@ -4746,5 +4755,49 @@ claude doctor | sed -n '/Invalid settings/,/^$/p'
 **バージョン**: Claude Code 2.1.x（2.1.293 / Windows 11 で実測。公式 docs は 2.1.302 時点）
 **確信度**: 高（公式 docs がスキップ挙動を明記。パターン1、検証記事は補足出典）
 **最終更新**: 2026-10-27
+
+---
+
+### 56. `claude -p --allowedTools` は使えるツールを絞らない — 外部文章を読ませる自動実行は `--tools` + `--strict-mcp-config` で在庫を決め、読み取り範囲も閉じる
+
+`--allowedTools` は「確認なしで実行してよいツール」の指定で、使えるツールの制限ではない。公式 CLI リファレンスも、利用可能なツールを制限するには `--tools` を使うよう書いている。`~/.claude/settings.json` の `permissions.allow` で Bash や Write を許可している環境では、`--allowedTools "Read,Grep,Glob"` を付けても何も指定しないのと同じ結果になり、Web ページや他人の投稿のような外部文章を読ませる `claude -p` がシェルを実行できてしまう。
+
+**根拠**:
+- 検証（Claude Code 2.1.296 / Windows 11、`stream-json` の tool_use / tool_result で判定）で、user settings に Bash・Write・MCP を許可した状態では、`--allowedTools "Read,Grep,Glob"` は指定なしと同じく whoami・作業フォルダ外への書き込み・Gmail コネクタ呼び出しがすべて通った
+- `--tools "Read,Grep,Glob"` でシェルと Write は消えるが、settings で許可した MCP と claude.ai コネクタは残った。`--strict-mcp-config` を足して MCP とコネクタが一覧から消えた
+- `--tools "Read,Grep,Glob" --strict-mcp-config` でも、settings が Read を丸ごと許可していると作業フォルダ外のファイルを読めた。`--restricted`（2.1.248 以降）または `permissions.blockReadsOutsideWorkingDirectories: true` で止まるが、作業フォルダがホームそのものだと `~/.ssh` を含むため、読ませるファイルだけがある狭いディレクトリを cwd にする
+- 許可の無い環境（CI や新規 PC）では `claude -p` が確認を出せず未許可の呼び出しが拒否されるため、`--allowedTools` で絞れているように見える。普段使いの PC で settings に許可を足すと効かなくなる
+- `--disallowedTools` は書き漏らしたツールが残る引き算の方式。`--tools` で在庫を決める足し算のほうが漏れにくい
+
+**コード例**:
+```bash
+# Bad: allow 済みの settings があれば Bash / Write / MCP も通る
+claude -p --allowedTools "Read,Grep,Glob" "$PROMPT"
+
+# Good: 在庫を決め、MCP を無効化し、外部文章の読み取りは狭い作業ディレクトリで実行する
+cd ./inbox-sandbox
+claude -p --tools "Read,Grep,Glob" --strict-mcp-config \
+  --settings '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}' "$PROMPT"
+```
+
+**アンチパターン**:
+- `--allowedTools` を「ツール制限」と解釈して、外部文章を読ませる自動実行に使う
+- 「許可なし」を再現するために `--setting-sources project` を使い、ホームが Git リポジトリのため `~/.claude/settings.json` が project 設定として読まれていることに気づかない
+- 作業フォルダにホームディレクトリを指定し、`--restricted` やブロック設定を付けたつもりになる
+
+**出典引用**:
+> "To restrict which tools are available, use --tools instead."
+> ([CLI reference](https://code.claude.com/docs/en/cli-reference), `--allowedTools` の項) ※2026-11-03に実際にfetch成功
+
+> "--allowedTools は道具を絞るフラグではなかった。公式のCLIリファレンスにもそう書いてある。"
+> ([claude -p の --allowedTools は道具を絞らない](https://zenn.dev/kentaro_tak/articles/claude-code-allowedtools-does-not-restrict), セクション冒頭) ※2026-11-03に実際にfetch成功
+
+**出典**:
+- [CLI reference](https://code.claude.com/docs/en/cli-reference) (Claude Code 公式 docs、`--allowedTools` の説明と `--tools` への誘導) ※2026-11-03に実際にfetch成功
+- [claude -p の --allowedTools は道具を絞らない](https://zenn.dev/kentaro_tak/articles/claude-code-allowedtools-does-not-restrict) (Zenn、10 通りの起動指定 × 2 種の settings での総当たり検証。公式照合は `--allowedTools` / `--tools` のみで、`--restricted`・`blockReadsOutsideWorkingDirectories` を含む組み合わせ結果は記事の報告) ※2026-11-03に実際にfetch成功
+
+**バージョン**: Claude Code 2.1.296 で検証（`--restricted` は 2.1.248+）
+**確信度**: 中（パターン1c。`--allowedTools` / `--tools` の区別は公式に記載、`--restricted` 等の組み合わせ結果は記事の検証のみ）
+**最終更新**: 2026-11-03
 
 ---
