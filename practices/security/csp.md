@@ -398,6 +398,7 @@ Content-Security-Policy:
 - 両所で CSP を書くと「`next.config.ts` の固定 CSP が proxy で生成した nonce 付き CSP を上書き／逆」のような順序事故が起きる。責務を分けると衝突しない
 - Next.js はレンダリング時にリクエストの `Content-Security-Policy` ヘッダを解析して nonce を取り出し、フレームワークのスクリプト・ページの JS バンドル・`nonce` prop 付きの `<Script>` に自動で付与する。リクエスト側に CSP を設定せず `x-nonce` だけを渡すと nonce が付かず、`'strict-dynamic'` 下では `'self'` も無視されるため全スクリプトがブロックされる
 - nonce を使うページは動的レンダリングが必須。ビルド時に生成される静的ページには nonce を注入できず、ISR や CDN キャッシュも使えない。Partial Prerendering（PPR）の静的シェルとも併用できない。静的化を保ちたい場合は #2 の hash ベース（`experimental.sri`）を検討する
+- ルートレイアウトで `(await headers()).get('x-nonce')` を読むと、その配下の全ページが動的描画になり、`revalidate` / `generateStaticParams` はエラーなしで無効化される。事後検知は本番レスポンスの `X-Vercel-Cache: MISS` とビルド結果の静的生成ルート数で行う。nonce を諦めて固定 CSP にする場合は `script-src` に `'unsafe-inline'` が必要になり XSS 防御が 1 段弱くなるため、ユーザー投稿 HTML を表示しないサイトに限り、判断理由をリポジトリに残して選ぶと報告されている
 - Next.js 16 の proxy.ts は Node.js ランタイムで動く（`runtime` の指定はエラーになる）ため、`Buffer` を使った nonce 生成をそのまま書ける
 
 **静的ヘッダ（next.config.ts）**: 設定例と値は `practices/nextjs/security-headers.md` #1 を参照。`Content-Security-Policy` はここに書かない。
@@ -466,9 +467,12 @@ export default async function Page() {
 - [Next.jsの考え方 / セキュリティヘッダ・CSP](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [Next.js Docs: Content Security Policy](https://nextjs.org/docs/app/guides/content-security-policy) (Next.js 公式、リクエストとレスポンスの両方への CSP 設定、"How nonces work in Next.js"、動的レンダリング必須と PPR 非互換) ※2026-10-25 確認
 - [Next.js Docs: proxy.js](https://nextjs.org/docs/app/api-reference/file-conventions/proxy) (Next.js 公式、"Setting the `runtime` config option in Proxy will throw an error.") ※2026-10-25 確認
+- [Next.jsのサイトが全ページ毎回サーバー描画になっていた原因は、CSPのnonceだった](https://zenn.dev/kabubase/articles/zenn-shikenavi-static-csp) (Zenn 個人記事、ルートレイアウトの `headers()` による全ページ動的化の事例) ※2026-11-05 fetch
+  > "そしてルートレイアウトでリクエストの値を読むと、その下の全ページが動的描画になります。"
+  > (セクション "原因：ルートレイアウトの headers()")
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+（v15 以前は `middleware.ts` / `export function middleware`）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-05
