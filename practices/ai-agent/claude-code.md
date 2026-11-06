@@ -794,6 +794,7 @@ JSON stdin → 処理 → exit コードというパイプラインを理解し�
 - **同じ PreToolUse パターンは「危険コマンド」以外の事故にも展開できる**: 削除コマンドの列挙＋`exit 2`だけでなく、実在しないスキル/ツール名の生成、ディレクトリ境界外アクセス、ブラウザプロファイルの誤認、セッション再開時のコンテキスト欠落など、75日間の運用で観測した複数の事故パターンに同じ「決定論的スクリプトで判定してブロック」の型を横展開できる
 - **`rm` だけを列挙したブロックは `cp` による無確認上書きを防げない**: `cp src dest` は既存の `dest` を確認なしで上書きする。削除系コマンドのパターンマッチだけを実装していると、ファイルの内容が破壊される事故（`.env` の意図しない上書き等）を見逃す。`permissions.deny` の列挙対象に `cp` 等の上書き系コマンドも含め、PreToolUse フックでも「実行後に元に戻せるか」を判定基準に加える
 - **`matcher` を単一ツール名だけに絞ると、別ツール経由の迂回が素通りする**: `matcher: "Bash"` だけのブロックフックは、`Write` ツールで同じファイル操作を行う迂回を防げない。迂回先のツールまで `matcher` に含める（実測と設計の詳細は `practices/ai-agent/claude-code.md` #12 を参照）
+- **`matcher: "Bash"` のフックは Monitor ツールが起動するシェルコマンドにも効くが、効くのは deny / ask だけ（v2.1.314+）**: 公式 hooks reference によると、PreToolUse / PermissionRequest の Bash matcher は Monitor コマンドにも一致する一方、その `allow` と `updatedInput` は Monitor に効かない。Monitor のコマンドを自動許可・書き換えしたい場合は `Bash|Monitor` や `.*` のような Monitor を含む matcher に切り替え、`if` には `Monitor(tail *)` と書く。Bash 用 deny フックはそのまま Monitor の迂回路も塞ぐが、Bash 用の自動承認フックは Monitor には作用しない。
 - **「ブロックして毎回聞く」以外に「操作の性質を可逆に変えてから自動許可する」という戦略もある**: 削除系コマンドを `permissions.ask` に置いたままだと安全だが、都度の承認判断が積み重なり「承認疲れ」で雑な `Yes` が増えるリスクがある。ファイル削除を OS のごみ箱（Windows なら `Microsoft.VisualBasic.FileIO.FileSystem` 等）に送るラッパースクリプトを `permissions.allow` に、素の `rm` / `Remove-Item` を `permissions.ask` に置くことで、「不可逆な操作だけ確認を求める」原則を保ったまま日常的な削除の承認回数を減らせる
 - **危険操作のブロックだけでなく、ノイズの多いプラグイン/Skill 呼び出しをゲートする用途にも同じ `PreToolUse` の型が使える**: `matcher: "Skill"` で特定 Skill の呼び出しをフックし、`permissionDecision: "ask"` ではなく `deny` を返しつつメッセージで Claude に `AskUserQuestion` の呼び出しを促すことで、実行を完全停止させずに軽量な確認フローを挟める。制御点を1箇所（フック側）に集約するのが要点
 - **`Bash("rm*")` の deny 文字列一致は `find <dir> -delete` や `rm -r -f` のような表記ゆれ・別コマンドですり抜ける**: 特定コマンド文字列の deny ルール／PreToolUse 正規表現は「列挙した分だけ」しか守れないという弱点が、削除コマンドでも再現する。`find` サブコマンドは `rm` の deny リストに引っかからず、`-delete` オプションで同等の破壊操作ができてしまう。根本対策は `.claude/settings.json` の `sandbox.filesystem.denyWrite` でディレクトリ単位の書き込みを OS レベルで拒否することで、コマンド名の列挙に依存しない防御にする（deny の文字列一致の限界は Rule #36）
@@ -1127,12 +1128,16 @@ exit 1
 
 **出典**:
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、入力は stdin の JSON・PostToolUse は「the tool already ran」で実行を止められない) ※2026-10-25 確認
+- [Hooks reference — Match Monitor commands](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、Bash matcher は Monitor コマンドにも一致するが allow / updatedInput は無効・v2.1.314+) ※2026-11-06 fetch
+  > "A hook that runs for a Monitor command can deny it or have Claude Code ask you about it."
+  > ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "Match Monitor commands")
+- [11/6 の公式ドキュメント更新：Monitor コマンドへのフック適用と環境変数の追加](https://qiita.com/akihidem/items/2ec5494898b9ce6d6766) (Qiita、公式更新の紹介記事・補足出典) ※2026-11-06 fetch
 - [githooks — pre-push](https://git-scm.com/docs/githooks#_pre_push) (Git 公式 docs、pre-push はリモート名と URL を引数で受け取る・`--no-verify` で pre-commit を飛ばせる) ※2026-10-25 確認
 - [gitleaks `.pre-commit-hooks.yaml`](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (gitleaks 公式、pre-commit フックの `entry` は `gitleaks git --pre-commit --redact --staged --verbose`。`git` サブコマンドは v8.19.0 以降で、`gitleaks git [flags] [repo]` の形でリポジトリのパスを渡せる) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-06
 
 ---
 
