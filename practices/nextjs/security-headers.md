@@ -86,3 +86,47 @@ curl -sSI https://example.com/not-found   # 404 ルートでもヘッダーが�
 **最終更新**: 2026-10-25
 
 ---
+
+### 2. `Referrer-Policy: no-referrer` はフォーム POST の `Origin` を `null` にし、Server Actions の CSRF チェックで 500 になる — Referer を絞りたいときは `strict-origin` を使う
+
+URL にトークンを載せる画面で Referer 漏えいを避けるために `Referrer-Policy: no-referrer` を付けると、フォーム送信のような CORS モードでない POST は `Origin` ヘッダーが `null` になる。Server Actions は `Origin` のホストと `x-forwarded-host` / `Host` を比較して不一致なら拒否するため、そのフォームが 500 で失敗する。パスやクエリを Referer に載せないことが目的なら `strict-origin`（オリジンのみ送る）で足りる。
+
+**根拠**:
+- MDN によると、`Origin` は GET / HEAD と cors モードのリクエストでは影響を受けず、フォーム送信など他のリクエストでは `no-referrer` のとき `null` になる。`fetch()` は既定が `mode: "cors"` なので同一オリジンの POST は本物の `Origin` を送り、`null` になるのは主にナビゲーション型のフォーム送信（記事の「GET と HEAD 以外は null」という説明は MDN と照合して cors モードを除く形に直している）
+- Next.js 公式は、Server Actions が CSRF 対策として `Origin` のホストとアプリ自身のホスト（`x-forwarded-host` / `host`）を比較し、異なれば Action を拒否すると説明している
+- 記事（Next.js 16.3.8 / Vercel）の症状は 500 だが画面には「リンクが無効か期限切れです」と表示され、画面の文言とは無関係なヘッダー設定が原因だった。ログの `x-forwarded-host ... does not match origin header with value null` で特定している
+- `allowedOrigins` に `"null"` を足して通す回避は勧められない。記事は、古い Next.js に `null` Origin が CSRF チェックをすり抜ける報告（CVE-2026-27978）があり、修正版が `null` を明示許可しない限り拒否するのは正しい動作だと述べている（CVE 番号は記事の記述で、一次情報は未確認）
+- 再発防止として `next.config.ts` の `headers()` の値をテストで固定する（`no-referrer` になっていたら失敗させる）
+
+**コード例**:
+```ts
+// next.config.ts
+// Good: パス・クエリを Referer に載せず、Origin は本物が付く
+{ key: "Referrer-Policy", value: "strict-origin" },
+
+// Bad: フォーム POST の Origin が null になり、Server Actions が拒否する
+{ key: "Referrer-Policy", value: "no-referrer" },
+```
+
+**アンチパターン**:
+- トークン入りの確認画面に `no-referrer` を付け、Server Actions を使うフォームの動作確認をしない
+- Server Actions の拒否を `allowedOrigins: ["null"]` で黙らせる
+- `strict-origin` も https から http への遷移では `Origin` が `null` になる（MDN）。https のみの運用を前提にする
+
+**出典引用**:
+> "Because fetch() defaults to mode: \"cors\", a same-origin fetch() POST always sends its real Origin, even under Referrer-Policy: no-referrer."
+> ([Referrer-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy), セクション "Effect on the Origin header") ※2026-11-08に実際にfetch成功
+
+> "トークンがRefererに載らないことが目的なら、strict-origin で足ります。"
+> ([Referrer-Policy: no-referrer を付けたら、Next.jsのServer Actionsが500になった](https://zenn.dev/snape_works/articles/nextjs-no-referrer-origin-null), セクション "直し方:strict-origin にする") ※2026-11-08に実際にfetch成功
+
+**出典**:
+- [Referrer-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Referrer-Policy) (MDN、`Origin` が `null` になる条件) ※2026-11-08に実際にfetch成功
+- [Next.js Docs: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions) (Next.js 公式、Server Actions の Origin / host 比較による CSRF 対策と `allowedOrigins`) ※2026-11-08に実際にfetch成功
+- [Referrer-Policy: no-referrer を付けたら、Next.jsのServer Actionsが500になった](https://zenn.dev/snape_works/articles/nextjs-no-referrer-origin-null) (Zenn snape_works、再現した症状・原因特定・`strict-origin` への修正) ※2026-11-08に実際にfetch成功
+
+**バージョン**: Next.js 16.3.8 で報告（Origin 比較は Server Actions の CSRF 対策として公式 docs に記載）
+**確信度**: 中（パターン1c。`Origin` の `null` 化条件と Server Actions の比較は MDN / Next.js 公式で確認済み。500 になる実機再現は 1 記事）
+**最終更新**: 2026-11-08
+
+---

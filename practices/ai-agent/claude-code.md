@@ -4806,3 +4806,51 @@ claude -p --tools "Read,Grep,Glob" --strict-mcp-config \
 **最終更新**: 2026-11-03
 
 ---
+
+### 57. 作業フォルダ外への書き込みは `permissions.blockWritesOutsideWorkingDirectories: true` で全権限モードにわたって止め、Bash・MCP・hooks は別層で制限する
+
+v2.1.314 で追加された `permissions.blockWritesOutsideWorkingDirectories` を `.claude/settings.json` に 1 行足すと、Write / Edit / NotebookEdit が作業フォルダ（起動フォルダと `/add-dir` 等で足したフォルダ）の外のパスを、`bypassPermissions` を含む全権限モードで拒否する。ただし制限されるのはファイル編集ツールだけで、シェルコマンド・MCP ツール・hooks が動かすプログラムは止まらない。シェルの書き込み先は sandbox で別途絞る。
+
+**根拠**:
+- 公式 docs は「Write / Edit / NotebookEdit が作業フォルダ外のパスを全権限モードで拒否する」と説明し、シェル・MCP・hooks は対象外で「書き込み先の制限には sandboxing を使う」としている
+- 記事の実測（Claude Code 2.1.319 / Windows 11、`claude -p`、条件ごと 1 回）では、外への Write は試した 4 モードすべてで同じ拒否文で止まり、Edit も default モードで止まった。一方 Bash の `echo` による外への書き込みは止まらなかった。対話画面（`-p` なし）では未測定
+- `allow` ルールで外を許していても鍵が優先され、通したいフォルダは `/add-dir` / `--add-dir` / user か managed の settings の `additionalDirectories` で作業フォルダに足す（記事の報告。`allow` で通せない点は記事の測定結果で、公式の個別記述は未確認）
+- Claude Code 自身の settings ファイルへの書き込みも止まるため、この設定は人間がエディタで書く。外すときは `true` を書いた settings ファイルすべてから削除して再起動する（`false` への書き換えだけでは他ファイルの `true` が残ると有効なまま。記事の報告）
+- 読み取り側には `permissions.blockReadsOutsideWorkingDirectories`（v2.1.257 以降）があり、書き込みと別に設定する
+
+**コード例**:
+```jsonc
+// Good: .claude/settings.json — ファイル編集ツールの書き込み範囲を作業フォルダ内に閉じる
+{
+  "permissions": {
+    "blockWritesOutsideWorkingDirectories": true
+  }
+}
+```
+```bash
+# Bad: この 1 行だけでシェル経由の書き込みも止まると思い込む（Bash の echo は外へ書ける）
+# Good: シェルの書き込み先は sandbox（/en/sandboxing）で別に制限する
+```
+
+**アンチパターン**:
+- `blockWritesOutsideWorkingDirectories` を入れたことで「外には一切書けない」と判断する（Bash / MCP / hooks は対象外）
+- `allow` ルールで外のパスを通そうとする。通したいフォルダは作業フォルダに追加する
+- v2.1.314 未満で設定キーだけ書き、効いている前提にする（記事の測定は 2.1.319）
+
+**出典引用**:
+> "The key doesn’t limit shell commands, MCP tools, or the programs hooks run, so use sandboxing to limit where shell commands write."
+> ([Permissions](https://code.claude.com/docs/en/permissions), セクション "Working directories" 配下の `permissions.blockWritesOutsideWorkingDirectories` の項) ※2026-11-08に実際にfetch成功
+
+> "Added permissions.blockWritesOutsideWorkingDirectories: Write, Edit and NotebookEdit refuse paths outside the working directories in every permission mode"
+> ([Claude Codeは作業フォルダの外を書き換える？ 新設定1行で、4つのモードとも Write は止まりました](https://zenn.dev/ojisan_ai_lab/articles/claude-code-block-writes-outside-20261108), セクション "公式に書いてあること"（v2.1.314 リリースノートの引用）) ※2026-11-08に実際にfetch成功
+
+**出典**:
+- [Permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、キーの挙動・対象ツール・シェル/MCP/hooks が対象外である点・v2.1.314 以降) ※2026-11-08に実際にfetch成功
+- [Settings reference](https://code.claude.com/docs/en/settings-reference) (Claude Code 公式 docs、設定キー一覧での説明) ※2026-11-08に実際にfetch成功
+- [Claude Codeは作業フォルダの外を書き換える？ 新設定1行で、4つのモードとも Write は止まりました](https://zenn.dev/ojisan_ai_lab/articles/claude-code-block-writes-outside-20261108) (Zenn ojisan_ai_lab、4 モードでの実測。公式照合済みはキーの存在と挙動の要約のみで、`allow` との関係・解除手順は記事の報告) ※2026-11-08に実際にfetch成功
+
+**バージョン**: Claude Code 2.1.314+
+**確信度**: 中（パターン1c。キーの挙動と対象外ツールは公式 docs で確認済み、モード別実測は 1 記事・1 台の結果）
+**最終更新**: 2026-11-08
+
+---
