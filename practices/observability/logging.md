@@ -15,6 +15,7 @@ Pino を使い、`redact` オプションで機密フィールドを自動マス
 - `redact` オプションはログオブジェクトの特定パスを自動的に `[REDACTED]` に置換する
 - Datadog・CloudWatch・Loki などのログサービスで構造化 JSON を検索・集計できる
 - `pino-pretty` は開発時のみ使用し、本番では JSON のまま出力する
+- 捕捉した例外オブジェクトを丸ごと `console.log(err)` / `JSON.stringify(err)` に渡さない。1 記事（Node.js 24 / axios で実機確認と報告、ダミー値）は、axios のエラーに送信ヘッダーを含む `config` が入っているため `Authorization: Bearer ...` がログに出たと報告している。`err.message` だけならキーは出なかったとされ、同記事の `redact` 設定は `JSON.stringify` には効いたが `console.log` には効かなかったと報告している。ロガーを通さない出力は `redact` の対象外なので、例外は `{ err: error }` 形式で Pino のシリアライザ経由で記録し、HTTP クライアントのエラーは出力するフィールドを選ぶ
 
 **コード例**:
 ```ts
@@ -100,10 +101,14 @@ export async function GET(request: Request) {
 - [Pino Docs: Redaction](https://getpino.io/#/docs/redaction) (Pino公式)
 - [Pino Docs: Child Logger](https://getpino.io/#/docs/child-loggers) (Pino公式)
 - [Pino Docs: API（`serializers` / `errorKey`）](https://getpino.io/#/docs/api) (Pino公式、既定のシリアライザは `{ err: pino.stdSerializers.err }`、`errorKey` の既定は `'err'`) ※2026-10-25 確認
+- [axios のエラーを console.log(err) すると API キーが丸見え](https://qiita.com/supportapp3/items/2c356f155beca1fbf153) (Qiita、axios エラーのログ出力でヘッダーのキーが出る実機検証。1 記事の報告で、バージョンは記事内の記載) ※2026-11-09 fetch
+
+> "err.message だけなら Request failed with status code 401 で、キーは出ませんでした。"
+> ([axios のエラーを console.log(err) すると API キーが丸見え](https://qiita.com/supportapp3/items/2c356f155beca1fbf153), セクション "結論") ※2026-11-09に実際にfetch成功
 
 **バージョン**: Pino 9+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-09
 
 ---
 
