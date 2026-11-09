@@ -449,12 +449,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 `loading.tsx` がルートに存在すると Next.js はページを Suspense でラップし、レスポンスヘッダー（HTTP 200）をストリーミング開始時点で送信する。
 その後のレンダリングフェーズで `notFound()` を呼んでも、**ヘッダーは既に送信済みのため HTTP 404 に変えられない**。
 SEO クローラー・BFF・監視ツールが HTTP ステータスコードに依存している場合に影響が出る。
+同じ理由で、`loading.tsx` 配下のページで認可失敗時に `redirect()` を呼んでも 307 + `Location` にはならず、ストリーム内の `<meta>` タグ経由のクライアント側リダイレクト（HTTP は 200）になる。ステータスコードで「弾けているか」を判定するテストは、境界の有無で結果が変わる。
 
 **根拠**:
 - 公式の `loading.js` リファレンスによると、ストリーミングするレスポンスは 200 で始まり、ストリームを開始した時点でレスポンスヘッダーが送られてステータスコードが確定する。`loading.tsx` のフォールバックが描画された時点、または `<Suspense>` 配下の Server Component が suspend した時点でストリームが始まる
 - それより前に `notFound()` / `forbidden()` / `unauthorized()` を呼べば、404 / 403 / 401 のステータスが保たれる
 - Next.js は `loading.tsx` の存在をもって Suspense 境界を自動挿入し、ローディング UI のチャンクを先行送信する
 - 親ディレクトリの `loading.tsx` も子ルートを Suspense でラップするため、直接配置した覚えがなくても発生する
+- `redirect()` も同じ制約を受ける。公式の `redirect` リファレンスは、ストリーミング文脈では「クライアント側でリダイレクトを出すための meta タグを挿入する」と述べている。1 記事（Next.js 14.2 / 15.x で確認と報告）は、`loading.tsx` を足すと認可テストが「307 + `Location`」から「200 + `http-equiv="refresh"`」に変わって落ちた事例を挙げ、画面で見ると遷移するため目視では気づけなかったと報告している。テストは 307 と「200 + meta refresh」の両方を許容し、200 のときは保護対象の内容が HTML に漏れていないことも検査する（Next.js 公式の実装ではなく同記事の対処）。`middleware`（Proxy）のリダイレクトは描画前に走るため 307 のまま
 - ストリーム中に 404 ページを返した場合、Next.js は `<meta name="robots" content="noindex">` を付けるので検索結果には載らない。ただしステータスは 200 のままなので、ステータスコードで判定する監視・分析・BFF には 404 として伝わらない
 
 **コード例**:
@@ -505,13 +507,19 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
 > "Starting the stream sends the response headers and fixes the status code."
 > ([Next.js Docs: loading.js](https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes), セクション "Status codes") ※2026-10-25 確認
 
+> "When used in a streaming context, this will insert a meta tag to emit the redirect on the client side."
+> ([Next.js Docs: redirect](https://nextjs.org/docs/app/api-reference/functions/redirect), 冒頭の説明) ※2026-11-09に実際にfetch成功
+
 **出典**:
 - [Next.js: loading.tsx があると notFound() が 200 を返すことがある（仕様です）](https://zenn.dev/av_shiritai/articles/66f9bcaa7df414) (Zenn、streaming + notFound() の挙動解説と3つの対策) ※2026-06-12に実際にfetch成功
 - [Next.js Docs: loading.js — Status codes](https://nextjs.org/docs/app/api-reference/file-conventions/loading#status-codes) (Next.js 公式、ストリーム開始でステータスが確定する点と、開始前に notFound() を呼べば 404 が保たれる点) ※2026-10-25 確認
 
+- [Next.js Docs: redirect](https://nextjs.org/docs/app/api-reference/functions/redirect) (Next.js 公式、ストリーミング文脈では meta タグでクライアント側にリダイレクトを出す) ※2026-11-09 fetch
+- [loading.tsx を足したら権限チェックのテストが落ちた — Next.js App Router のストリーミングと redirect の落とし穴](https://qiita.com/freefreefree1222/items/6d92e08c4ff979b06a22) (Qiita、`loading.tsx` 追加で認可テストが 307 → 200 + meta refresh に変わった事例と、307 / 200 + meta の両対応テスト。1 記事の報告) ※2026-11-09 fetch
+
 **バージョン**: Next.js 15+ (App Router)（コード例の `params` は Promise。v14 以前は同期オブジェクト）
 **確信度**: 高（公式ドキュメントで確認）
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-09
 
 ---
 

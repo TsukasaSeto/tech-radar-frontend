@@ -332,6 +332,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - 個人のローカル開発環境でも、行動解析型スキャナーを `npm`/`pnpm` コマンド自体に shell alias でかぶせておくと「実行するたびに」検査が効く。指示や記憶に頼る運用（「怪しいパッケージは手動で確認する」）は忘れられるが、alias と pre-commit フックは忘れない
 - **自分が公開しているパッケージが乗っ取られた場合の対応は「消費者側」と手順が異なる**: 侵入経路（GitHub Actions の脆弱性等）を塞がないまま publish 権限や `latest` タグだけ戻しても、同じ経路から再度汚染される。deprecate は新規インストールの大半を防ぐが「解決策」ではなく、既存インストール済み環境には別途通知が必要
 - Vercel は 2026-11-02 から、ビルドで依存インストールの前（lockfile、ビルドキャッシュからの復元時も含む）と最中（該当する公開 npm のダウンロードをブロック）に、マルウェアや脆弱性を理由に選定した特定バージョンのブロックリストと照合する。全プランで設定不要。検知するとデプロイを失敗させ、パッケージとバージョンをエラーに表示し、汚染された可能性のあるビルドキャッシュの無効化を試みる。対応は依存を安全なバージョンへ更新し lockfile を更新して再デプロイする。ホスティング側のブロックリストは最終防衛線として働くが、チーム側の `--ignore-scripts` や lockfile 検査の代わりにはならない
+- **面接課題・他人から渡されたプロジェクトは「自分で選んでいない依存」ではなく「プロジェクト自体」が攻撃面になる**: OWASP の NPM Security Cheat Sheet は、「事前課題」として未知の Node.js パッケージや GitHub リポジトリを実行させる手口に FBI が警告を出していると述べ、初回 install の前に ①認証情報・SSH 鍵・ウォレットの無い使い捨て VM（可能ならネットワーク制限付き）で扱う、②VS Code の Restricted Mode で開く、③`.npmrc` の `registry` と Yarn の `.yarnrc.yml`（`npmRegistryServer` / `yarnPath`）を確認する、④依存の git / tarball URL・`file:` を確認する、⑤`npm install --ignore-scripts` で入れる、を挙げる。ただし ⑤ は先送りにすぎず、`npm run` / `npm start` / `npm test` はスクリプトを実行し、アプリ本体が悪意を持つ場合もある。同シートは「VM が本当の対策で、以降の手順は VM 内で動くものを減らすだけ」としている
 
 **個人開発環境でのエイリアス例**:
 ```bash
@@ -623,10 +624,11 @@ npm deprecate "@scope/package@>=1.2.4 <=1.2.5" "SECURITY: malicious version, do 
 # 削除申請後の反映確認
 npm view @scope/package@1.2.4 version
 ```
+- [NPM Security Cheat Sheet — Inspecting a project you did not write](https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html) (OWASP Cheat Sheet Series、信頼できないプロジェクトを開く前の手順。npm の挙動の提供元ではなく、定評ある団体の解説) ※2026-11-09 fetch（GitHub raw の cheatsheets/NPM_Security_Cheat_Sheet.md を取得）
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-11-02
+**最終更新**: 2026-11-09
 
 ---
 
