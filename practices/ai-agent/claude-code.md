@@ -4854,3 +4854,53 @@ v2.1.314 で追加された `permissions.blockWritesOutsideWorkingDirectories` �
 **最終更新**: 2026-11-08
 
 ---
+
+### 58. サブエージェントの `permissionMode` はメイン会話が `bypassPermissions` / `acceptEdits` / auto mode のとき無視される — サブエージェント側で権限を絞るなら `tools` / `disallowedTools` で道具そのものを外す
+
+`.claude/agents/` のフロントマターに `permissionMode: default` や `plan` を書いても、メイン会話が `bypassPermissions`・`acceptEdits`・auto mode のいずれかであれば、サブエージェントはメイン会話と同じモードで動き、指定した値は使われない。メイン会話が `plan` なら（agent team の teammate を除き）サブエージェントは常に plan mode のまま。指定が効くのはメイン会話が `default` か `dontAsk` のときだけで、その場合も `bypassPermissions` の指定はメイン会話のモードに戻される。「この調査用サブエージェントは確認付きで動く」という前提を `permissionMode` だけに置かない。
+
+**根拠**:
+- 公式 docs（Subagents > Permission modes）は、メイン会話のモードが `permissionMode` を使うかどうかを決めると明記し、`bypassPermissions` / `acceptEdits` / auto mode では「同じモードで動き、指定は無視される」としている。未指定ならメイン会話のモードを継承する
+- auto mode 下では、サブエージェントのツール呼び出しもメイン会話の block / allow ルールで classifier が評価し、完了時には作業内容と最終報告もレビューされる（公式 docs）。サブエージェント固有の厳しさはモードではなくルールと道具の在庫で表現する必要がある
+- メイン会話が `default` / `dontAsk` でも、`bypassPermissions` を指定したサブエージェントはメイン会話のモードのまま動く（v2.1.267 以降の例外）。auto mode が使えない設定（`disableAutoMode` 等）で `auto` を指定した場合も同様にメイン会話のモードに戻る
+- `disallowedTools` は継承・指定されたツール一覧からツールを外す（指定子付きの `Bash(git push *)` でもツール全体が外れる）ため、モードに依存せず効く。ただし `tools` 側のサブコマンド指定は絞り込みとして効かない点は Rule #22 を参照
+- plugin で配布したサブエージェントでは `permissionMode` 自体が読み込まれない（公式 docs）。2026-11-10 の公式 docs 更新でこの継承条件の記述が追加されたと Qiita の差分記事が報告している
+
+**コード例**:
+```yaml
+# Bad: メイン会話が acceptEdits / auto / bypassPermissions だと permissionMode: plan は無視され、編集もできてしまう
+---
+name: repo-auditor
+description: リポジトリを読み取り専用で監査する
+permissionMode: plan
+---
+
+# Good: 道具の在庫で読み取り専用を担保する（どのモードでも効く）
+---
+name: repo-auditor
+description: リポジトリを読み取り専用で監査する
+tools: Read, Grep, Glob
+disallowedTools: Write, Edit, NotebookEdit, Bash
+---
+```
+
+**アンチパターン**:
+- 無人実行を `--permission-mode bypassPermissions` で回しつつ、危険な操作はサブエージェントの `permissionMode: default` で確認が出ると期待する
+- plugin 経由で配ったサブエージェントに `permissionMode` を書いて安全側に倒したつもりになる（plugin サブエージェントでは無視される）
+
+**出典引用**:
+> "the subagent runs in that same mode and Claude Code ignores the `permissionMode` you set"
+> ([Create custom subagents](https://code.claude.com/docs/en/sub-agents), セクション "Permission modes") ※2026-11-10に実際にfetch成功
+
+> "メイン会話が bypassPermissions、acceptEdits、auto mode のいずれかであるときは、サブエージェントも同じモードで動き、サブエージェント側に書いた permissionMode は無視されます。"
+> ([11/10 の公式ドキュメント更新：権限評価の順序と設定の適用条件](https://qiita.com/akihidem/items/ed65a86c571fb594f202), セクション "サブエージェントの permissionMode が無視される条件") ※2026-11-10に実際にfetch成功
+
+**出典**:
+- [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、メイン会話のモード別の `permissionMode` の扱い・`disallowedTools` の挙動・plugin サブエージェントでの無視) ※2026-11-10に実際にfetch成功
+- [11/10 の公式ドキュメント更新：権限評価の順序と設定の適用条件](https://qiita.com/akihidem/items/ed65a86c571fb594f202) (Qiita akihidem、公式 docs の追加文の差分整理) ※2026-11-10に実際にfetch成功
+
+**バージョン**: Claude Code（`bypassPermissions` 指定の例外は v2.1.267+）
+**確信度**: 高
+**最終更新**: 2026-11-10
+
+---

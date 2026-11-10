@@ -258,3 +258,75 @@ export function ReconnectingBanner() {
 **バージョン**: Next.js 16.3+（`experimental.useOffline`、本番非推奨）
 **確信度**: 高
 **最終更新**: 2026-10-25
+
+---
+
+### 6. Server Component / Route Handler で `fs` から読むファイルは `outputFileTracingIncludes` で明示し、ビルド後に `.nft.json` で含まれていることを確認する
+
+Next.js は `next build` 時に `import` / `require` / `fs` の使い方を静的解析し、各ルートの Serverless Function に含めるファイルを決める（Output File Tracing）。パスを変数で受け取る共通関数経由で `fs.readFile` すると解析で追えず、ファイルが Function に入らないことがある。ビルド時の静的生成ではビルド環境にファイルがあるので正しく描画され、記事の事例ではデプロイ後の ISR 再生成で初めて空になった。実行時に読むデータファイルは `next.config.ts` の `outputFileTracingIncludes` に glob で列挙し、`.next/server/app/**/*.nft.json` の `files` に載っていることを確認する。
+
+**根拠**:
+- 公式 docs（`output`）は、Next.js が必要なファイルを含め損ねる・不要なファイルを含めるケースがあり、そのときは `outputFileTracingIncludes` / `outputFileTracingExcludes` を使うと明記している。キーはルートパス（picomatch でマッチ）、値はプロジェクトルートからの glob
+- 両オプションはサーバーのトレースにだけ効き、Edge Runtime のルートと完全に静的なページには影響しない（公式 docs）。モノレポでの「プロジェクトルート」は `next.config` のあるフォルダ
+- Zenn の記事は、`readJson(relativePath)` 形式の共通化で `data/resume.json` が Function から抜け、ISR（`revalidate = 3600`）の再生成後に経歴が 0 件になった事例を報告している。ローカルの `next start` ではプロジェクトにファイルがあるため再現せず、読み込み失敗時に空データを返す作りだったためエラー画面にもならなかった
+- 記事の対策は、呼び出し側で `path.join(process.cwd(), 'data', 'resume.json')` をリテラルで組み立てて解析に乗せることと、`outputFileTracingIncludes` での明示の併用。公式 docs はパターンをできるだけ狭くする（リポジトリルートで `**/*` を避ける）よう勧めている
+
+**コード例**:
+```ts
+// next.config.ts
+import type { NextConfig } from 'next'
+
+const nextConfig: NextConfig = {
+  // Good: 実行時（ISR 再生成など）に fs で読むファイルを明示する
+  outputFileTracingIncludes: {
+    '/*': ['./data/*.json'],
+  },
+}
+
+export default nextConfig
+```
+
+```ts
+// lib/resume.ts
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
+// Bad: パスを変数で受け取って中で組み立てる — トレースがファイルを特定できない
+async function readJsonBad<T>(relativePath: string): Promise<T> {
+  return JSON.parse(await fs.readFile(path.join(process.cwd(), relativePath), 'utf8'))
+}
+
+// Good: 読むファイルは呼び出し側でリテラルとして組み立てて渡す
+async function readJson<T>(absolutePath: string): Promise<T> {
+  return JSON.parse(await fs.readFile(absolutePath, 'utf8'))
+}
+export const getResume = () => readJson(path.join(process.cwd(), 'data', 'resume.json'))
+```
+
+```bash
+# ビルド後にトレース結果を確認する（App Router のトップページの例）
+next build
+cat .next/server/app/page.js.nft.json   # files に data/*.json が含まれていること
+```
+
+**アンチパターン**:
+- 読み込み失敗時に黙って空データを返し、ログにしか手がかりを残さない（Function にファイルが無い状態に気付けない）
+- ローカルの `next build && next start` で表示できたことを、デプロイ先でも読める根拠にする
+- 漏れを恐れて `outputFileTracingIncludes` にリポジトリルートの `**/*` を書き、トレースを肥大化させる
+
+**出典引用**:
+> "There are some cases in which Next.js might fail to include required files, or might incorrectly include unused files."
+> ([next.config.js: output](https://nextjs.org/docs/app/api-reference/config/next-config-js/output), セクション "Caveats") ※2026-11-10に実際にfetch成功
+
+> "fs.readFile の引数が変数だと、どのファイルを読むのかを解析で判断できないため、JSON ファイルが Function に含まれません。"
+> ([Next.js で fs を使ったら、Vercel 上だけデータが空になった ― Output File Tracing の落とし穴](https://zenn.dev/megrou/articles/5076edcd6e1251), セクション "原因：変数で渡したパスはトレースされない") ※2026-11-10に実際にfetch成功
+
+**出典**:
+- [next.config.js: output](https://nextjs.org/docs/app/api-reference/config/next-config-js/output) (Next.js 公式 docs、静的解析の対象・`outputFileTracingIncludes` / `Excludes` の書式・Edge / 静的ページは対象外) ※2026-11-10に実際にfetch成功
+- [Next.js で fs を使ったら、Vercel 上だけデータが空になった ― Output File Tracing の落とし穴](https://zenn.dev/megrou/articles/5076edcd6e1251) (Zenn megrou、ISR 再生成後にだけ空になる事例と `.nft.json` での確認手順) ※2026-11-10に実際にfetch成功
+
+**バージョン**: Next.js 16 系の公式 docs（2026-09-18 更新版）で確認したトップレベルの `outputFileTracingIncludes`
+**確信度**: 高（`outputFileTracingIncludes` の要否と書式は公式。「変数パスはトレースされない」という発生条件は 1 記事の報告）
+**最終更新**: 2026-11-10
+
+---

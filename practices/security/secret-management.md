@@ -832,3 +832,53 @@ KeyAgreement: X25519 + ML-KEM (NIST FIPS 203) のハイブリッド
 **最終更新**: 2026-09-23
 
 ---
+
+### 9. GitHub Actions で secret から作った値（交換したトークン・署名済み JWT・Base64 などの変換結果）は、出力・`$GITHUB_ENV` への書き出しより前に `::add-mask::` で登録する
+
+Actions のログ redaction は、登録済み secret の値と完全一致する文字列を伏せる仕組みで、変換・派生した値は自動では伏せられない。secret から短命トークンを交換した、JWT に署名した、Base64 / URL エンコードした、JSON に包んだ、といった値は、ログに出る可能性のある最初の行より前に `echo "::add-mask::$VALUE"` で登録する。順序を逆にすると、マスクが存在する前に値が印字される。
+
+**根拠**:
+- 公式 docs（Secure use reference）は「secret の値の変換のされ方は多様なので、自動 redaction は保証されない」とし、secret から生成した値（例: 秘密鍵で署名した JWT）や変換した値（Base64・URL エンコード）は secret として登録するよう求めている
+- 同 docs は、redaction は主に secret 値の完全一致に頼るため、JSON / XML / YAML の塊を 1 つの secret にしないこと、未伏字の secret がログに出たらログを削除し secret をローテーションすることも定めている
+- 公式 docs（Workflow commands）は、`add-mask` で登録した値は secret として扱われ runner 上で伏せられること、ログに出したり他の workflow command で使ったりする前に登録することを求めている
+- GitHub の secret scanning が Actions のワークフローログの走査に対応した（public preview、GitHub Enterprise Cloud の Secret Protection / Advanced Security 向け、既定で無効）と dev.to の記事が報告している。有効化後に完了した run だけが対象で、汎用パターン・カスタムパターン・既にマスク済みの値は対象外とされるため、社内 API キーの漏えいは検知されない。事後検知であり、マスクの代わりにならない
+
+**コード例**:
+```yaml
+# Good: 交換したトークンを先にマスクしてから環境変数へ書き出す
+- name: Exchange a short-lived token
+  run: |
+    TOKEN="$(./scripts/exchange-token.sh)"
+    echo "::add-mask::$TOKEN"
+    echo "DEPLOY_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+
+# Bad: マスク前に set -x や詳細ログの CLI が値を印字する
+- name: Exchange a short-lived token
+  run: |
+    set -x
+    TOKEN="$(./scripts/exchange-token.sh)"
+    echo "DEPLOY_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+```
+
+**アンチパターン**:
+- `secrets.*` に登録した元の値が伏せられることを見て、そこから派生した値も伏せられると思い込む
+- 複数の認証情報を 1 つの JSON secret にまとめて登録する（部分文字列が出たときに完全一致せず伏せられない）
+- ログの secret scanning を有効にしたことを、ログに secret が残らない根拠にする（事後検知で、対象外のパターンもある）
+
+**出典引用**:
+> "Because there are multiple ways a secret value can be transformed, automatic redaction is not guaranteed."
+> ([Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use), セクション "Use secrets for sensitive information") ※2026-11-10に実際にfetch成功
+
+> "Make sure you register the secret with 'add-mask' before outputting it in the build logs or using it in any other workflow commands."
+> ([Workflow commands for GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands), セクション "Masking a value in a log") ※2026-11-10に実際にfetch成功
+
+**出典**:
+- [Secure use reference](https://docs.github.com/en/actions/reference/security/secure-use) (GitHub 公式 docs、派生値・変換値の登録、構造化データを secret にしない、漏えい時のログ削除とローテーション) ※2026-11-10に実際にfetch成功
+- [Workflow commands for GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands) (GitHub 公式 docs、`add-mask` の挙動と登録タイミング) ※2026-11-10に実際にfetch成功
+- [GitHub secret scanning now reads your Actions logs, once the run is over](https://dev.to/leobaniak/github-secret-scanning-now-reads-your-actions-logs-once-the-run-is-over-11cp) (dev.to Leo、ログ走査 preview の対象範囲と除外条件、マスク→書き出しの順序) ※2026-11-10に実際にfetch成功
+
+**バージョン**: GitHub Actions（全バージョン）。ログの secret scanning は GitHub Enterprise Cloud の public preview（2026-11 時点）
+**確信度**: 高
+**最終更新**: 2026-11-10
+
+---
