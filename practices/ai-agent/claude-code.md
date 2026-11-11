@@ -4578,6 +4578,7 @@ cron / launchd / CI から回す `claude -p` は、ツール拒否が **終了�
 - 認証なしでは `is_error: true` でも `subtype` は `success` だった。`subtype` だけで成否を判断すると見逃す
 - `-p` では承認プロンプトに答える人がおらず拒否は黙ってモデルに返り、実行は続く。検証コマンドが allow に無いと、検証なしで 0 終了する
 - `--output-format text` では `permission_denials` が見えない
+- サブエージェント定義の `model:` が無効（存在しない名前）でも、メインの `claude -p` は終了コード 0・`is_error: false`・`subtype: success` で終わり、404 は Agent ツールの結果と標準エラーにしか出なかったと報告されている（Claude Code 2.1.305 / 2.1.318、Windows 11 で実測）。サブエージェントに任せた成果物も実在確認の対象に含める。サブエージェントのモデルは呼び出し時の `model` → 定義の `model` → `CLAUDE_CODE_SUBAGENT_MODEL` → メインのモデルの順に決まる（公式 docs）ため、どこに無効な名前が残っているかもこの順で探す
 - 公式 docs によれば v2.1.302 より前は、フィーチャーフラグを取得しない構成（サードパーティプロバイダーや `DISABLE_TELEMETRY` など）で `-p` 実行が auto モードで始まりうる場合があった。以後は Manual 固定のため、挙動をバージョン間で揃えたいなら `--permission-mode` を明示する
 - `--json-schema` 付きの `claude -p` でも、スキーマ違反の指示でモデルが諦めると `subtype: "success"`・終了コード 0 のまま `structured_output` キーが無い結果になりうる。わざと違反させた 33 回のうち終了コード 1 になったのは 1 回だけだったと報告されている（Claude Code 2.1.296 / Haiku）。`subtype == "success"` かつ `structured_output` に値がある場合だけ成功とみなす
 
@@ -4625,10 +4626,13 @@ claude -p "..." --output-format text && echo done
 - [claude -p の失敗は終了コードで分かるか: is_error・subtype・permission_denials を条件別に実測](https://zenn.dev/yorusuzu/articles/claude-code-p-exit-code-is-error-subtype) (Zenn、終了コード / is_error / subtype の条件別実測) ※2026-10-18に実際にfetch成功
 - [go test を許可したのに一度も走らない：無人の claude -p に検証させるなら、許可は「検証の経路」ごと組む](https://zenn.dev/norman6464/articles/claude-code-allowedtools-verification-path) (Zenn、検証経路を含む allowedTools 設計) ※2026-10-18に実際にfetch成功
 - [claude -p --json-schema の成否は、終了コードではなく structured_output で判定する](https://zenn.dev/masaki_mori72/articles/7682a6c0f13528) (Zenn、`--json-schema` 利用時も exit 0 + `success` で出力が無い失敗がある・`structured_output` の有無で判定する観点) ※2026-10-27 fetch
+- [Claude Code の selected model エラー: モデル指定の優先順位とサブエージェントを claude -p で実測](https://zenn.dev/yorusuzu/articles/claude-code-selected-model-issue) (Zenn、サブエージェントの `model:` が無効でもメインは exit 0 で終わる実測) ※2026-11-11 fetch
+  > "サブエージェントだけは違います。定義の model: が無効でも、メインの実行は終了コード 0 のまま終わります。"（セクション "1. 先に結論: 切り分けの 3 手"）
+- [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、"Choose a model": サブエージェントのモデル決定順) ※2026-11-11 fetch
 
 **バージョン**: Claude Code 2.1.x（2.1.293 で実測。権限モードの既定は 2.1.302+ で Manual）
 **確信度**: 高（異なる著者 2 記事 + コード例、パターン2）
-**最終更新**: 2026-10-27
+**最終更新**: 2026-11-11
 
 ---
 
@@ -4902,5 +4906,59 @@ disallowedTools: Write, Edit, NotebookEdit, Bash
 **バージョン**: Claude Code（`bypassPermissions` 指定の例外は v2.1.267+）
 **確信度**: 高
 **最終更新**: 2026-11-10
+
+---
+
+### 59. hook からバックグラウンドプロセスを起動するときは、判定を先に出力してから起動し、その stdout / stderr を必ずリダイレクトする
+
+hook から開発サーバーなどの常駐プログラムを起動し、セッション中ずっと動かしておくことができる。その際は hook のスクリプト（または shell 形式のコマンド）の中でプログラムをバックグラウンド実行し、stdout と stderr をファイルか `/dev/null` へリダイレクトする。`PreToolUse` のように判定を返す hook では、判定（allow / deny、または exit 2）を **バックグラウンドプロセスを起動する前に** 出し、判定スクリプトの終了コードを hook 自身の終了コードにする。
+
+**根拠**:
+- リダイレクトしないと、`async` でない hook は自身のプロセスが終わった後も最大 10 秒終わらない（公式 docs）
+- `async` でない hook の出力は、hook 自身のプロセスが終了した少し後で読み終えられる。判定をバックグラウンドプロセスに任せて hook が先に終了すると、読み終えた後に出た deny は tool call を止めない（公式 docs）
+- allow を出した後に stdout / stderr をリダイレクトしないままバックグラウンドプロセスを起動すると、Claude Code はその tool call をブロックし、hook エラーに `stdio went quiet` / `refusing to honor the suspect capture` が出る（公式 docs）
+- 判定スクリプトの後ろに処理を足すと、hook の終了コードが最後の行のもの（多くは 0）になり、exit 2 による阻止が効かなくなる。`|| exit $?` で判定スクリプトの終了コードを引き継ぐ
+- Rule #54（`onFailure: "block"` と判定の出力形式）が「判定が壊れたとき」を扱うのに対し、このルールは「判定の後に常駐プロセスを起動するとき」の出力の扱いを扱う。`async: true` hook では exit 2 で止められない点は Rule #12 を参照
+
+**コード例**:
+```bash
+#!/bin/bash
+# .claude/hooks/pre-tool-use.sh — PreToolUse hook
+
+# Good: 先に判定を出し、その終了コードを hook のものにする（exit 2 なら阻止される）
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/policy-check.sh || exit $?
+# Good: 後処理はバックグラウンドで、stdout / stderr をリダイレクトして起動する
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/upload-metrics.sh >/dev/null 2>&1 &
+```
+
+```bash
+# Good: hook から dev サーバーを常駐させる
+npm run dev > dev-server.log 2>&1 &
+
+# Bad: リダイレクトなし（async でない hook は最大 10 秒終わらない。allow を出した後にこう起動すると tool call がブロックされる）
+npm run dev &
+
+# Bad: 判定の後ろに処理を足して終了コードを上書きする（policy-check.sh が exit 2 でも hook は 0 で終わる）
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/policy-check.sh
+"$CLAUDE_PROJECT_DIR"/.claude/hooks/upload-metrics.sh >/dev/null 2>&1 &
+```
+
+**アンチパターン**:
+- 判定（deny）をバックグラウンドプロセスに出させ、hook 本体を先に終わらせる（deny が読まれず tool call が通る）
+
+**出典引用**:
+> "Print the decision before you start a background process, and redirect that process's stdout and stderr."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "Hooks that start a background process") ※2026-11-11に実際にfetch成功
+
+> "A hook can start a long-running program, such as a dev server, and leave it running while the session continues."
+> ([11/11 の公式ドキュメント更新：無人実行、フック、読み込み条件の明文化](https://qiita.com/akihidem/items/19d5f42e28ed7cf990ee), セクション "フックのバックグラウンド起動と、テレメトリの既定値"（hooks ページからの引用）) ※2026-11-11に実際にfetch成功
+
+**出典**:
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、"Hooks that start a background process") ※2026-11-11 fetch
+- [11/11 の公式ドキュメント更新：無人実行、フック、読み込み条件の明文化](https://qiita.com/akihidem/items/19d5f42e28ed7cf990ee) (Qiita、公式 docs 更新の要約。上記公式 docs で裏取り) ※2026-11-11 fetch
+
+**バージョン**: Claude Code（2026-11-11 時点の公式 docs）
+**確信度**: 高
+**最終更新**: 2026-11-11
 
 ---
