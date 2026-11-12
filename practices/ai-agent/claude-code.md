@@ -2012,11 +2012,14 @@ CLAUDE.md は**スコープ別に複数配置できる**: `~/.claude/CLAUDE.md`�
 - `git blame` / `grep` で取り出せる情報（コードコメントに属する）
 - スプリント内容・担当者等の頻繁に変わる情報（トークンを消費するだけでノイズになる）
 - 長大な説明（`.claude/rules/` に委譲して目次化する — Rule #6 参照）
+- 構成の説明や「変更したら必ず全テストとカバレッジを実行」のような一般論。公式ベストプラクティスは「アーキテクチャとファイル構成を CLAUDE.md に書く」を古い助言として挙げ、「Claude はリポジトリ自体を読む。そこに無いことだけを書く」としている。書いた行はそのとおり実行されて費用になる
 - **ミスログや自己改善記録など頻繁に追記されるファイル**: プロンプトキャッシュは先頭からの完全一致 prefix ベースで動作するため、常駐ファイルへの1行追記がそれ以降全体のキャッシュを無効化する。常駐は「静的・安定・全セッション関連」の3条件を満たすもの（アーキテクチャ方針・禁止操作・コマンド一覧など）に絞り、頻繁に変わる観察記録は `.claude/knowledge/` 等の非常駐ファイルへ退避する
 
 **量の目安**: 50〜150 行が適切。200 行を超えると Claude の注意力が分散しルール遵守率が低下する。2 週間に一度見直して陳腐化したエントリを削除する。
 
 **効果の実測値**（上記「入口と役割の最小案内」の効果）: ディレクトリ構成とファイルの役割だけを書いた 24 行の CLAUDE.md を用意し「ログイン機能はどのようなものか」という同一の質問を投げた検証では、API 呼び出しが 14 → 6 回（57.1% 減）、入力トークンが 664,656 → 360,218（45.8% 減）まで減少した。削減の主因はファイルサイズそのものではなく「モデルとツールの往復回数」で、CLAUDE.md がない場合は Explore サブエージェントが 7 回ツールを実行したのに対し、ある場合は並列読み込み込みで 4 回のモデル呼び出しに収まった。往復のたびに会話履歴・システム指示・ツール定義が入力に再送されるため、往復回数の削減がトークン削減に直結する。
+
+**反証（大規模な比較）**: 一方、ETH Zurich らの論文（arXiv:2602.11988 第 3 版）を読んだ記事によると、AGENTS.md / CLAUDE.md を置いても課題の成功率は有意に変わらず（自動生成で平均 −0.5〜−2 ポイント、開発者が書いたもので +2.4 ポイント、いずれも有意差なし）、1 課題あたりの費用はどの条件でも平均 19〜23% 増えた。エージェントは書かれた道具やテスト手順に律儀に従うため手間が増え、構成の説明があっても修正対象のファイルに初めて触れるまでのステップ数は減らなかったと報告されている。上の 24 行の実測は 1 件の質問での例であり、構成の案内は「探索で分かりにくい入口」だけに絞り、追加する行は導入前後で `claude -p` の `num_turns` / トークン / 所要時間を比べて効果を確かめる
 
 **自動メモリの4種（`~/.claude/projects/<project>/memory/`）**:
 | 種別 | 内容 |
@@ -2228,9 +2231,15 @@ CLAUDE.local.md
 - [How Claude remembers your project](https://code.claude.com/docs/en/memory) (Claude Code 公式 docs、サブディレクトリの CLAUDE.md は配下のファイルを読む・書く・編集した時点で遅延ロード・`CLAUDE.local.md` とホーム配下ファイルの import) ※2026-10-25 確認
 - [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、"Define hooks for subagents": settings の hook はサブエージェント内のツール呼び出しにも発火する) ※2026-10-25 確認
 
+**出典**:
+- [Best practices for Claude Code](https://code.claude.com/docs/en/best-practices) (Claude Code 公式 docs、CLAUDE.md にはコードから分からないことだけを書く・古い助言の表) ※2026-11-12 fetch
+  > "Claude reads the repo itself. Only write down what isn't in there."
+- [AGENTS.md・CLAUDE.md は本当に効く？ 成功率は変わらず、費用だけ2割増えた理由](https://zenn.dev/takuh/articles/4d4c0666c6fa8c) (Zenn、arXiv:2602.11988 第 3 版の数値を初版と比較して読み解き。論文の追試はしていないと記事が明記) ※2026-11-12 fetch
+  > "1課題あたりの費用は、どの条件でも平均 19〜23% 高くなりました"
+
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 中
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-12
 
 ---
 
@@ -2723,6 +2732,7 @@ Claude Code v2.1.219 以降、サブエージェントは既定でメイン会�
 - v2.1.219 で **デフォルトのネスト生成可能深さが 1 → 3 に拡張された**。ネストを無効にする（v2.1.217〜v2.1.218 の既定と同じにする）場合は `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` を設定する。この変数（v2.1.217+）は正の整数だけを受け付け、上限を変えることはできても外すことはできない。現行版に「最大 5 階層」という別の上限は無く、5 階層固定だったのは v2.1.172〜v2.1.216 の挙動である。上限に達したサブエージェントからは `Agent` ツールが外される（fork はツール一覧に残るが呼ぶとエラーになる）。別著者（haruhiro1020, 2026-08-24 Zenn）が公式 changelog（code.claude.com/docs/en/changelog, v2.1.212/217/219）を出典として同じ変更を確認し、実機検証で「メインは深さの数に入らず、最初のサブエージェントが depth 1」という数え方も確定させた（公式の「メイン会話の下に 3 階層」と一致する）
 - **深さ3を使わない設計判断もある**: デフォルトが3になっても、全サブエージェントを depth 1 に固定し `Agent` ツールを一切付与しない運用例がある。階層を深める前のチェック項目として「(1) 子はなぜ親のコンテキストを汚さないために存在するのか (2) 戻り値は親が検証可能か (3) tools 権限は本当に最小か (4) 再構成後、人間承認はどこに残るか」を確認する。根拠は「権限では縛りきれないものがある」（例: `Bash` を渡した時点で `Write` を渡さないことによる保証は消えている）という定義レベル/プロンプトレベル/実行時レベルの三層区別で、深さを増やすと人間承認ゲートを失うリスクが主な障壁になる
 - フロントマターで公式に必須なのは `name` と `description` の2フィールドのみで、`tools` / `model` は省略可能（省略時は継承）。新規に `.claude/agents/` ディレクトリを作った直後（そのスコープで初めてサブエージェントを作った直後）や `--disable-slash-commands` 付き起動（ディレクトリ監視自体を行わない）では、定義ファイルを認識させるのにセッション再起動が必要になる
+- **fork はモデルを選べない**: 公式 docs によると、fork（会話をそのまま引き継ぐサブエージェント）はメイン会話と同じシステムプロンプト・ツール・モデル・メッセージ履歴を持つ。階層ごとにモデルを軽くする設計は `.claude/agents/` の定義サブエージェント（fork 以外）にだけ効く。親の文脈が要り、生ログを親に戻したくない並列の調べ物は fork、別モデル・文脈なしの第三者視点・軽量な単発タスクは定義サブエージェントに振る（使い分けの基準は 1 記事の整理）
 - **`tools:` フロントマターでの `Bash(git diff:*)` のようなパターン絞り込みは、実際には Bash ツール全体を渡してしまう**: `tools: ["Read", "Bash(git diff:*)"]` を与えたサブエージェントに `node --version` を実行させたところ普通に成功した（本来 `git diff` 系のみを許可したつもりだった）。`tools: ["Read"]` のみのサブエージェントでは同じ指示が失敗したことから、`disallowedTools` がパターン一致に関わらずツール単位で丸ごと除去するのと非対称に、`tools` の許可リスト側ではサブコマンドパターンが実効的なフィルタとして機能しない。コマンド単位で絞り込みたい場合は `tools` 定義に期待せず、`PreToolUse` hook で実際にコマンド文字列を検証する
 
 **コード例**:
@@ -2804,6 +2814,7 @@ tools: Read, Grep, Edit, Write, Bash
 - サブエージェントに `Agent` ツールを付与する（再帰暴走のリスク）
 - エージェント数を 20 件超に増やす（ルーティング精度の劣化）
 - 通常のサブエージェントが親の会話履歴を参照できると仮定する（fork 以外はコンテキストが独立）
+- fork に階層別のモデル（Haiku / Sonnet）を期待する（fork はメイン会話と同じモデルで動く）
 
 **出典引用**:
 > 「葉はHaiku、推論が必要な中間はSonnet、最終合成だけOpus——というように下に行くほど軽くするのがセオリー」
@@ -2839,6 +2850,9 @@ tools: Read, Grep, Edit, Write, Bash
 > 「`Bash(git diff:*)` と書いた行が、Bash を丸ごと渡していた。」
 > ([サブエージェントの tools で Bash を絞ったつもりになっていないか](https://qiita.com/yurukusa/items/9466eaccf8e4c26cd137), セクション 検証結果) ※2026-09-18に実際にfetch成功
 
+> "a fork sees the same system prompt, tools, model, and message history as the main session"
+> ([Create custom subagents](https://code.claude.com/docs/en/sub-agents), セクション "Fork the current conversation") ※2026-11-12に実際にfetch成功
+
 **出典**:
 - [Claude Codeのネスト型サブエージェント入門 — 最大5階層の設計とトークン設計の勘所](https://qiita.com/kai_kou/items/618da2497af1c1bf0f91) (Qiita) ※2026-06-13 fetch
 - [.claude/agents/でサブエージェントを定義する設計パターン](https://zenn.dev/nakayama_acari/articles/claude-code-agents-design) (Zenn) ※2026-06-27 fetch
@@ -2853,9 +2867,11 @@ tools: Read, Grep, Edit, Write, Bash
 - [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、fork は親の会話を引き継ぐ・`CLAUDE_CODE_SUBAGENT_MODEL_FORCE`・"Let subagents spawn their own subagents": 既定でメイン会話の下 3 階層、v2.1.172〜v2.1.216 は 5 階層固定、v2.1.217〜v2.1.218 は既定 1) ※2026-10-25 確認
 - [Environment variables](https://code.claude.com/docs/en/env-vars) (Claude Code 公式 docs、`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH` は既定 3・正の整数のみで上限は外せない・v2.1.217+) ※2026-10-25 確認
 
+- [Claude Code fork() の使いどき — 並列エージェント設計の判断基準](https://zenn.dev/joemike/articles/claude-code-fork-subagent-guide-2026) (Zenn、fork と fresh agent の使い分け表。fork が親と同じモデルに固定される点は公式 docs で確認。Qiita に同タイトルのクロスポストあり) ※2026-11-12 fetch
+
 **バージョン**: Claude Code v2.1.172〜v2.1.216（5 階層固定）、v2.1.217+（`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`）、v2.1.219+（デフォルト深さ1→3）、v2.1.251+（frontmatter 優先の上書き仕様）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-12
 
 ---
 
@@ -3588,12 +3604,14 @@ claude --resume my-feature --mcp-config ./.mcp.json
 
 ### 32. `additionalContext` の文字数予算を優先度付きで管理し、末尾からの単純truncateを避ける
 
-Claude Code の hook（`SessionStart` 等）が標準出力の JSON で返す `hookSpecificOutput.additionalContext` は文字列としてそのまま会話コンテキストに挿入されるが、上限を超えた分を末尾から単純に切り捨てると、意図的に文末に置いたルールなど重要な情報から先に失われる。ブロックごとに優先度（保持必須 / 遅延ドロップ可 / 早期ドロップ可）を割り当て、超過時は優先度の低いブロックから落とす。
+Claude Code の hook（`SessionStart` 等）が標準出力の JSON で返す `hookSpecificOutput.additionalContext` は文字列としてそのまま会話コンテキストに挿入されるが、公式には 10,000 文字の上限があり（超えると全文がファイルに退避され、会話に入るのはファイルパスと先頭 2,000 文字までのプレビューだけになる。上限を引き上げる設定・環境変数は無い）、上限を超えた分を末尾から単純に切り捨てると、意図的に文末に置いたルールなど重要な情報から先に失われる。ブロックごとに優先度（保持必須 / 遅延ドロップ可 / 早期ドロップ可）を割り当て、超過時は優先度の低いブロックから落とす。
 
 **根拠**:
 - `SessionStart` hook は標準出力に1つの JSON を返すだけで、その中の `additionalContext` がそのまま会話コンテキストに入る仕組みのため、文字数管理はプロンプト設計そのものに直結する
 - 素朴な `text[:BUDGET]` のような末尾切り捨ては、「結びに大事なことを書く」自然な文章構成と衝突し、上限到達時に真っ先にルールが消える
 - 差分/優先度ベースの表示（全件列挙ではなく増分・高優先度のみ）にすることで、追跡対象が5倍以上に増えても注入サイズをほぼ横ばいに保てた（実測 約1483→1525文字）
+- 公式 hooks リファレンスによると、`additionalContext` / `systemMessage` / `initialUserMessage` の文字列と hook の素の stdout はそれぞれ 10,000 文字が上限で、超過分は切り詰めではなくファイル退避 + 先頭 2,000 文字のプレビューに置き換わる。Bash 出力の上限と違い、引き上げる設定は無い。予算（`budget`）は 10,000 文字未満で設計する
+- 1 記事は、索引と各ファイルの全文を連結して返していた `SessionStart` hook が約 31 万字（上限の約 30 倍）に達しており、会話の冒頭に内容がほぼ入っていなかったと報告している。全文をやめ「1 項目 1 行の要約 + 古い順に落として省略件数を明記」に変えて上限内に収め、`claude -p` の新しい会話に冒頭の見出しが見えるかを聞いて注入を確認している（文字数は UTF-16 単位で数えたと記事が前提を明記。公式は単位を書いていない）
 - 省略が発生したことを明示しないと、後続のセッションが「見えているはずの情報が実は削られていた」ことに気づけない
 
 **コード例**:
@@ -3647,12 +3665,20 @@ def build_context(blocks: list[tuple[int, str]], budget: int) -> tuple[str, int]
 > "結びに大事なことを書く癖が、そのまま出ています。つまり上限に当たった瞬間、最初に消えるのがルールでした。"
 > ([additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget), セクション "見つけた問題：あふれたぶんを末尾から捨てていた") ※2026-08-02に実際にfetch成功
 
+> "Unlike that Bash ceiling, this cap has no setting or environment variable to raise it."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "JSON output"（出力上限の "Over the limit" 項）) ※2026-11-12に実際にfetch成功
+
+> "つまり 1 万字を超えると、出力全体がファイルに保存され、会話に入るのはそのファイルのパスと先頭 2,000 字までのプレビューだけになります。"
+> ([Claude Code の SessionStart hook で渡していた 31 万字は、会話にほぼ入っていなかった（上限は 1 万字）](https://zenn.dev/shogaku/articles/claude-code-hook-10k-cap), セクション "渡していたのは 31 万字、会話に入るのは先頭の 2,000 字まで") ※2026-11-12に実際にfetch成功
+
 **出典**:
 - [additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget) (Zenn、`SessionStart` hook の `additionalContext` 実装と優先度ベース truncate の実測) ※2026-08-02に実際にfetch成功
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、hook 出力の 10,000 文字上限・超過時のファイル退避と 2,000 文字プレビュー・引き上げ設定なし) ※2026-11-12 fetch
+- [Claude Code の SessionStart hook で渡していた 31 万字は、会話にほぼ入っていなかった（上限は 1 万字）](https://zenn.dev/shogaku/articles/claude-code-hook-10k-cap) (Zenn、上限超過に気づかず全文注入していた事例と、1 行要約化・`claude -p` での注入確認) ※2026-11-12 fetch
 
 **バージョン**: Claude Code（`hookSpecificOutput.additionalContext` を持つ hook 全般）
-**確信度**: 中（公式APIの検証記事、パターン1c：単独ソース）
-**最終更新**: 2026-10-25
+**確信度**: 高（上限値と超過時の挙動は公式 hooks リファレンスで確認。優先度付き truncate の実装は記事の実践）
+**最終更新**: 2026-11-12
 
 ---
 
@@ -4773,6 +4799,7 @@ claude doctor | sed -n '/Invalid settings/,/^$/p'
 - `--tools "Read,Grep,Glob" --strict-mcp-config` でも、settings が Read を丸ごと許可していると作業フォルダ外のファイルを読めた。`--restricted`（2.1.248 以降）または `permissions.blockReadsOutsideWorkingDirectories: true` で止まるが、作業フォルダがホームそのものだと `~/.ssh` を含むため、読ませるファイルだけがある狭いディレクトリを cwd にする
 - 許可の無い環境（CI や新規 PC）では `claude -p` が確認を出せず未許可の呼び出しが拒否されるため、`--allowedTools` で絞れているように見える。普段使いの PC で settings に許可を足すと効かなくなる
 - `--disallowedTools` は書き漏らしたツールが残る引き算の方式。`--tools` で在庫を決める足し算のほうが漏れにくい
+- `--disallowedTools` はツール名で一致させるため、MCP サーバー経由の操作は名前空間が違って落ちない。別の記事は、`--disallowedTools` で `Write` 等 8 ツールを既定で落としても、filesystem MCP サーバー経由の書き込みは止まらないため、MCP サーバーの起動引数で書き込み可能なフォルダを出力先 1 つに絞ったと報告している（許可はサーバー単位でまとめて、禁止は 1 つずつ名指し、という非対称が穴になる）
 
 **コード例**:
 ```bash
@@ -4797,13 +4824,18 @@ claude -p --tools "Read,Grep,Glob" --strict-mcp-config \
 > "--allowedTools は道具を絞るフラグではなかった。公式のCLIリファレンスにもそう書いてある。"
 > ([claude -p の --allowedTools は道具を絞らない](https://zenn.dev/kentaro_tak/articles/claude-code-allowedtools-does-not-restrict), セクション冒頭) ※2026-11-03に実際にfetch成功
 
+> "Write を落としても、MCP 経由の書き込みはその名前に一致しないので落ちません。"
+> ([渡していない道具が普通に動いた — allowedTools は自動承認の指定で、禁止の指定ではない](https://zenn.dev/shinsei99/articles/allowlist-is-not-a-denylist), セクション "名前で止める仕組みは、名前が変わる経路には効かない") ※2026-11-12に実際にfetch成功
+
 **出典**:
 - [CLI reference](https://code.claude.com/docs/en/cli-reference) (Claude Code 公式 docs、`--allowedTools` の説明と `--tools` への誘導) ※2026-11-03に実際にfetch成功
 - [claude -p の --allowedTools は道具を絞らない](https://zenn.dev/kentaro_tak/articles/claude-code-allowedtools-does-not-restrict) (Zenn、10 通りの起動指定 × 2 種の settings での総当たり検証。公式照合は `--allowedTools` / `--tools` のみで、`--restricted`・`blockReadsOutsideWorkingDirectories` を含む組み合わせ結果は記事の報告) ※2026-11-03に実際にfetch成功
 
+- [渡していない道具が普通に動いた — allowedTools は自動承認の指定で、禁止の指定ではない](https://zenn.dev/shinsei99/articles/allowlist-is-not-a-denylist) (Zenn、無人の多エージェント構成で `--allowedTools` に無い道具が実行された事例と、`--disallowedTools` の既定化・MCP 経路は起動引数で範囲を絞る対処。1 記事の報告) ※2026-11-12 fetch
+
 **バージョン**: Claude Code 2.1.296 で検証（`--restricted` は 2.1.248+）
 **確信度**: 中（パターン1c。`--allowedTools` / `--tools` の区別は公式に記載、`--restricted` 等の組み合わせ結果は記事の検証のみ）
-**最終更新**: 2026-11-03
+**最終更新**: 2026-11-12
 
 ---
 
