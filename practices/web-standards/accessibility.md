@@ -98,6 +98,7 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 - コントラスト比の計算式（相対輝度から `(明るい方 + 0.05) / (暗い方 + 0.05)`）は外部ライブラリなしでも実装できる。デザイントークンの検証や lint スクリプトに組み込めば、色の組み合わせを機械的にチェックできる
 - **例外**: WCAG のコントラスト比基準を数値上満たしていても、実際の可読性が確保されるとは限らない。ダークモードで明朝体（serif）の本文テキストは、①細い横画が小サイズで潰れる、②irradiation錯視で明るい文字が実際より太く見える、③ `-webkit-font-smoothing: antialiased` がダーク背景では逆に線を細く見せる、という3つの要因が重なり、コントラスト比の数値には出ない読みにくさが生じる。見出しは大きく分量も少ないため影響が小さいが、本文は影響を受けやすい。本文はシステムフォント（sans-serif）を使う、または `font-variation-settings` の `GRAD` 軸でダークモード時のウェイトを調整するなど、コントラスト比の担保とは別の対策が必要
 - 実装後に測定すると手戻りが大きい。配色を決定した段階でコントラスト比を測定する運用にすれば、後戻りコストを避けられる。模様やイラスト等の装飾要素はテキストが乗らない位置に配置することも、可読性を優先するための設計判断として有効
+- **合否判定は丸める前の比で行う**: W3C の Understanding SC 1.4.3 は、計算した比を丸めずに閾値と比べるとしている（4.499:1 は 4.5:1 を満たさない）。`toFixed(2)` や `Math.round(x * 100) / 100` で丸めた値で判定すると 4.495〜4.4999 の色が合格扱いになり、逆に判定だけ生値で行うと「4.50 : 1 なのに FAIL」という表示になる。白背景でこの帯に入る色は 9,074 色あると報告されている（Qiita hashito の全色総当たり）。表示は境目で誤解しないよう切り捨てにする
 
 **コード例**:
 ```tsx
@@ -121,6 +122,12 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 // gray-700 (#374151) → 10.31:1 ✓（通常テキストに使用可）
 // gray-500 (#6b7280) → 4.83:1 ✓（通常テキストに使用可。ただし 4.5:1 の境界に近く、#f9fafb 等の淡い背景では 4.63:1 まで下がる）
 // gray-400 (#9ca3af) → 2.54:1 ✗（装飾的用途のみ）
+
+// Bad: 丸めた値で判定する（#358282 は 4.4998:1 だが 4.50 として合格になる）
+const passesAABad = Number(ratio.toFixed(2)) >= 4.5;
+// Good: 判定は生の値、表示は切り捨て
+const passesAA = ratio >= 4.5;
+const label = `${(Math.floor(ratio * 100) / 100).toFixed(2)} : 1`; // 4.4998 → "4.49 : 1"
 // blue-600 (#2563eb) → 5.17:1 ✓（リンクに使用可）
 
 // デザイントークンは「サーフェス色」と「その上に乗るテキスト色」をペアで定義し、
@@ -147,19 +154,27 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 
 > "const brightest = Math.max(lum1, lum2); const darkest = Math.min(lum1, lum2); return Math.round(((brightest + 0.05) / (darkest + 0.05)) * 100) / 100;"
 > ([HEX/RGB/HSL変換とWCAGコントラスト比をライブラリなしで実装する](https://zenn.dev/a1221/articles/color-utils-introduction), Zenn, セクション "ステップ2：コントラスト比") ※2026-07-27に実際にfetch成功
+>
+> ※ この実装は比を小数 2 桁に丸めて返すため、戻り値をそのまま 4.5 / 3 と比べると境界の色を合格扱いにする。閾値判定には丸める前の値を使う（根拠の「合否判定は丸める前の比で行う」を参照。2026-11-13 追記）
 
 > "見出しは大きいので細い線が保つし、量が少ないので滲みも問題にならない。本文は逆です。"
 > ([ダークモードで明朝体の本文が読みにくくなる理由——コントラスト比には出ない](https://zenn.dev/matsutake_prgrm/articles/mincho-dark-mode-readability), Zenn, セクション本文) ※2026-08-19に実際にfetch成功
 
 - [ダークモードで明朝体の本文が読みにくくなる理由——コントラスト比には出ない](https://zenn.dev/matsutake_prgrm/articles/mincho-dark-mode-readability) (Zenn、細線消失・irradiation錯視・font-smoothingの3要因とfont-variation-settings GRAD軸による対策) ※2026-08-19 fetch
 - [空色のヘッダに白抜き文字を置いてはいけない — コントラスト比の計算](https://zenn.dev/kodomo_news/articles/56-header-contrast) (Zenn、配色決定時点での測定運用と装飾要素の配置による可読性確保) ※2026-09-05に実際にfetch成功
+- [Understanding Success Criterion 1.4.3: Contrast (Minimum)](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html) (W3C WAI 公式、閾値判定で計算値を丸めない) ※2026-11-13に実際にfetch成功（AllOrigins raw 経由）
+  > "the computed values should not be rounded (e.g., 4.499:1 would not meet the 4.5:1 threshold)."
+  > (セクション "Intent")
+- [コントラスト比「4.50 : 1」なのに AA は FAIL だった。白背景で同じことが起きる色は 9,074 色ある](https://qiita.com/hashito/items/cc71501bb5371daf870e) (Qiita hashito、`toFixed(2)` 表示と生値判定のずれ・境界帯の色数) ※2026-11-13に実際にfetch成功
+  > "でも判定は丸める前の値で 4.5 と比べているので FAIL です。"
+  > (セクション "結論")
 
 > "明るい背景に白を置くと、明度の差が小さくなります"
 > ([空色のヘッダに白抜き文字を置いてはいけない — コントラスト比の計算](https://zenn.dev/kodomo_news/articles/56-header-contrast), Zenn, セクション "明るい色の上には暗い文字") ※2026-09-05に実際にfetch成功
 
 **バージョン**: WCAG 2.1 / 2.2
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-13
 
 ---
 

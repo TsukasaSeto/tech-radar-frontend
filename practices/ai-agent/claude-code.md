@@ -1641,6 +1641,7 @@ Claude Code を組織全体で安全に展開するには、個人設定で上�
 - **Deny リストは credential 系ファイルを網羅的に列挙する**: `Read(./.env)` のような単発パスだけでなく、`Read(**/*.pem)` / `Read(~/.aws/**)` / `Read(~/.config/gcloud/**)` のように credential の置き場所を列挙する。`Read(...)` deny は Claude Code が認識する `cat` 等の Bash 読み取りにも効くが、環境変数を出す `Bash(env)` / `Bash(printenv *)` や、スクリプト経由の読み取りは別途塞ぐ（Rule #36）
 - **GitHub 権限を渡す AI エージェントは Read 権限から始める**: 多くの場合は Read だけで十分な作業が始められる。書き込みが必要になった時点で個別に拡張し、本番相当の操作はブランチ作成 → 修正 → PR 作成 → 人間レビューの経路に限定する。DB アクセスのような広いツールも `database.execute_sql` のような万能ツールではなく、`database.read_customer` / `database.get_order_status` のような粒度の細かいツールに分割すると、権限設計と監査ログの両方が扱いやすくなる
 - **クラウド側 IAM は Google Cloud PAM で JIT（Just-In-Time）昇格にする**: Claude Code 自体の `permissions.deny`/MCP 許可リストは「ツールに何をさせるか」を制御する層だが、AI エージェントが人間の認証情報を使って GCP を操作する場合、実行できる操作はその人が持つ IAM 権限の範囲まで広がってしまう。Google Cloud PAM の `entitlement`（対象 IAM ロール・最大利用時間・承認フロー）で恒常権限を Viewer 相当に絞り、必要な操作だけを時限的（例: 最大24時間）に承認制で昇格させると、Claude Code 側のツール許可リストを、エージェントが実際に操作するクラウド側 IAM の JIT 昇格層で補完できる。期限後は自動剥奪され、申請〜付与のイベントは Cloud Audit Logs に記録される。ただし Slack 通知には申請理由の詳細が乗らず承認にコンソール操作が必要になるなど、通知と承認アクションの間に運用上の摩擦が残る点は導入前に把握しておく
+- **設定変更の監査を `ConfigChange` hook だけに頼らない**: 公式 docs によると `ConfigChange` hook が動くのは設定ファイル（`managed-settings.json` / `managed-settings.d/` を含む）を直接編集したときで、server-managed settings（claude.ai コンソール）・macOS managed preferences・Windows レジストリのポリシーの更新では動かない。matcher は設定の出どころ（`user_settings` / `project_settings` / `local_settings` / `policy_settings` / `skills`）で絞れる。「Yes, and don't ask again」・`/permissions`・`/model` で保存した変更も、保存したセッション自身では発火しない。監査の対象に managed settings の配布を含めるなら、MDM / コンソール側の変更履歴を別に残す
 
 **コード例（MCP ツールの最小権限化）**:
 ```json
@@ -1823,10 +1824,19 @@ approval_workflow {
 - [Configure the sandboxed Bash tool](https://code.claude.com/docs/en/sandboxing) (Claude Code 公式 docs、`sandbox.network.allowedDomains`) ※2026-10-25 確認
 - [How Claude Code uses prompt caching](https://code.claude.com/docs/en/prompt-caching) (Claude Code 公式 docs、"Denying an entire tool": allow / ask ルールは Claude に見えるツールを変えない) ※2026-10-25 確認
 - [All settings — availableModels](https://code.claude.com/docs/en/settings-reference#availablemodels) (Claude Code 公式 docs、サブエージェント・Skill にも適用されるモデル許可リスト) ※2026-10-25 確認
+- [Settings files and precedence](https://code.claude.com/docs/en/settings) (Claude Code 公式 docs、`ConfigChange` hook は managed settings の配布では発火しない) ※2026-11-13に実際にfetch成功
+  > "Claude Code runs the `ConfigChange` hook for direct edits to settings files, not for managed settings that arrive from MDM or the claude.ai console."
+  > (セクション "When edits take effect")
+- [Hooks reference — ConfigChange](https://code.claude.com/docs/en/hooks#configchange) (Claude Code 公式 docs、matcher 値と hook を経ずに反映される変更の一覧) ※2026-11-13に実際にfetch成功
+  > "Changes such as these take effect without running the hooks:"
+  > (セクション "ConfigChange")
+- [ConfigChange フックの発火条件と管理設定の適用範囲が整理された日（2026-11-13）](https://qiita.com/akihidem/items/80f249fd1cf8cabf5c1e) (Qiita akihidem、ConfigChange の matcher 値と発火しない変更の一覧) ※2026-11-13に実際にfetch成功
+  > "監査ログ用途でこのフックを使う場合は、発火しないケースを知っておく必要があります。"
+  > (セクション "ConfigChange フックが反応する変更、しない変更")
 
 **バージョン**: Claude Code v2.1.53+（Workspace Trust）、v2.1.172+（ネスト型サブエージェント）、v2.1.178+（Tool(param:value) 構文）、Enterprise Managed Settings 対応環境
 **確信度**: 中
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-13
 
 ---
 
