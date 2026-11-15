@@ -167,6 +167,7 @@ function AccordionItem({ title, content }: { title: string; content: string }) {
 
 Ajax通信結果・フォームバリデーション・進捗状況など、DOM が動的に更新される箇所には
 `aria-live` リージョンを適切に配置し、視覚的変化をスクリーンリーダーに伝える。
+DOM を変えずに読み上げだけ起こしたい通知には `ariaNotify()` も使えるが、未対応ブラウザ向けに常設リージョンへのフォールバックを残す。
 
 **根拠**:
 - スクリーンリーダーは、フォーカスの外で起きた動的な更新を自動では通知しない（ブラウズモードで後から読みに行けば読めるが、更新に気付けない）。WCAG 2.1 SC 4.1.3 Status Messages はこの種のプログラム的通知を要求する
@@ -174,6 +175,7 @@ Ajax通信結果・フォームバリデーション・進捗状況など、DOM 
 - `aria-atomic="true"` を設定するとリージョン全体を一括で読み上げ、部分更新の誤読を防ぐ
 - ライブリージョンはページ初期読み込み時から DOM に存在させ、後から追加しない（追加されたリージョンは無視するブラウザがある）
 - AIチャットのようなトークンストリーミングUIでは、生成中に逐次通知すると読み上げが連続で中断される。ストリーミング中は `aria-live` の通知を抑制し、生成完了時にまとめて1回だけ知らせる設計にする（`role="log"` も長い会話ログの継続的更新に有効）
+- DOM を変えずに読み上げだけ起こしたい通知（保存完了など）は `Element.ariaNotify()` / `Document.ariaNotify()` を使える（2026-09-14 に Baseline Newly available。Chrome / Edge 141・Firefox 150・Safari 27）。`priority: 'high'` は `assertive`、既定の `'normal'` は `polite` に相当するが、`aria-live` の通知のほうが優先され、複数の通知が順に読まれる保証はなく、`aria-notify` Permissions Policy で止められると黙って失敗する。Baseline 以前のブラウザも対象なら機能検出して、常設のライブリージョンにフォールバックする
 
 **コード例**:
 ```tsx
@@ -214,6 +216,21 @@ function BadToast({ message }: { message: string }) {
   );
 }
 
+// DOM を変えない通知は ariaNotify()（未対応ブラウザは常設ライブリージョンへフォールバック）
+// 型定義が古い lib.dom でも通るよう optional として扱う
+type AriaNotifyDocument = Document & {
+  ariaNotify?: (announcement: string, options?: { priority?: 'high' | 'normal' }) => void;
+};
+
+function announce(message: string, region: HTMLElement | null) {
+  const doc = document as AriaNotifyDocument;
+  if (typeof doc.ariaNotify === 'function') {
+    doc.ariaNotify(message); // priority 省略時は 'normal'（polite 相当）
+  } else if (region) {
+    region.textContent = message; // 初期描画から DOM にある role="status" の要素
+  }
+}
+
 // フォームバリデーションの例
 function EmailField() {
   const [error, setError] = useState('');
@@ -246,10 +263,18 @@ function EmailField() {
 
 > "An ARIA live region tells the browser to announce dynamic content changes to assistive technology."
 > ([Making AI Chatbots Accessible for Screen Reader Users: A Developer Guide](https://medium.com/@marketing_58999/making-ai-chatbots-accessible-for-screen-reader-users-a-developer-guide-8f77a92407d5), セクション "ARIA Live Regions") ※2026-07-29に実際にfetch成功
+- [Element: ariaNotify() method](https://developer.mozilla.org/en-US/docs/Web/API/Element/ariaNotify) (MDN、ライブリージョンとの違い・priority の対応・Baseline 2026-09-14・Permissions Policy) ※2026-11-11 fetch
+- [Bye, live regions. Hello, ariaNotify()](https://dev.to/micaavigliano/bye-live-regions-hello-arianotify-3843) (DEV Community、ライブリージョンとの対応表と使い分け。ライブリージョンを置き換える段階ではないとの指摘) ※2026-11-11 fetch
 
-**バージョン**: ARIA 1.2 / すべてのモダンブラウザ
+> "Live regions can only make announcements following changes to the DOM, whereas an ariaNotify() announcement can be made at any time."
+> ([Element: ariaNotify() method](https://developer.mozilla.org/en-US/docs/Web/API/Element/ariaNotify), セクション "Description") ※2026-11-11に実際にfetch成功
+
+> "we are far from replacing live regions"
+> ([Bye, live regions. Hello, ariaNotify()](https://dev.to/micaavigliano/bye-live-regions-hello-arianotify-3843), 冒頭) ※2026-11-11に実際にfetch成功
+
+**バージョン**: ARIA 1.2 / すべてのモダンブラウザ（`ariaNotify()` は Baseline 2026: Chrome / Edge 141+, Firefox 150+, Safari 27+）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-11
 
 ---
 

@@ -94,6 +94,7 @@ E2E テストの操作ロジックを Page Object クラスに抽出し、テス
 - Page Object の再利用で複数テスト間の重複を削減できる
 - **規模が大きくなると Page Object 1層だけでは変更が散る**。「UI要素の定義」「複数画面をまたぐ業務操作」「アサーション」「環境設定・定数」の4種類の変更はそれぞれ異なる頻度・理由で発生するため、責務ごとに層を分けると変更の影響範囲が層内に閉じる: ①Page Object（ロケータと基本操作のみ）②Actions（複数画面にまたがる業務フロー、`expect()` は使わず成否を `boolean` で返す）③Tests（アサーションのみ。UI構造を知らない）④Config/Env（環境設定・定数）
 - Actions 層が `expect()` を持たず boolean を返す設計にすると、「操作の成否判定」と「テストとしての合否判定」が分離され、同じ Actions を複数のテストパターン（正常系・異常系）で再利用しやすくなる
+- ロケータはコンストラクタの中で代入する（下のコード例の形）。Playwright 1.65 から TypeScript のクラスフィールドが `tsconfig.json` の `useDefineForClassFields` に従う（`ES2022` 以降の `target` と `target` 未指定で有効）ため、`readonly submit = this.page.getByRole(...)` のようにフィールド初期化子からコンストラクタ引数プロパティを読むと、初期化子が先に走って `TypeError` になる
 
 **コード例**:
 ```ts
@@ -176,10 +177,12 @@ test('商品を検索して詳細を開く', async ({ searchAction }) => {
 **出典**:
 - [Playwright Docs: Page Object Models](https://playwright.dev/docs/pom) (Playwright公式)
 - [Structured Playwright —— 継続性から設計するE2Eテストの4層構造とハーネス](https://zenn.dev/mov_ish/articles/structured-playwright-e2e) (Zenn、Page Object/Actions/Tests/Config の4層分離とActions層のboolean返却パターン) ※2026-08-19 fetch
+- [Playwright Release notes: Version 1.65](https://github.com/microsoft/playwright/blob/main/docs/src/release-notes-js.md) (Playwright 公式、Breaking Changes: `useDefineForClassFields` に従うクラスフィールド) ※2026-11-11 fetch（playwright.dev が egress 不可のため GitHub 上の docs ソースで取得）
+  > "A field initializer that reads a constructor parameter property now fails, because the initializer runs first"
 
-**バージョン**: Playwright 1.40+
+**バージョン**: Playwright 1.40+（フィールド初期化子の注意は 1.65+）
 **確信度**: 高
-**最終更新**: 2026-08-19
+**最終更新**: 2026-11-11
 
 ---
 
@@ -767,5 +770,72 @@ expect(hasHorizontalScroll).toBe(false);
 **バージョン**: Playwright（`devices`、マルチプロジェクト構成、全バージョン共通）
 **確信度**: 中（Playwright 公式 API 使用だが単一著者・単一記事のみ）
 **最終更新**: 2026-09-19
+
+---
+
+### 11. Playwright のテストランナーを Bun に移すときは `bunx --bun` で起動し、`--only-changed`・`tsconfig` 依存・エラー文の機械照合が無いかを先に確認する
+
+Playwright 1.65 からテストランナーが Bun 上で動く。起動は `bunx --bun playwright test` とし、`--bun` を付け忘れない（付けないと `bunx` から起動しても Node.js で動く）。Bun では一部の機能の挙動が Node.js と違うため、移行前に自分の CI がそれに依存していないか確認し、まず CI のジョブを 1 本だけ Bun にして Node.js のジョブと並走させる。
+
+**根拠**:
+- 公式リリースノートが Bun での相違点を明記している: watch モードが無い / `--only-changed` が import をたどらない / `--tsconfig` と `tsconfig.json` の JSX 設定が効かず、独自 ESM ローダーも使えない / スタックトレースに async フレームが無く、API 名がクラス名なし（`locator.click` → `click`）になりエラーメッセージやステップ名が変わる / テスト内のコンソール出力が trace と UI モードに入らない
+- `--only-changed` は最も気づきにくい。テストが import する補助モジュールだけを変えると、Node.js では該当テスト 2 本が選ばれたのに Bun では 0 本・終了コード 0 になり、E2E が 1 本も走らないまま CI が緑になったと報告されている（Playwright 1.65 / Bun 1.4.4 / GitHub Actions ubuntu-latest で実測）
+- 同じ実測でランナーの RSS は中央値 733.8 MB → 333.0 MB に減ったが、実行時間の差は実行間のぶれと同程度で、速くなるとは言えなかったと報告されている。移行の動機はメモリに限られる
+- 失敗時のコードフレームと `at` で始まるスタック行が Bun では出なかったとの報告もある（Bun 1.4.4 / Node.js v22.23.4 比較）。落ちた行の特定が要るときは Node.js で流し直す
+- 公式 CI が確認しているのは Linux 上の Bun 1.4.3。1.65 から公式は Node.js 20 でのテストを行わない（Node.js 22 / 24 / 26 を使う）
+
+**コード例**:
+```yaml
+# .github/workflows/e2e.yml — まず Bun のジョブを 1 本だけ足し、Node.js のジョブと並走させる
+jobs:
+  e2e-node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test
+  e2e-bun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: npm ci                        # 依存の導入は npm のまま、変えるのは起動コマンドだけ
+      - run: npx playwright install --with-deps chromium
+      # Good: --bun を付けてテストランナーを Bun で動かす
+      - run: bunx --bun playwright test
+      # Bad: --bun なし（bunx から起動しても Node.js で動き、Bun の検証にならない）
+      # - run: bunx playwright test
+      # Bad: Bun では --only-changed が import をたどらず、補助モジュールだけの変更で 0 本・exit 0 になる
+      # - run: bunx --bun playwright test --only-changed=origin/main
+```
+
+```ts
+// Bad: CI の通知が Node.js 版のエラー文を文字列照合している（Bun では "locator.click" が "click" になり一致しなくなる）
+if (log.includes('locator.click: Timeout')) notifyFlaky();
+```
+
+**アンチパターン**:
+- `process.version` で Node.js かどうかを判定する（Bun 上では Node.js 互換のバージョン文字列が返る。Bun の判定は `process.versions.bun` で行う、と報告されている）
+- パス別名を `--tsconfig` だけで渡したまま Bun に移す（Bun では効かない）
+
+**出典引用**:
+> "Pass the `--bun` flag, because without it `bunx playwright test` runs on Node.js"
+> ([Playwright Release notes](https://github.com/microsoft/playwright/blob/main/docs/src/release-notes-js.md), セクション "Version 1.65" > "Run tests with Bun") ※2026-11-11に実際にfetch成功
+
+> "Bun は 0 本で、終了コードは 0。"
+> ([Playwright を Bun に移す前に確認したい 3 つのこと。メモリは半分、挙動は 6 つ違った](https://zenn.dev/nabeyan_dev/articles/fsfn-playwright-bun-test-runner), セクション "1. --only-changed を使ってへんか") ※2026-11-11に実際にfetch成功
+
+> "--bun を省くと、bunx から起動しても Node.js で動きます"
+> ([Playwright 1.65入門、Bunでテストを動かすと失敗表示の何が変わるか](https://qiita.com/kai_kou/items/a4f99fdc02193d07d62f), セクション "TL;DR") ※2026-11-11に実際にfetch成功
+
+**出典**:
+- [Playwright Release notes: Version 1.65](https://github.com/microsoft/playwright/blob/main/docs/src/release-notes-js.md) (Playwright 公式。playwright.dev が egress 不可のため GitHub 上の docs ソースで取得) ※2026-11-11 fetch
+- [Playwright を Bun に移す前に確認したい 3 つのこと。メモリは半分、挙動は 6 つ違った](https://zenn.dev/nabeyan_dev/articles/fsfn-playwright-bun-test-runner) (Zenn、GitHub Actions での Node.js / Bun 比較実測と `--only-changed` の 0 本・exit 0) ※2026-11-11 fetch
+- [Playwright 1.65入門、Bunでテストを動かすと失敗表示の何が変わるか](https://qiita.com/kai_kou/items/a4f99fdc02193d07d62f) (Qiita、`--bun` の有無と失敗表示の違い) ※2026-11-11 fetch
+
+**バージョン**: Playwright 1.65+（公式 CI は Bun 1.4.3 / Linux）
+**確信度**: 高
+**最終更新**: 2026-11-11
 
 ---
