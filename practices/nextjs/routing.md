@@ -458,6 +458,7 @@ SEO クローラー・BFF・監視ツールが HTTP ステータスコードに�
 - 親ディレクトリの `loading.tsx` も子ルートを Suspense でラップするため、直接配置した覚えがなくても発生する
 - `redirect()` も同じ制約を受ける。公式の `redirect` リファレンスは、ストリーミング文脈では「クライアント側でリダイレクトを出すための meta タグを挿入する」と述べている。1 記事（Next.js 14.2 / 15.x で確認と報告）は、`loading.tsx` を足すと認可テストが「307 + `Location`」から「200 + `http-equiv="refresh"`」に変わって落ちた事例を挙げ、画面で見ると遷移するため目視では気づけなかったと報告している。テストは 307 と「200 + meta refresh」の両方を許容し、200 のときは保護対象の内容が HTML に漏れていないことも検査する（Next.js 公式の実装ではなく同記事の対処）。`middleware`（Proxy）のリダイレクトは描画前に走るため 307 のまま
 - ストリーム中に 404 ページを返した場合、Next.js は `<meta name="robots" content="noindex">` を付けるので検索結果には載らない。ただしステータスは 200 のままなので、ステータスコードで判定する監視・分析・BFF には 404 として伝わらない
+- 権限の無い画面を「存在しない URL」と区別できない 404 にしたい場合（画面の存在自体を隠す）、`loading.tsx` 配下のページでの `notFound()` ではステータス・タブのタイトル・応答ヘッダーに差が残る。1 記事は、ロールの Cookie だけで「必ず開けない」と言える場合に `middleware`（Proxy）で GET / HEAD をアプリに存在しないパスへ rewrite して描画前に 404 を確定させ、レイアウトと各ページでもサーバー側で同じ判定を繰り返し、`generateMetadata` でも空のメタデータを返してタイトルから画面名が漏れないようにしたと報告している。rewrite 先に `/_not-found` を使うと事前生成の静的ページとして長い `s-maxage` が付くため避けた、とも述べている（Cookie は書き換えられるので「開ける」判断には使わない）
 
 **コード例**:
 ```tsx
@@ -516,10 +517,12 @@ export default async function BlogPost({ params }: { params: Promise<{ slug: str
 
 - [Next.js Docs: redirect](https://nextjs.org/docs/app/api-reference/functions/redirect) (Next.js 公式、ストリーミング文脈では meta タグでクライアント側にリダイレクトを出す) ※2026-11-09 fetch
 - [loading.tsx を足したら権限チェックのテストが落ちた — Next.js App Router のストリーミングと redirect の落とし穴](https://qiita.com/freefreefree1222/items/6d92e08c4ff979b06a22) (Qiita、`loading.tsx` 追加で認可テストが 307 → 200 + meta refresh に変わった事例と、307 / 200 + meta の両対応テスト。1 記事の報告) ※2026-11-09 fetch
+- [権限のない画面を「存在しない URL」と見分けのつかない 404 にする(Next.js App Router + nginx)](https://qiita.com/hasegawa--2025/items/1e8a3dd6fad80c25243c) (Qiita、`loading.tsx` 配下の `notFound()` で残る差分と、middleware rewrite + レイアウト / ページ / `generateMetadata` の 3 段判定。1 記事の報告) ※2026-11-12 fetch
+  > "状態を 404 にするには、loading.tsx が送られる前に決める必要があります。"（セクション "middleware で「アプリに無いパス」へ書き換える"）
 
 **バージョン**: Next.js 15+ (App Router)（コード例の `params` は Promise。v14 以前は同期オブジェクト）
 **確信度**: 高（公式ドキュメントで確認）
-**最終更新**: 2026-11-09
+**最終更新**: 2026-11-12
 
 ---
 

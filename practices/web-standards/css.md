@@ -947,3 +947,79 @@ function Button() {
 **最終更新**: 2026-10-25
 
 ---
+
+### 17. スクロール連動の表示アニメーションは JavaScript ではなく `animation-timeline: scroll()` / `view()` で書き、`animation` 一括指定の後に置く
+
+Scroll-driven Animations（`animation-timeline` / `animation-range`）は 2026 年 10 月に Baseline（Newly available）になった。スクロールで要素をフェードインさせる・読了プログレスバー・スクロール量でヘッダー背景を切り替える、といった演出は scroll イベントや IntersectionObserver + クラス付け替え、AOS のようなライブラリを使わず CSS だけで書く。`animation` 一括指定は `animation-timeline` を `auto` にリセットするため、`animation-timeline` は必ず一括指定より後に書く。Newly available なので、演出は `@supports` と `prefers-reduced-motion` の内側に入れ、未対応ブラウザでは「演出なしで最初から読める」状態を既定にする。
+
+**根拠**:
+- MDN の `animation-timeline` は「Baseline 2026 / Newly available（2026 年 10 月以降、最新のブラウザで動作）」と表示しており、Firefox 159 で Scroll-driven Animations が既定で有効になった
+- `animation-timeline` は `animation` 一括指定に reset-only の値として含まれる。一括指定を後に書くと `auto`（時間ベース）に戻り、スクロールに連動せずページ表示時に 1 回再生されて終わる（MDN 明記。記事も Chrome で同じ症状を確認）
+- `view()` は最も近い祖先のスクロールコンテナを基準にする。はみ出しを隠すために親へ `overflow: hidden` を付けると親がスクロールコンテナになり、子の `view()` がページのスクロールを見なくなる。隠すだけなら `overflow: clip` を使う（記事の検証）
+- 未対応ブラウザで「スクロール前用の特別な見た目」（透明ヘッダーなど）が既定スタイルだと、そのまま残って読めなくなる。既定スタイルはスクロール後の見た目にし、対応ブラウザでだけ `from` キーフレームで初期状態を作る（記事の検証）
+- JavaScript とライブラリの読み込みが不要になる（記事の比較では AOS 2.3.4 は gzip 後に JS 約 4.7KB + CSS 約 2.2KB）。時間ではなくスクロール量で進むので、「遅延」は `animation-range` の開始位置をずらして表現する
+
+**コード例**:
+```css
+/* Good: 未対応・視差効果を減らす設定では演出なし（最初から表示） */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(60px); }
+}
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .fade-up {
+      animation: fade-up linear both;   /* 一括指定を先に */
+      animation-timeline: view();       /* 後に書く（一括指定が auto にリセットするため） */
+      animation-range: entry 0% cover 30%;
+    }
+    .fade-up.delay-1 { animation-range: entry 10% cover 40%; } /* 遅延は開始位置で表す */
+
+    .progress {
+      animation: grow-progress linear both;
+      animation-timeline: scroll(root); /* ページ全体のスクロール量 */
+    }
+  }
+}
+
+/* Good: はみ出しを隠すだけなら clip（スクロールコンテナにならない） */
+.hero { overflow: clip; }
+
+/* Bad: animation-timeline を一括指定より前に書く → 時間ベースに戻り、表示時に 1 回再生されて終わる */
+.sample {
+  animation-timeline: view();
+  animation: fade-up 1s linear both;
+}
+
+/* Bad: overflow: hidden の子で view() を使う → 親自身がスクロールコンテナになり、ページのスクロールに連動しない */
+.hero { overflow: hidden; }
+```
+
+**アンチパターン**:
+- スクロール位置を scroll イベントで読み、クラスを付け替えて表示アニメーションを起動する（CSS で書けるようになった）
+- `@supports` なしで `from { opacity: 0 }` 系の演出を当て、未対応環境での表示を確認しない
+- `prefers-reduced-motion` を確認せずに視差効果（パララックス）を入れる（`web-standards/accessibility.md` Rule #8 も参照）
+
+**出典引用**:
+> "The animation-timeline property is included in the animation shorthand as a reset-only value."
+> ([animation-timeline - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/animation-timeline), セクション "Description") ※2026-11-12に実際にfetch成功
+
+> "Since October 2026, this feature works across the latest devices and browser versions."
+> ([animation-timeline - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/animation-timeline), Baseline 表示) ※2026-11-12に実際にfetch成功
+
+> "Scroll-driven animations are now enabled by default."
+> ([Firefox 159 release notes for developers](https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/159), セクション "CSS") ※2026-11-12に実際にfetch成功
+
+> "animation-timeline は、animation の一括指定より後に書けば大丈夫です。"
+> ([【CSSだけ】スクロールでふわっと表示するアニメーションを作る](https://zenn.dev/h_aso/articles/css-scroll-driven-animations-baseline), セクション "気をつけたいこと1：animation-timelineを書く順番") ※2026-11-12に実際にfetch成功
+
+**出典**:
+- [animation-timeline - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/Reference/Properties/animation-timeline) (MDN、Baseline 2026・reset-only・`view()` は最も近い祖先のスクロールコンテナを基準にする) ※2026-11-12 fetch
+- [Firefox 159 release notes for developers](https://developer.mozilla.org/en-US/docs/Mozilla/Firefox/Releases/159) (MDN、Firefox 159 で Scroll-driven Animations が既定で有効) ※2026-11-12 fetch
+- [【CSSだけ】スクロールでふわっと表示するアニメーションを作る](https://zenn.dev/h_aso/articles/css-scroll-driven-animations-baseline) (Zenn、AOS の置き換え実装と、書く順番・`overflow: hidden`・未対応ブラウザの初期状態の 3 つの落とし穴を Chrome / Firefox 149 で検証) ※2026-11-12 fetch
+
+**バージョン**: Baseline 2026（Chrome / Safari / Firefox 159+ の最新版）
+**確信度**: 高（MDN で確認。`overflow: hidden` と初期状態の落とし穴は記事の検証）
+**最終更新**: 2026-11-12
+
+---
