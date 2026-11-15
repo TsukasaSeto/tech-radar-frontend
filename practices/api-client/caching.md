@@ -109,6 +109,7 @@ TanStack Query のデフォルト値はほとんどのユースケースに適�
 - `staleTime: 0`（デフォルト）はウィンドウフォーカス時に毎回リフェッチする（多くの場合過剰）
 - ユーザープロフィールや設定データは数分〜数時間 stale でも問題ないケースが多い
 - `gcTime`（旧 `cacheTime`）はキャッシュのメモリ保持時間であり、画面を戻った時のスピード感に影響する
+- **例外: キャッシュの値で別リクエストのキーを組む場合**: キャッシュに値があれば先に返して裏で再検証する動き（SWR も同じ）は表示には有利だが、画面を離れている間にサーバー側で変わりうる値（別画面で保存した設定など）から子のクエリキーを組むと、戻った直後に古い値で 1 回リクエストが飛ぶ。SWR では再マウント直後の最初のレンダリングで `isValidating` が前回の `false` のまま返り待ち条件に使えないと報告されている（swr 2.3.8 / React 18.3・19.1 での検証）。TanStack Query なら `isFetchedAfterMount` で「このマウントで取り直したか」を確かめてから子をレンダリングするか、保存時に `invalidateQueries` / `mutate` で該当キーを更新する
 
 **コード例**:
 ```ts
@@ -151,10 +152,13 @@ const { data: prefectures } = useQuery({
 - [TanStack Query: Important Defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults) (TanStack公式)
 - [TanStack Query: Caching](https://tanstack.com/query/latest/docs/framework/react/guides/caching) (TanStack公式)
 - [TanStack Query: Important Defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults) (TanStack公式、`staleTime: Infinity` のクエリも `invalidateQueries()` で無効化できる) ※2026-10-25 確認
+- [たまに出るサーバーエラーを追ったら、SWR が古いキャッシュを返していた話](https://zenn.dev/loglass/articles/7b94cb6e64c5d8) (ログラス テックブログ、キャッシュの古い値から依存リクエストのキーを組む不具合と `isValidating` が待ち条件にならない検証) ※2026-11-13に実際にfetch成功
+  > "isValidating の false は「いま通信していない」という意味で、「再検証が終わった」という意味ではありませんでした。"
+  > (セクション "試したこと 2: isValidating で待つ（防げなかった）")
 
 **バージョン**: TanStack Query 5+（注: v4 では `cacheTime`、v5 では `gcTime`）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-13
 
 ---
 
