@@ -541,3 +541,66 @@ countGraphemes('🇯🇵');              // 1
 **バージョン**: Baseline Widely available（全モダンブラウザ）、TypeScript は `lib: es2022` 以降
 **確信度**: 高（API と対応状況は MDN。`.length` の挙動の数値・`lib` の注意は個人記事の検証）
 **最終更新**: 2026-10-29
+
+---
+
+### 6. 期間（「1 時間 46 分 40 秒」）は単位文字列と複数形の三項演算子で組み立てず、`Intl.DurationFormat` で表示する
+
+再生時間・所要時間・残り時間などの期間表示を `` `${h} hour${h !== 1 ? "s" : ""}` `` のように手で組み立てると、英語の「1 か、それ以外か」の 2 通りの複数形と英語の語順・区切りしか表現できない。`Intl.DurationFormat` に locale と `style`（`"long"` / `"short"` / `"narrow"` / `"digital"`）を渡し、`{ hours, minutes, seconds }` のような期間オブジェクトを `format()` する。
+
+**根拠**:
+- `Intl.DurationFormat` は言語に応じた期間フォーマットを行う標準 API で、同じ期間・同じ呼び出しで locale ごとに単位名・区切り・接続詞（フランス語の `et` など）が切り替わる（MDN）
+- 複数形の数は言語によって異なる（ロシア語・ポーランド語は 3 区分、アラビア語は最大 6 区分）ため、`!== 1 ? "s" : ""` の三項演算子は英語以外で例外もログも出さずに誤った表示になる（記事）
+- `format()` に渡す期間オブジェクトの各値は整数で、符号は揃える必要がある（MDN）。記事の検証では、小数（`{ hours: 1.5 }`）や符号の混在（`{ hours: -1, minutes: 30 }`）は例外になり、`h` / `m` のような単位名の誤りは警告なしに無視され、有効なフィールドが残らないと例外になったと報告されている。秒未満は `milliseconds` フィールドと `fractionalDigits` オプションで表す
+- `format()` の出力は同じ locale でも実装ごとに異なりうる（ノーブレークスペースや双方向制御文字が入る場合がある）ため、ハードコードした文字列と比較しない（MDN）。テストのスナップショットにも直書きしない
+- Baseline は Newly available（2025-03-04。Chrome / Edge 129、Firefox 136、Safari 16.4）。それより古いブラウザを対象に含める場合は機能検出してフォールバックする
+
+**コード例**:
+```ts
+// Good: locale と style を渡して期間オブジェクトを整形する（formatter は再利用する）
+const durationFormat = new Intl.DurationFormat('fr-FR', { style: 'long' });
+durationFormat.format({ hours: 1, minutes: 46, seconds: 40 });
+// "1 heure, 46 minutes et 40 secondes"（MDN の例）
+
+// Good: 符号はオブジェクトを作る前に揃え、秒未満は milliseconds + fractionalDigits で表す
+function toDuration(totalMs: number) {
+  const ms = Math.abs(Math.trunc(totalMs));
+  return {
+    hours: Math.floor(ms / 3_600_000),
+    minutes: Math.floor((ms % 3_600_000) / 60_000),
+    seconds: Math.floor((ms % 60_000) / 1000),
+    milliseconds: ms % 1000,
+  };
+}
+new Intl.DurationFormat('en', { style: 'digital', fractionalDigits: 2 }).format(toDuration(330_500));
+
+// Bad: 英語の 2 通りの複数形と語順しか表現できない
+function formatDuration(h: number, m: number) {
+  return `${h} hour${h !== 1 ? 's' : ''}, ${m} minute${m !== 1 ? 's' : ''}`;
+}
+
+// Bad: 単位名の省略・小数・符号の混在を渡す
+new Intl.DurationFormat('en').format({ h: 1, m: 30 });          // 有効なフィールドがなく例外
+new Intl.DurationFormat('en').format({ hours: 1.5 });           // 整数でないため例外
+new Intl.DurationFormat('en').format({ hours: -1, minutes: 30 }); // 符号が混在して例外
+```
+
+**アンチパターン**:
+- 期間表示のためだけに locale データ付きの npm パッケージを追加する（対象ブラウザが Baseline を満たすなら標準 API で足りる）
+- `format()` の結果を `expect(...).toBe("1 hr, 46 min, 40 sec")` のように固定文字列で検証する
+
+**出典引用**:
+> "Each property's value should be an integer, and their signs should be consistent."
+> ([Intl.DurationFormat.prototype.format() - JavaScript | MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DurationFormat/format), セクション "Parameters") ※2026-11-15に実際にfetch成功
+
+> "A two-way ternary can express exactly one rule: English's."
+> ([My Duration Formatter Broke in French. Intl.DurationFormat Doesn't.](https://dev.to/parsajiravand/my-duration-formatter-broke-in-french-intldurationformat-doesnt-56gl), セクション "The ternary that only counts to two") ※2026-11-15に実際にfetch成功
+
+**出典**:
+- [Intl.DurationFormat - JavaScript | MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DurationFormat) (MDN、API の定義・locale ごとの例・Baseline Newly available) ※2026-11-15に実際にfetch成功
+- [Intl.DurationFormat.prototype.format() - JavaScript | MDN](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DurationFormat/format) (MDN、値は整数・符号を揃える、出力を固定文字列と比較しない) ※2026-11-15に実際にfetch成功
+- [My Duration Formatter Broke in French. Intl.DurationFormat Doesn't.](https://dev.to/parsajiravand/my-duration-formatter-broke-in-french-intldurationformat-doesnt-56gl) (dev.to、手組みの複数形の破綻と、単位名・小数・符号混在の挙動の検証) ※2026-11-15に実際にfetch成功
+
+**バージョン**: Baseline Newly available（2025-03-04。Chrome / Edge 129+、Firefox 136+、Safari 16.4+）
+**確信度**: 高（API の仕様・対応状況は MDN。単位名の誤り・小数・符号混在の具体的な挙動は個人記事の検証）
+**最終更新**: 2026-11-15

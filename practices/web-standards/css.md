@@ -947,3 +947,64 @@ function Button() {
 **最終更新**: 2026-10-25
 
 ---
+
+### 18. はみ出しを切り取るだけなら `overflow: hidden` ではなく `overflow: clip` を使い、子孫の `position: sticky` を壊さない
+
+`position: sticky` は、実際にスクロールするかどうかに関係なく、最も近い「スクロールの仕組みを持つ祖先」（`overflow` が `hidden` / `scroll` / `auto` / `overlay`）に対して貼り付く。角丸からの画像のはみ出し対策などで共通コンポーネントに `overflow: hidden` を足すと、その内側の sticky 要素はスクロールしないその要素に貼り付き、ビューポートに追従しなくなる。切り取りが目的なら、スクロールコンテナを作らない `overflow: clip` を使う。
+
+**根拠**:
+- `overflow: hidden` と `clip` はどちらもはみ出しを切り取るが、`clip` はスクロールコンテナを作らないため、ブラウザが最も近いスクロールコンテナの祖先を探すときに飛ばされる（MDN）
+- sticky の基準は「最も近い実際にスクロールしている祖先」ではなく「スクロールの仕組みを持つ最も近い祖先」である（MDN）。このため sticky 要素のファイルを変更しなくても、別ファイルの共通コンポーネントへの `overflow: hidden` 追加だけで sticky が効かなくなり、警告も出ない（記事）
+- `clip` ではプログラムからのスクロール（`scrollTop` の代入など）もできない（MDN）。切り取った領域をスクロールさせたい、またはスクロールコンテナとして扱いたい場合は `hidden` / `auto` のままにする
+- sticky が効かないときは、sticky 要素の各祖先の `getComputedStyle(el).overflow` を確認すると原因の祖先を特定できる（記事）
+
+**コード例**:
+```css
+/* Good: 角丸からのはみ出しだけを切り取る。スクロールコンテナを作らないので内側の sticky はページに追従する */
+.card {
+  border-radius: 16px;
+  overflow: clip;
+}
+.card .jump-bar {
+  position: sticky;
+  top: 0;
+}
+
+/* Bad: .card がスクロールコンテナになり、.jump-bar はスクロールしない .card に貼り付く（ページに追従しない） */
+.card {
+  border-radius: 16px;
+  overflow: hidden;
+}
+```
+
+```js
+// sticky が効かない原因の祖先を探す（DevTools のコンソールで実行）
+let el = document.querySelector('.jump-bar').parentElement;
+while (el) {
+  const { overflow } = getComputedStyle(el);
+  if (overflow !== 'visible') console.log(el, overflow);
+  el = el.parentElement;
+}
+```
+
+**アンチパターン**:
+- 共通コンポーネント（Card / Panel 等）に「念のため」 `overflow: hidden` を付ける
+- sticky が効かない原因を `top` の指定や `z-index` に求め、祖先の `overflow` を確認しない
+
+**出典引用**:
+> "With both hidden and clip, the overflow gets clipped, but overflow: clip doesn't create a scroll container, so clipped elements are skipped when the user agent goes up the DOM tree looking for the nearest ancestor scroll container."
+> ([overflow - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow), セクション "Understanding overflow values") ※2026-11-15に実際にfetch成功
+
+> "the CSS Overflow spec defines `clip` so that it never creates a scroll container."
+> ([overflow: hidden breaks position: sticky. overflow: clip doesn't.](https://dev.to/parsajiravand/overflow-hidden-breaks-position-sticky-overflow-clip-doesnt-2ilh), セクション "The fix that doesn't ask you to restructure anything") ※2026-11-15に実際にfetch成功
+
+**出典**:
+- [overflow - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/overflow) (MDN、`clip` はスクロールコンテナを作らずプログラムからのスクロールも不可) ※2026-11-15に実際にfetch成功
+- [position - CSS | MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/position) (MDN、sticky はスクロールの仕組みを持つ最も近い祖先に貼り付く) ※2026-11-15に実際にfetch成功
+- [overflow: hidden breaks position: sticky. overflow: clip doesn't.](https://dev.to/parsajiravand/overflow-hidden-breaks-position-sticky-overflow-clip-doesnt-2ilh) (dev.to、共通コンポーネントの `overflow: hidden` で sticky が壊れる事例と調べ方) ※2026-11-15に実際にfetch成功
+
+**バージョン**: `overflow: clip` は Chrome 90+ / Firefox 81+ / Safari 16+（MDN browser-compat-data）
+**確信度**: 高（挙動は MDN。事例と調べ方は個人記事）
+**最終更新**: 2026-11-15
+
+---
