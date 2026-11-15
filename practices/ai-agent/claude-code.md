@@ -2615,6 +2615,7 @@ claude auto-mode config
 - 仕様書に「停止条件（Stop conditions）」を書くことで、不明点の前に AI が自己判断で進むのを防げる
 - CLAUDE.md に明示的に「残タスクを通知なしに記録するだけで終了することは禁止」と書かなければ、記録が完了シグナルになる
 - 完了条件が書けないのは「プロンプト力の不足」ではなく、タスクがまだ委任できる形になっていないシグナルである。完了条件は検証方法によって3タイプに分類できる：**到達型**（決定的・ゴール既知 → Stop hook で検証スクリプトを実行）、**収束型**（決定的・範囲未知 → 「打ち切り」の定義と試行回数上限を明示）、**ルーブリック＋判定型**（非決定的 → 独立judgeエージェントで十分条件を判定）
+- Stop hook で差し戻すときは、裏で動く作業（テスト・サブエージェント等）を待っている停止まで差し戻さない。公式の 8 回連続差し戻しの上限は Claude がツールを呼ぶたびにリセットされるため、差し戻しのたびに通知を読む・コマンドを走らせる状態だと上限に届かず止まらない。Stop の入力の `background_tasks`（実行中タスクの配列。何も動いていなければ空）が空でない間は差し戻さずに exit 0 する。`/goal` を使わず自作した Stop hook が 7.5 秒ごとに差し戻し続け、約 3 時間で 1,314 回差し戻した事例が報告されている
 - ループ実行のハーネスが弱いと、失敗を量産する。Workflow guard（プロセス制御）・Step guard（手順）・Verdict guard（構造化された判定出力）・Quality gate guard（決定的チェック）・Standards guard（コーディング/テスト規約）の5層でガードを分散配置し、単一の巨大な検証に頼らない
 
 **コード例**:
@@ -2627,6 +2628,8 @@ SESSION=$(jq -r '.session_id' <<<"$INPUT")
 COUNT_FILE="${TMPDIR:-/tmp}/claude-stop-$SESSION.count"
 # この hook が継続させた直後の停止でなければ（新しいターンなら）回数を数え直す
 [ "$(jq -r '.stop_hook_active' <<<"$INPUT")" = "true" ] || rm -f "$COUNT_FILE"
+# 裏で動く作業（テスト・サブエージェント等）があるあいだは差し戻さない（ツール呼び出しで 8 回上限がリセットされ、止まらなくなるため）
+[ "$(jq '.background_tasks // [] | length' <<<"$INPUT")" -gt 0 ] && exit 0
 
 if npm test --silent >/dev/null 2>&1; then
   rm -f "$COUNT_FILE"
@@ -2721,10 +2724,15 @@ UI の再設計・認証フローの変更は本タスクに含まない
 - [プロンプトを打つからループを設計するへ（ループを構成する6つの部品）](https://zenn.dev/nenene01/articles/loop-engineering-claude-code) (Zenn) ※2026-07-10に実際にfetch成功
 - [Guarded Loop Engineering（5層ガード設計）](https://zenn.dev/kamo78/articles/kaji-guarded-loop-engineering) (Zenn) ※2026-07-10に実際にfetch成功
 - [Hooks reference — Stop](https://code.claude.com/docs/en/hooks#stop) (Claude Code 公式 docs、Stop の入力 `stop_hook_active` と `decision: "block"` による継続) ※2026-10-25 確認
+- [Hooks reference — Stop input](https://code.claude.com/docs/en/hooks#stop-input) (Claude Code 公式 docs、8 回連続差し戻しの上限がツール呼び出しでリセットされる仕様と `background_tasks`) ※2026-11-15に実際にfetch成功
+  > "The count of consecutive continuations resets each time Claude calls a tool."
+- [/goalを使わずStopフックを自作したら、Claude Codeが止まらず使用量が増え続けた](https://zenn.dev/kagaribilab/articles/claude-code-stop-hook-loop) (Zenn、裏の作業を待つ停止を差し戻し続けて上限が効かなかった実例) ※2026-11-15 fetch
+  > "今回は差し戻しのたびに通知を読むかコマンドを走らせていたので、8回に届かず、効きませんでした。"
+  > (セクション "なぜループしたか")
 
 **バージョン**: Claude Code（全バージョン）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-15
 
 ---
 
@@ -4683,6 +4691,7 @@ Claude Code の hook は既定では「壊れても操作が通る」fail-open �
 - 別環境（Claude Code 2.1.316 / Windows 11 / Git Bash）の検証でも、PreToolUse フックで操作を止めたのは exit 2 だけで、検査スクリプトが exit 1・exit 3・例外で落ちると 3 回中 3 回とも操作が実行された。`onFailure: "block"` を付けると exit 1・例外・ファイル名の打ち間違いのいずれでも 0 回（阻止）だった。「検査で見つかったら exit 1」と書いた秘密情報チェックが `git push` を止められなかった実例が報告されている
 - 判定スクリプトが分割モジュールの import に失敗すると、main() の try/catch に届く前に Python が exit 1 で終わる。「exit 1 だけ通し、他の非ゼロは拒否」でも、異常終了と正常な答えが同じ値になりうるため、判定スクリプトは正常に動けば常に exit 0 で `found` / `none` を出力し、フックは「exit 0 かつ `none`」のときだけ通す（通す条件を 1 つに絞る）設計が報告されている
 - `onFailure` は `command` / `http` hook のみ有効。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
+- hook 定義の `if`（例: `Bash(git push *)`）による起動の絞り込みは best-effort で、Bash 入力をサブコマンドに分割できないときはパターンに関係なく hook が起動する（公式 docs）。スクリプト側は「`if` に一致したときだけ呼ばれる」前提を置かず、入力のコマンドを自分で判定する。必ず止める allow / deny は hook ではなく permissions で定義する（公式 docs）
 
 **コード例**:
 ```json
@@ -4725,6 +4734,7 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 - `onFailure` に `"BLOCK"` など大文字を指定する（有効値は小文字の `"block"` / `"continue"` のみで、不正値は設定ファイル全体が無視されうる）
 - `timeout` を既定の 600 秒のままにする（15〜30 秒程度に絞る）
 - 入力が読めず止めたいときに exit 1 を使う（stderr に理由を書いて exit 2 にする）
+- hook の `if` パターンを「絶対に止める」条件の実装として使う（`if` は起動を絞る補助で、強制は permissions で行う）
 
 **出典引用**:
 > "hook が壊れても、既定では操作はそのまま通ります。"
@@ -4739,10 +4749,15 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 **出典**:
 - [exit 1でClaude Codeフックは止まるか33回試した](https://zenn.dev/ai_jarvis/articles/88ffbd67ebdec1) (Zenn、2.1.316 で exit 1 / 3 / 例外が素通りし、`onFailure: "block"` で阻止) ※2026-11-03 fetch
 - [「該当なし」と「判定器が落ちた」が同じ終了コード1だった](https://zenn.dev/itaraiguma/articles/deny-hook-exit-code-matcher-fail-open) (Zenn、判定結果を終了コードでなく出力に載せて fail-closed にする設計) ※2026-11-03 fetch
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、セクション "How `if` patterns match Bash commands"。`if` は best-effort で、分割できない Bash 入力では常に起動する) ※2026-11-15に実際にfetch成功
+  > "When Claude Code can't split the Bash input into subcommands, it runs your hook regardless of the pattern."
+- [11/15 の公式ドキュメント更新：フックの実行条件・終了コードとモデル関連の記載](https://qiita.com/akihidem/items/c1affda2795eb7d78ff6) (Qiita、hooks ページの `if` 対応表と終了コード 0 / 2 以外の扱いの追記を紹介) ※2026-11-15 fetch
+  > "`if` でフックの起動を絞っている場合、分割できない入力では絞り込みが効かない前提になります。"
+  > (セクション "Bash フックの if 条件：分割できない入力では必ず起動する")
 
 **バージョン**: Claude Code v2.1.295+（検証は 2.1.303・2.1.316 / Windows 11 / Git Bash）
-**確信度**: 中（パターン1c採用。検証環境は Windows のみ。2 つの独立した検証で exit 1 の素通りを確認）
-**最終更新**: 2026-11-03
+**確信度**: 中（パターン1c採用。検証環境は Windows のみ。2 つの独立した検証で exit 1 の素通りを確認。`if` の挙動は公式 docs）
+**最終更新**: 2026-11-15
 
 ---
 
