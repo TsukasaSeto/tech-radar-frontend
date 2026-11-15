@@ -5004,3 +5004,76 @@ npm run dev &
 **最終更新**: 2026-11-11
 
 ---
+
+### 60. Code Mode を有効にする前に、auto mode の分類器がツール呼び出し単位で審査しなくなることを前提に、必ず止める操作を deny / ask ルールと PreToolUse フックで守る
+
+Code Mode（実験的機能、`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`）では、Claude はツールを直接呼ばず、複数のツール呼び出しをまとめた JavaScript を書いて実行する。auto mode の分類器はこのコードを実行前に 1 回だけ審査し、内側の個々のツール呼び出しは審査しない。分類器は実行時に決まる値（検索結果から取ったパスなど）も見ないため、「分類器が危険な呼び出しを止めてくれる」前提の運用は成り立たない。必ず止めたい操作は `permissions.deny` / `ask` ルールと PreToolUse フックに置き、コード自体を検査したい場合は `REPL` ツールにマッチする PreToolUse フックで `tool_input.code` を読む。組織で使わせない場合は managed settings で `0` を設定する。
+
+**根拠**:
+- 公式 docs（Code Mode > Permission checks）によると、コードが行う各ツール呼び出しは deny / ask ルールと PreToolUse フックを通るが、auto mode の分類器はコード単位でしか審査せず、実行時に計算される値を見ない。公式はこのため「制御が必要な呼び出しにはルールやフックを残す」よう案内している
+- Bash のルールはコマンド文字列に対してマッチするので、Code Mode の有無にかかわらず、ルールが一致しない形で拒否対象のコマンドを実行できてしまう（コマンド文字列に依存しない制限はサンドボックスで行う）
+- Code Mode では、コードから呼ばれたツールの PreToolUse フックが起動失敗・126 / 127 / 128 超の exit・HTTP エラー・不正な出力・タイムアウトで判定を返さなかった場合、`onFailure` 未設定でも呼び出しが拒否される（通常の fail-open と挙動が異なる。Rule #54 の前提が変わる）。通過させたい場合は `"onFailure": "continue"` を明示し、タイムアウトを引き上げる
+- `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` はプロジェクトの settings では無視されるため、クローンしたリポジトリが勝手に Code Mode を有効にすることはない。逆に managed settings で `0` を設定すれば組織全体で無効化できる（managed settings から有効化はできない）
+- 2026-11-14 の公式 docs 更新でこれらの記述が permission modes / hooks のページにも追加されたと Qiita の差分記事が報告している
+
+**コード例**:
+```jsonc
+// ~/.claude/settings.json — Code Mode を試すときも、止める操作はルールとフックに置く
+{
+  "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1" },
+  "permissions": {
+    "deny": ["Bash(git push *)", "Bash(rm -rf *)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        // Good: Claude が書いたコード自体を検査する（tool_input.code に JavaScript が入る）
+        "matcher": "REPL",
+        "hooks": [{ "type": "command", "command": "~/.claude/hooks/check-code.sh" }]
+      }
+    ]
+  }
+}
+```
+
+```bash
+#!/bin/bash
+# ~/.claude/hooks/check-code.sh — 本番向け操作を含むコードは exit 2 で止める
+code=$(jq -r '.tool_input.code // ""')
+if printf '%s' "$code" | grep -qE 'git push|--prod|terraform apply'; then
+  echo "本番に影響する操作は Code Mode で実行しない" >&2
+  exit 2
+fi
+exit 0
+```
+
+```jsonc
+// managed settings — 組織で Code Mode を使わせない
+{ "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0" } }
+```
+
+**アンチパターン**:
+- auto mode の分類器に危険操作の検知を任せたまま Code Mode を有効にする（分類器はコード単位でしか審査せず、実行時の値を見ない）
+- PreToolUse フックのタイムアウトを短くしたまま Code Mode を使う（判定を返せないと、`onFailure` 未設定でも呼び出しが拒否され、作業が止まる）
+
+**出典引用**:
+> "Auto mode: the classifier reviews each piece of code before it runs, not each tool call. It doesn’t see values computed at run time"
+> ([Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode), セクション "Permission checks") ※2026-11-14に実際にfetch成功
+
+> "These errors mean that a PreToolUse hook didn’t give a decision, which refuses the call even when onFailure is unset"
+> ([Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode), セクション "Tool call refused by a hook") ※2026-11-14に実際にfetch成功
+
+> "審査されるのは Claude が書いたコードで、実行前に 1 回だけです。そのコードの内側で呼ばれる個々のツール呼び出しは審査されません。"
+> ([11/14 の公式ドキュメント更新：Code Mode と権限・フックの挙動、サブエージェントのモデル](https://qiita.com/akihidem/items/db350c6ca4d850158c22), セクション "Code Mode を使うと、権限判定とフックの前提が変わる") ※2026-11-14に実際にfetch成功
+
+**出典**:
+- [Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode) (Claude Code 公式 docs、Permission checks・Tool call refused by a hook・Block Code Mode for your organization・Requirements) ※2026-11-14に実際にfetch成功
+- [Choose a permission mode](https://code.claude.com/docs/en/permission-modes) (Claude Code 公式 docs、auto mode の分類器と Code Mode の関係) ※2026-11-14に実際にfetch成功
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、Code Mode では PreToolUse のタイムアウト・失敗時の挙動が異なる旨) ※2026-11-14に実際にfetch成功
+- [11/14 の公式ドキュメント更新：Code Mode と権限・フックの挙動、サブエージェントのモデル](https://qiita.com/akihidem/items/db350c6ca4d850158c22) (Qiita akihidem、公式 docs の追加文の差分整理) ※2026-11-14に実際にfetch成功
+
+**バージョン**: Claude Code v2.1.323+（Code Mode は実験的機能。対話型ターミナルセッションのみで、`-p` / Agent SDK / クラウドセッションでは使えない）
+**確信度**: 高
+**最終更新**: 2026-11-14
+
+---

@@ -124,10 +124,11 @@ it('should format date as YYYY-MM-DD', () => {
 
 ---
 
-### 3. Vitest を Next.js プロジェクトのデフォルトテストランナーとして使う
+### 3. Vitest を Next.js プロジェクトのデフォルトテストランナーとして使う（`globals: false` なら Testing Library の `cleanup` を setupFiles で登録する）
 
 Next.js プロジェクトでは Jest の代わりに Vitest を使う。
 ESM ネイティブで高速なウォッチモード、TypeScript のネイティブサポートが特長。
+`globals` を有効にしない（`describe` / `test` / `expect` を明示 import する）構成では、`@testing-library/react` の自動 cleanup が登録されないため、setupFiles で `afterEach(cleanup)` を自分で登録する。
 
 **根拠**:
 - Vite のトランスフォームパイプラインを共有するため TypeScript・JSX の設定が不要
@@ -135,6 +136,7 @@ ESM ネイティブで高速なウォッチモード、TypeScript のネイテ�
 - Jest と互換性のある API（`describe`, `it`, `expect`, `vi`）で移行コストが低い
 - ブラウザモードで実際のブラウザ環境でのテストも可能（Vitest Browser Mode）
 - Vite 8 以降は `resolve.tsconfigPaths` で tsconfig の `paths` をネイティブに解決でき、`vite-tsconfig-paths` を入れたままだと「不要」警告が出る。移行時は、先にプラグインだけを外して `Failed to resolve import` が出ること（＝機能自体は必要なこと）を確かめてから `resolve.tsconfigPaths: true` に置き換える。プラグインを消すだけだと import 解決が壊れる。移行で `vite-tsconfig-paths` / `tsconfck` / `globrex` の依存も減らせる
+- `@testing-library/react` は、グローバルに `afterEach` が存在するときだけ自動 cleanup を登録する。Vitest の `globals` は既定 `false` で、Next.js 公式ガイドの `vitest.config.mts` にも `globals` がないため、そのままだと前のテストで render した DOM が残る。1 本目のテストは通り、2 本目で `Found multiple elements` が出て初めて気づく
 
 **コード例**:
 ```ts
@@ -155,6 +157,11 @@ export default defineConfig({
 
 // src/test/setup.ts
 import '@testing-library/jest-dom';
+// globals: false（明示 import 派）の場合は cleanup を自分で登録する。
+// 書かないと @testing-library/react の自動 cleanup が登録されず、DOM がテスト間で残る
+// import { afterEach } from 'vitest';
+// import { cleanup } from '@testing-library/react';
+// afterEach(() => { cleanup(); });
 // MSW を使う場合は、このファイルに server.listen / resetHandlers / close を書く
 // （書き方は practices/testing/component-testing.md #4）
 
@@ -170,10 +177,15 @@ import '@testing-library/jest-dom';
 - [Vitestの「vite-tsconfig-pathsは不要」警告に従う前に、プラグインを外して落としてみた](https://zenn.dev/matsutake_prgrm/articles/remove-it-first-before-migrating) (Zenn matsutake_prgrm、警告に従う前にプラグインを外して壊れることを確認する移行手順) ※2026-09-24 fetch
 - [Vite Docs: resolve.tsconfigPaths](https://vite.dev/config/shared-options#resolve-tsconfigpaths) / [Announcing Vite 8](https://vite.dev/blog/announcing-vite8) (Vite 公式、既定は `false`・小さな性能コストがある・tsconfig の `include` / `files` に含まれるファイルにだけ効く) ※2026-10-25 確認
 - [vitejs/vite: packages/vite/src/node/config.ts](https://github.com/vitejs/vite/blob/main/packages/vite/src/node/config.ts) (Vite 公式リポジトリ、`vite-tsconfig-paths` / `vite-plugin-tsconfig-paths` を検出すると `resolve.tsconfigPaths: true` への置き換えを勧める警告を出す。8.0.0 の CHANGELOG で追加) ※2026-10-25 確認
+- [Next.js 公式ガイドどおりに Vitest を設定したら、2本目のテストで Found multiple elements が出た](https://zenn.dev/matsutake_prgrm/articles/vitest-rtl-cleanup-globals) (Zenn matsutake_prgrm、`globals` なしの構成で RTL の自動 cleanup が登録されない問題と setupFiles での対処) ※2026-11-14 fetch
+  > "Vitest がグローバルに afterEach を置くのは globals: true のときだけ。"（セクション "自動 cleanup は、afterEach がグローバルにあるときしか登録されない"）
+- [Vitest Docs: globals](https://vitest.dev/config/globals) ([docs ソース](https://raw.githubusercontent.com/vitest-dev/vitest/main/docs/config/globals.md)、Vitest 公式、既定 `false`) ※2026-11-14 fetch
+  > "Note that some libraries, e.g., `@testing-library/react`, rely on globals being present to perform auto cleanup."
+- [testing-library/react-testing-library: src/index.js](https://github.com/testing-library/react-testing-library/blob/main/src/index.js) (Testing Library 公式リポジトリ、`typeof afterEach === 'function'` のときだけ `afterEach(cleanup)` を登録する実装) ※2026-11-14 fetch
 
 **バージョン**: Vitest 1+, Next.js 13+（`resolve.tsconfigPaths` は Vite 8+。Vite 8 に対応するのは Vitest 4.1+）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-14
 
 ---
 
