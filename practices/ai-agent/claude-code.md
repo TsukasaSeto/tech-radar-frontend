@@ -310,6 +310,7 @@ Skill を設計する際は①命名は外部サービス名でなく機能名�
 - Skill 効果を数値化（ブランチカバレッジ 41.6% → 74.08% 等）することで「感覚的な改善」でなく根拠ある判断ができる
 - `AskUserQuestion` ツールを Skill に組み込むと選択肢形式の入力ガイドができ、チームメンバーごとの出力ばらつきを低減できる
 - Skill 設計の品質を「予測可能性（毎回同じプロセスで動くこと）」で統一する。Matt Pocock が体系化した6つのアンチパターンを事前に把握しておく: ①Premature Completion（後続ステップ意識による手抜き） ②Duplication（複数箇所での重複記述） ③Sediment（陳腐化した指示の蓄積） ④Sprawl（Skill の肥大化） ⑤No-op（動作変化のない指示） ⑥Uncontrolled Model-Invocation（全 Skill を自動起動してコンテキスト枯渇）。これらを定期的に点検し、戦略的削除を習慣にする
+- **`description` の「いつ使うか」は、ユーザーが頼むときの言葉で書く（作業途中の節目で書かない）**: 公式 docs のとおり Claude は名前と説明文の一覧から読み込む Skill を決めるが、Skill 35 本・682 回の試行では、読み込みは全て依頼を受け取った直後に起き、「報告する前に読む」のように作業の途中の節目を条件にした説明文の Skill は一度も途中で開かれなかったと報告されている。「集計・データ移行・落ちたテストの修正を頼まれたら、手を付ける前に読む」のように依頼の語で始めると読まれる回が増えた。一方、依頼の語に出てこない確認の習慣（完了報告前に件数を照合する等）は Skill ではなく毎回読まれる `CLAUDE.md` に置く。全依頼で最初に読ませる Skill を作ると、その場面専用の Skill が読まれる回が 21 回中 14 回から 6 回に減ったとされる（同記事、Sonnet で各場面 3 回の小規模検証）
 - **`description` は 1,536 文字で切り捨てられる（Claude Code 公式仕様）**: `description`（と `when_to_use` を併記している場合はその合計）が 1,536 文字を超えると、超過分は黙って切り捨てられる。判断材料になる「いつ使うか」を後半に書いていると、切り捨てで読まれない可能性がある。長い説明が必要な場合は「何をするか」と「いつ使うか」の両方を先頭付近に収まる長さで簡潔に書き、詳細は SKILL.md 本文側に回す。他にも under-trigger の典型原因として、①`name` をディレクトリ名と違う値にしていて、想定したコマンド名で見つからない（公式仕様では `name` は省略可能で、違っていてもスキルは読み込まれ、`/` メニューには `name` が表示され、ディレクトリ名でも起動できる）、②本文が説明過多で指示が埋もれる、③同格の選択肢を複数提示してAIが手戻りする、④集計・ソート等の決定的処理を（スクリプト化せず）AI自身にやらせる、⑤プロジェクト固有の落とし穴（gotcha）が書かれておらず手順は合っていても結論を誤る、がある
 - Skill にしてよいのは「配管（定型の固定手順）」だけ: 優先度付け・発散思考・複雑な判断など「次回も同じ手順になるか」が不確かなタスクを Skill 化すると「同じパターンに収束して発散の意味が消える」。判断はエージェントに委ね、Skill 化の前に「次回も手順が同じか」を問う（Skill 化を始める判断の目安は Rule #11）
 - Skill を Single Source of Truth として育てる（ASDD: Agent Skill Driven Development）: Wiki / Slack / README にルールを分散させずに Skill に集約し、Bootstrap → Develop → Capture → Review → Measure の 5 フェーズで回す
@@ -450,10 +451,12 @@ echo "合計: $TOTAL 文字"
 
 > "obvious quality degradation is prevented through lighter, faster validation steps: review against official best practices, then verify progressive disclosure and feedback loops remain intact"
 > ([【Claude Code】Agent Skill作成時の雑なTips 3選](https://zenn.dev/dk96424/articles/claude-skill-checklist), セクション "Tip 3") ※2026-05-24に実際にfetch成功
+- [入れた Skill が読まれないのはなぜ？読まれる説明文の書き方](https://zenn.dev/itoken_lab/articles/skill-description-read-on-request) (Zenn、Skill は依頼受領時に選ばれ作業途中の節目では読まれない・依頼の語で説明文を始める・節目の確認は指示ファイルへ) ※2026-11-16に実際にfetch成功
+  > 「線を引くなら、頼みの言葉から要ると分かる知識は Skill に、頼みの言葉に出てこない確かめの習慣は指示ファイルに置く、です。」
 
 **バージョン**: Claude Code（Skills 機能、2026年4月以降 gh CLI v2.90+）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-16
 
 ---
 
@@ -4904,3 +4907,62 @@ disallowedTools: Write, Edit, NotebookEdit, Bash
 **最終更新**: 2026-11-10
 
 ---
+
+### 61. 秘密を含むコマンドには「Yes, and don't ask again」を選ばず、`.claude/settings.local.json` はプロジェクトの `.gitignore` にも入れて追跡・履歴を点検する
+
+Bash コマンドの承認で「Yes, and don't ask again」を選ぶと、その承認は `allow` ルールとして `.claude/settings.local.json`（git リポジトリのルート）に保存される。`PGPASSWORD=... psql`・`sshpass -p ...`・`mysql -p...`・トークンを直書きした `curl` のような 1 回限りのコマンドを承認すると、パスワードや API キーがルールの文字列ごと平文で残ると報告されている。秘密は環境変数（`$DB_URL` など）経由で渡し、承認は `Bash(npm run:*)` のようなパターンで行う。
+Claude Code が自動で追加する除外は、そのマシンのグローバル git 除外ファイルへの `**/.claude/settings.local.json` であり、プロジェクトの `.gitignore` ではない。他のマシン・他の人のクローン・手で作ったファイル・既にコミット済みのファイルは守られないため、プロジェクトの `.gitignore` にも明示し、追跡と履歴を読み取り専用のコマンドで確認する。
+
+**根拠**:
+- 公式 docs: 「Yes, and don't ask again」で恒久保存される承認（Bash コマンドや WebFetch のドメインなど）は、git リポジトリのルートの `.claude/settings.local.json` に保存される
+- 公式 docs: Claude Code はこのファイルを初めて書き込むとき、まだ無視されていなければ `**/.claude/settings.local.json` をグローバル git 除外ファイル（`core.excludesFile`、未設定なら `$XDG_CONFIG_HOME/git/ignore` か `~/.config/git/ignore`）に足す。手で作ったファイルは Claude Code が書き込むまで自分で `.gitignore` に足す必要がある
+- 報告: 公開 GitHub リポジトリの `settings.local.json` 104,185 件のうち 1,122 件に秘密が 1 件以上含まれていたという調査（Apiiro）が紹介されている。gitleaks / TruffleHog でも全件は検出できなかったとされ、点検は「検出 0 件＝安全」とは言えない
+- ファイルを消しても既にコミットした秘密は履歴に残るため、見つけたら先にローテーション（無効化と再発行）を行い、その後に追跡解除と削除をする
+
+**コード例**:
+```bash
+# 点検（読み取りのみ。値を画面に出さない）
+git ls-files .claude/settings.local.json                       # 出力があれば追跡されている
+git log --all --oneline -- .claude/settings.local.json         # 削除済みでも履歴に残っていないか
+grep -cEi "password|passwd|token|secret|api[_-]?key|bearer|sshpass" .claude/settings.local.json  # 件数だけ（-n で行を出さない）
+
+# 見つけたら: 1) 秘密をローテーション → 2) 追跡を外す → 3) プロジェクトの .gitignore に追加 → 4) 該当ルールを削除
+git rm --cached .claude/settings.local.json
+echo ".claude/settings.local.json" >> .gitignore
+```
+
+```jsonc
+// .claude/settings.local.json
+{
+  "permissions": {
+    "allow": [
+      // Good: 秘密を含まないパターンで承認し、接続情報は環境変数から読む
+      "Bash(npm run:*)"
+
+      // Bad: 1 回限りのコマンドをそのまま承認 → パスワードが平文で残る
+      // "Bash(PGPASSWORD=s3cr3t psql -h db.example.com -U app)"
+    ]
+  }
+}
+```
+
+**アンチパターン**:
+- 「Claude Code が勝手に gitignore してくれる」と考え、プロジェクトの `.gitignore` に入れない（保護はそのマシンのグローバル除外にしか付かない）
+- 点検で `grep -n` を使い、見つかった秘密を端末やログに表示する
+- ファイルを削除しただけで、ローテーションも履歴の確認もしない
+
+**出典引用**:
+> "When Claude asks permission to run a Bash command and you choose "Yes, and don't ask again", Claude Code saves that approval as an `allow` rule in `.claude/settings.local.json`."
+> ([Settings files and precedence](https://code.claude.com/docs/en/settings), セクション "Where Claude Code keeps the local file in a git repository") ※2026-11-16に実際にfetch成功
+
+> 「問題は、ルールが「提示されたコマンドの文字列」を対象にする点です。」
+> ([Claude Code の「今後確認しない」に秘密が混ざる件を、自分の環境で点検する手順](https://zenn.dev/crossclub_lab/articles/claude-code-settings-local-secrets-check), セクション "1. 何が起きる話か") ※2026-11-16に実際にfetch成功
+
+**出典**:
+- [Settings files and precedence — Keep personal settings out of a repository](https://code.claude.com/docs/en/settings#keep-personal-settings-out-of-a-repository) (Claude Code 公式 docs、グローバル git 除外への自動追加と、手で作ったファイルは自分で `.gitignore` に足す) ※2026-11-16に実際にfetch成功
+- [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、恒久保存される承認は git リポジトリのルートの `.claude/settings.local.json` に保存) ※2026-11-16に実際にfetch成功
+- [Claude Code の「今後確認しない」に秘密が混ざる件を、自分の環境で点検する手順](https://zenn.dev/crossclub_lab/articles/claude-code-settings-local-secrets-check) (Zenn、秘密が混ざるコマンドの例・Apiiro 調査の紹介・読み取り専用の点検手順・ローテーション優先の対処順) ※2026-11-16に実際にfetch成功
+
+**バージョン**: Claude Code（`.claude/settings.local.json` の `permissions.allow`）
+**確信度**: 中（保存先と除外の範囲は公式 docs、秘密が平文で残る点と調査件数は単一記事の報告）
+**最終更新**: 2026-11-16
