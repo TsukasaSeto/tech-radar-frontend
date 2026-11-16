@@ -192,6 +192,7 @@ sdk.start();
 **根拠**:
 - 「ユーザー X の注文 Y でエラーが起きた」という調査で Trace ID がわからない場合でも、属性で絞り込める
 - スパン属性は OpenTelemetry のセマンティック規約（Semantic Conventions）に従うと他ツールとの相互運用性が高い
+- 属性名は文字列を手書きせず `@opentelemetry/semantic-conventions` の定数（`ATTR_HTTP_REQUEST_METHOD` など）から取る。規約の属性は非推奨化されることがあり（例: `http.method` → `http.request.method`）、古い名前を送るサービスが混ざると新しい名前での検索から漏れる。Sentry は自社 SDK でも JavaScript から規約パッケージで属性名を設定し、非推奨属性は次のメジャーで置き換える運用にしている
 - PII（個人情報）を直接付与せず、ハッシュ化した ID や匿名化した値を使う
 
 **コード例**:
@@ -235,10 +236,12 @@ export async function processOrder(orderId: string, userId: string) {
 
 **出典**:
 - [OpenTelemetry Semantic Conventions](https://opentelemetry.io/docs/concepts/semantic-conventions/) (OpenTelemetry公式)
+- [Naming is hard, semantics are hard(er): Inside Sentry Conventions](https://blog.sentry.io/sentry-conventions/) (Sentry Blog、属性名を規約パッケージから設定する理由と、`http.method` のような非推奨属性が検索から漏れる問題) ※2026-11-16に実際にfetch成功
+  > "Say you query on http.request.method, but one of your services still runs an older SDK that sends an outdated http.method attribute instead."
 
 **バージョン**: @opentelemetry/api 1.0+, @opentelemetry/semantic-conventions 1.0+
 **確信度**: 高
-**最終更新**: 2026-05-05
+**最終更新**: 2026-11-16
 
 ---
 

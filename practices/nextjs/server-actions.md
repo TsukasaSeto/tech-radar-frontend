@@ -654,3 +654,86 @@ RUN npm run build
 **バージョン**: Next.js 14+（16.3 のセルフホスト構成で確認）
 **確信度**: 高（鍵がビルド出力に埋め込まれる点は公式ドキュメント、Action ID が鍵から導出される点は公式リポジトリのテストとソースで確認）
 **最終更新**: 2026-10-25
+
+---
+
+### 9. 編集フォームを `<form action>` で送るときは、成功後に React が非制御フィールドをリセットする前提で `defaultValue` を更新するか画面を離れる
+
+React 19 では `<form action={fn}>` / `formAction` に関数を渡すと、Action が throw せずに完了した時点で、フォーム内の**非制御フィールドが `defaultValue` に戻される**。新規作成フォームでは次の入力をすぐ始められる正しい挙動だが、既存データを編集するフォームでは、保存直後に入力欄が空（または初期値）に戻り、そのまま再送すると空の値がサーバーへ届く。
+編集フォームでは、(1) `useActionState` で Server Function の戻り値を state に持ち、各フィールドの `defaultValue` に渡す、(2) 成功時に `redirect()` で編集画面を離れる、のどちらかにする。`register` で `ref.value` だけを書き換えるライブラリ（React Hook Form など）と `<form action>` を組み合わせる場合も、`defaultValue` は空のままなので同じ現象が起きる。
+
+**根拠**:
+- React 公式は「`action` / `formAction` に渡した関数が成功すると非制御フィールドを既定値に戻し、`defaultValue` の無いテキストフィールドは空になる」と明記している。throw せずにバリデーションエラーを返した場合もリセットされる
+- 公式の回避策は、保存した値を state に入れて `defaultValue` に渡すこと。React は更新後の既定値を適用してからリセットするため、フィールドは保存後の値を保つ。`useActionState` を使えばハイドレーション前でも Server Function の戻り値を既定値に使える
+- リセットを避けたい場合は `onSubmit` で `e.preventDefault()` し、`startTransition` 内で Action を呼ぶ（`action` が動かないためリセットされない）。リセットのタイミングを Action 内で決めたい場合は `react-dom` の `requestFormReset` を使う
+- 実例では、React Hook Form（`register` が `ref.value` に値を書き込み、`defaultValue` 属性は触らない）と `<form action>` を組み合わせた編集画面で、submit 時点の `FormData` は正しいのに、その後 React DOM が `form.reset()` を呼んで全項目（`<select>` を含む）が空に戻り、2 回目の送信で空の値が飛んだと報告されている（React 19.2.8 / react-hook-form 7.85.0 / Next.js 16.3.0）
+
+**コード例**:
+```tsx
+// app/items/[id]/_actions.ts
+'use server';
+
+export async function updateTitle(prev: { title: string }, formData: FormData) {
+  const title = String(formData.get('title') ?? '');
+  await saveTitle(title); // 認証・認可・入力検証は #5 に従う
+  return { title }; // 次の state = 保存後の値
+}
+```
+
+```tsx
+// app/items/[id]/EditForm.tsx
+'use client';
+
+import { useActionState } from 'react';
+import { updateTitle } from './_actions';
+
+// Good: 戻り値を defaultValue に渡す（React は新しい既定値を適用してからリセットする）
+export function EditForm({ initialTitle }: { initialTitle: string }) {
+  const [state, action, isPending] = useActionState(updateTitle, { title: initialTitle });
+  return (
+    <form action={action}>
+      <input name="title" defaultValue={state.title} />
+      <button type="submit" disabled={isPending}>保存</button>
+    </form>
+  );
+}
+
+// Bad: 既存値を表示しているのに defaultValue を更新しない
+// （保存成功後に入力欄が空に戻り、もう一度押すと空の値が送られる）
+// <form action={updateTitleAction}>
+//   <input name="title" {...register('title')} />
+// </form>
+```
+
+```ts
+// 別解: 保存したら編集画面を離れる（空のフォームを見せる場面自体をなくす）
+// app/items/[id]/_actions.ts（'use server' ファイル）
+import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
+
+export async function updateItem(formData: FormData) {
+  // ...保存
+  revalidatePath('/dashboard');
+  redirect('/dashboard'); // try/catch で囲まない（#7）
+}
+```
+
+**アンチパターン**:
+- 新規作成フォームと同じ書き方を編集フォームに流用し、保存後の再送で空データを書き込む
+- 「入力値が消える」原因を送信処理（Server Action 側）に探しにいく。submit 時点の `FormData` は正しく、消えるのは送信の後
+- `redirect()` を try/catch で囲み、`NEXT_REDIRECT` を握り潰して画面遷移もしない（#7）
+
+**出典引用**:
+> "When a function passed to `action` or `formAction` succeeds, React resets the form's uncontrolled fields to their default values. Text fields without a `defaultValue` become empty."
+> ([`<form>` – React](https://react.dev/reference/react-dom/components/form), セクション "My form fields are cleared after submission") ※2026-11-16に実際にfetch成功
+
+> 「サーバーには正しい値が届いていました。壊れていたのは送信ではなく、」
+> ([React Hook Formの値が送信後に消えるのは、React 19がform.reset()を呼ぶから](https://zenn.dev/matsutake_prgrm/articles/value-and-defaultvalue-are-different), セクション "ブラウザで直接観測して確定させた") ※2026-11-16に実際にfetch成功
+
+**出典**:
+- [`<form>` – React: Preserving form values after an Action](https://react.dev/reference/react-dom/components/form#preserve-form-values-after-an-action) (React 公式、`defaultValue` を state で更新して値を保つ・`useActionState` でハイドレーション前も保つ・`onSubmit` + `startTransition` でリセットを避ける・`requestFormReset`) ※2026-11-16に実際にfetch成功
+- [React Hook Formの値が送信後に消えるのは、React 19がform.reset()を呼ぶから](https://zenn.dev/matsutake_prgrm/articles/value-and-defaultvalue-are-different) (Zenn、React Hook Form と `<form action>` の組み合わせで `form.reset()` が全項目を空に戻した実測と `redirect()` での回避) ※2026-11-16に実際にfetch成功
+
+**バージョン**: React 19+（`<form action>` に関数を渡す場合）、Next.js 15+（App Router / Server Actions）
+**確信度**: 高
+**最終更新**: 2026-11-16

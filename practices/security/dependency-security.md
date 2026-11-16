@@ -163,7 +163,7 @@ git diff package-lock.json
 - Renovate は npm 以外（GitHub Actions・Docker・Terraform）も統合管理できる
 - Dependabot は GitHub 公式、設定がシンプル。Renovate は柔軟だが設定が複雑
 - バージョン更新 PR は `groups` でエコシステムごとに1本へまとめ、`interval` を `daily` から `monthly` に落とすとレビュー負荷を大きく下げられる。ただしこれは version-update（バージョン追従）の頻度であり、セキュリティ修正 PR は脆弱性の公開と同時に独立してトリガーされるため、この間隔設定では遅延しない
-- セキュリティ修正 PR が「脆弱性の公開と同時」に出るのは GitHub Advisory Database に reviewed 状態で掲載されて以降の話で、メンテナの公表からその掲載までにはラグがある（Next.js の 2026-10-14 公表分が 10-20 時点でも未掲載、2026-08 以降の掲載中央値は 7〜14 日）ため、公表を知ったら GHSA ID で `github.com/advisories/<GHSA ID>` を自分で引き、404 なら Dependabot alert / PR は出ない前提で手動パッチ適用を検討する
+- セキュリティ修正 PR が「脆弱性の公開と同時」に出るのは GitHub Advisory Database に reviewed 状態で掲載されて以降の話で、メンテナの公表からその掲載までにはラグがある（Next.js の 2026-10-14 公表分が 10-20 時点でも未掲載、2026-08 以降の掲載中央値は 7〜14 日）ため、公表を知ったら GHSA ID で `github.com/advisories/<GHSA ID>` を自分で引き、404 なら Dependabot alert / PR は出ない前提で手動パッチ適用を検討する。同じラグは `npm audit` にも出る: リポジトリで公表済みの Vite の Critical アドバイザリ（GHSA-p4f5-76q4-ffq7）が、グローバル Advisory DB への照会で 404 だった日に、プライベート・公開どちらのレジストリに対する `npm audit --json` にも出なかったと報告されている。`npm audit` の結果は「その時点で監査サービスが把握している脆弱性」であり、出なかったことを対応不要の根拠にしない
 - Dependabot は定期スキャンせず、新規 advisory 追加時と依存グラフ変更時にだけ走る。alert が出ても security updates 無効・lockfile 非管理・既存 PR・PR 上限・advisory に fixed version なし、のいずれかで PR が作られないことがある
 - 当面採用しない更新（例: `@types/node` の次期メジャー、`next` の semver-major）は `ignore` に入れて閉じた PR が再作成されるのを防ぎ、**無視理由と追跡 Issue をコメントで残して**設定の形骸化を避ける。`groups` を `dependency-type: production` / `development` の2つにするとレビュー対象を最大2本に抑えられる
 - Renovate は GitHub 以外に GitLab / Bitbucket / Azure DevOps など複数プラットフォームに対応し、90 以上のパッケージマネージャーをサポートする。マルチプラットフォーム運用や npm 以外のエコシステムを広く自動更新したい場合は Renovate が優位、GitHub 単体で追加セットアップなしに始めたい場合は Dependabot が優位という判断軸になる
@@ -282,13 +282,15 @@ updates:
 - [Dependabot の PR を形骸化させないための設定](https://zenn.dev/shebang/articles/dependabot-prs) (Zenn shebang、`ignore` の理由記録と production/development の `groups` 分割) ※2026-10-12 fetch
 - [ライブラリ最新化、Dependabot vs Renovate：自動化の最適解を比較](https://zenn.dev/fd_ai_teacher/articles/tech-20260804154450-1) (Zenn、Renovate のマルチプラットフォーム対応・90+パッケージマネージャー対応という選定軸の追加根拠) ※2026-08-05に実際にfetch成功
 - [Next.js の脆弱性に Dependabot が反応しなかったので、GitHub Advisory Database までの流れを追った](https://zenn.dev/rakko_inc/articles/dependabot-cve-to-pr-flow) (Zenn、公表→Advisory DB 掲載のラグと alert/PR が出ない条件、GHSA ID での手動確認) ※2026-10-21 fetch
+- [Critical脆弱性があるのにnpm auditには出なかった](https://zenn.dev/billysama/articles/d73b80972c9d67) (Zenn、公表済みアドバイザリが Advisory DB 未掲載の間は `npm audit` にも出なかった実測) ※2026-11-16に実際にfetch成功
+  > 「11月12日に同じGHSA IDをGitHubのグローバルAdvisory DatabaseのAPIで照会したところ、応答は404でした。」
 
 > "Dependabot security updates are raised as soon as a vulnerability with a fix is disclosed, independent of your schedule"
 > ([Tame Dependabot: Group your updates, slow the cadence, keep security fast](https://github.blog/security/supply-chain-security/tame-dependabot-group-your-updates-slow-the-cadence-keep-security-fast/), セクション "Security Prioritization") ※2026-07-29に実際にfetch成功
 
 **バージョン**: Renovate v37+, Dependabot v2
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-16
 
 ---
 
