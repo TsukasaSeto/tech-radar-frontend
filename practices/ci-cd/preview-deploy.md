@@ -15,6 +15,7 @@ Vercel / Netlify / Cloudflare Pages 等の PaaS は PR 単位でプレビュー 
 - localhost で動作確認しているとブラウザ拡張・キャッシュ等のローカル状態に依存しがち
 - PR 単位なら staging 環境の競合が起きない（同じ staging で複数 PR を検証できない問題を解消）
 - Backend サービスが必要なら preview 用の DB・API スタブも自動構築できる
+- 「PR 単位」を徹底するなら、PR の無いブランチへの push ではプレビューを作らない。Vercel は Ignored Build Step に PR 限定のプリセット（Deployments > Configuration > Ignored Build Step > Behavior: "Only build previews for pull requests"）を用意しており、本番と PR のあるブランチのプレビューはビルドされ、GitHub / GitLab 連携ならスキップ分は Build CPU Minutes を消費する前にキャンセルされる
 
 **Vercel での標準動作**:
 - GitHub と連携すれば設定不要で全 PR にプレビュー URL が生成される
@@ -109,6 +110,7 @@ PR を閉じたときにブランチを消すには、`on.pull_request.types` �
 **判定の指針**:
 - 全 PR で preview 自動生成が基本
 - リソース節約のため、`[skip preview]` PR labels で除外可能に
+- 作業途中のブランチを頻繁に push するチームでは、Vercel の PR 限定プリセットで PR を開くまでプレビューを作らない（自前の ignore コマンドを書かずに済む）
 - backend API がない / モックで動く PR は preview 不要
 
 **出典**:
@@ -117,10 +119,12 @@ PR を閉じたときにブランチを消すには、`on.pull_request.types` �
 - [Cloudflare Pages: Preview deployments](https://developers.cloudflare.com/pages/configuration/preview-deployments/) (Cloudflare)
 - [Vercel Docs: Generated URLs](https://vercel.com/docs/deployments/generated-urls) (Vercel 公式、ブランチ単位・コミット単位の URL の形式) ※2026-10-25 確認
 - [Vercel CLI: Global Options](https://vercel.com/docs/cli/global-options) (Vercel 公式、CI では `VERCEL_TOKEN` 環境変数を推奨・`VERCEL_ORG_ID` / `VERCEL_PROJECT_ID` でリンクを省略) ※2026-10-25 確認
+- [Pull-request-only preset now available for preview builds](https://vercel.com/changelog/pull-request-only-preset-now-available-for-preview-builds) (Vercel 公式 changelog、PR の無いブランチのプレビューをスキップする Ignored Build Step プリセット) ※2026-11-17に実際にfetch成功
+  > "A new Ignored Build Step preset lets you skip preview builds for branches without an open pull request."
 
 **バージョン**: パターン（Vercel CLI の例は 65.x）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-17
 
 ---
 
