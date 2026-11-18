@@ -998,6 +998,7 @@ rules:
 - シャーディングにより Playwright / Vitest のテスト実行時間を最大 1/N に短縮できる
 - `dorny/paths-filter` により無関係のジョブをスキップし、不要なコンピュートコストを削減できる
 - 両者の組み合わせで「速さ × 無駄のなさ」を両立し、開発者体験を維持しながらコストを抑えられる
+- 必須チェック（required status checks）に指定した workflow を workflow 単位の `on.<event>.paths` で絞ると、起動しなかった PR ではチェックが "Pending" のまま残り、PR を merge できなくなる。スキップされた job は "Success" と報告されるため、必須チェックのある workflow は起動させたうえで job の `if`（`dorny/paths-filter` の出力など）で飛ばす（GitHub 公式）
 - 1台の runner で `workers` を増やしても CPU / メモリの上限は変わらないため、`matrix.shard` で runner ごと分散させたほうが実効速度が上がる（総 runner-minutes は増えるが wall-clock は縮む、というトレードオフを意図的に取る）
 - CI では Vite を `dev` サーバーではなく `preview` サーバーで起動すると、ランタイムのモジュール変換オーバーヘッドを避けられる
 - 固定秒数の `sleep` ではなく実際のヘルスチェックで Docker / アプリの起動完了を待つと、無駄な待ち時間と不安定さの両方を減らせる
@@ -1067,6 +1068,7 @@ jobs:
 **アンチパターン**:
 - すべての PR で全テストを直列実行する → モノレポやテストが増えるにつれ CI が 10 分超になる
 - シャード数を一度設定したまま放置する → テスト増加に伴い 1 シャードが肥大化するため、定期的に実行時間を計測して調整する
+- 必須チェックに指定した workflow に `on.pull_request.paths` を付ける → 対象外の変更だけの PR がチェック待ちのまま merge できなくなる
 
 **出典引用**:
 > "shardingで並列数を増やすことでPlaywrightのテスト実行時間を効果的に短縮できます"
@@ -1078,15 +1080,24 @@ jobs:
 > "`next build` のステップだけで1106秒(≒ 約19分)かかっている" / "QEMUはARM命令をx86命令に逐次変換して実行するので、CPU実行そのものにオーバーヘッドが乗る"
 > ([Next.jsのDockerビルド時間を約19分短縮した話](https://zenn.dev/rb_engineering/articles/b642bdb5206cb9), セクション "紐解いていく" / "なぜQEMUを使っていたのか") ※2026-09-11に実際にfetch成功
 
+> "If a workflow is skipped due to path filtering, branch filtering, or a commit message, then checks associated with that workflow will remain in a "Pending" state. A pull request that requires those checks to be successful will be blocked from merging."
+> ([Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax), セクション "Example: Including paths") ※2026-11-18に実際にfetch成功
+
+> "ただし必須チェックの workflow を paths で起動させないと、check が Pending のまま残り、PR は merge できません"
+> ([なぜ GitHub Actions の無料枠対策は、テストを削る前に paths とトリガーを見直すのか](https://qiita.com/YujiNaramoto/items/331339edb8896b442a36), セクション "paths に寄せる理由と、付けてはいけない場合") ※2026-11-18に実際にfetch成功
+
 **出典**:
 - [CIを高速化するテクニック集](https://zenn.dev/mandenaren/articles/ci_speedup_techniques) (Zenn) ※2026-06-04 fetch
 - [Playwright: Sharding](https://playwright.dev/docs/test-sharding) (Playwright 公式、テスト並列分割。`shardIndex` / `shardTotal` の matrix・blob レポートの upload と merge-reports) ※2026-10-25 確認
 - [Playwright の E2E CI を4分割し、3時間13分から25分に短縮した](https://zenn.dev/thaddeusjiang/articles/ci-e2e-runtime-optimization) (Zenn、3時間13分→25分の実測改善、Vite preview サーバー化とヘルスチェック導入を含む) ※2026-08-21 fetch
 - [Next.jsのDockerビルド時間を約19分短縮した話](https://zenn.dev/rb_engineering/articles/b642bdb5206cb9) (Zenn、QEMU エミュレーションからネイティブ ARM64 runner への切り替えで `next build` を含むビルド&プッシュが24m43s→5m35sに短縮) ※2026-09-11 fetch
+- [Workflow syntax for GitHub Actions](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax) (GitHub Docs、path filtering でスキップされた workflow のチェックは Pending のまま残る) ※2026-11-18 fetch
+- [About status checks](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/about-status-checks) (GitHub Docs、スキップされた job は Success と報告され、必須チェックでも merge を妨げない) ※2026-11-18 fetch
+- [なぜ GitHub Actions の無料枠対策は、テストを削る前に paths とトリガーを見直すのか](https://qiita.com/YujiNaramoto/items/331339edb8896b442a36) (Qiita、無料枠対策で workflow の `paths` を使うときの必須チェックとの衝突) ※2026-11-18 fetch
 
 **バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v4
 **確信度**: 中(コミュニティ記事、実績多数)
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-18
 
 ---
 

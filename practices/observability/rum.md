@@ -376,6 +376,7 @@ observer.observe({ type: 'longtask' }); // LoAF に移行することを推奨
 ### 6. SPA のルート遷移（soft navigation）の Web Vitals は、ブラウザが報告する遷移単位の LCP・CLS・INP で計測し、ページロードと分けて評価する
 
 ページロード単位の Web Vitals は「ユーザーが着地したページ」しか測れない。SPA ではその後の遷移（soft navigation）が閲覧の大半を占めるため、遷移ごとの LCP・CLS・INP を計測し、Sentry v11 などの計測ツールでは遷移種別（ページロード / soft navigation / bfcache 復元）で分けて評価する。
+Vercel Speed Insights も 2026-11-17 から soft navigation を既定で計測するため、Navigation Type フィルタ（All / Hard / Soft）で分けて見る。
 
 **根拠**:
 - Chrome は soft navigation を「ユーザー操作で開始され、URL が目に見えて変わり、画面が描画される遷移」と定義している。この判定ヒューリスティクスは確定版ではなく、ブラウザごとに異なりうる（Sentry）
@@ -385,6 +386,7 @@ observer.observe({ type: 'longtask' }); // LoAF に移行することを推奨
 - soft navigation は文書リクエストがなく JS が既に実行中のため、ページロードより速く出やすい。混在させると全体スコアが見かけ上改善する（Sentry の例: 全遷移の p75 LCP 2.48s に対し soft navigation のみで 1.17s）。両者は比較せず、ページロード用の good / poor 閾値を soft navigation に当てはめない
 - 既存のダッシュボード・アラートは遷移種別（Sentry では `browser.navigation.type` 属性。soft navigation は `soft-navigation`、bfcache 復元は `back-forward-cache`）で絞り込む。ページロードのアラートを維持するには、この 2 値を除外する
 - 制約: Chromium 151 以降のみが soft navigation を報告する（記事執筆時点）。結果はその割合のユーザーを表し、ブラウザの判定はルーターの遷移と一致しない（Sentry の自社アプリでは Chrome のルート変更の約 4 分の 3 が該当）
+- Vercel Speed Insights（`@vercel/speed-insights` 2.1.0+）は soft navigation で LCP・FCP・INP・CLS を取り、Real Experience Score に含める。文書リクエストが無いので TTFB は取らない。Chromium 系ブラウザのみが対象。soft navigation のデータ点も使用量（Speed Insights Plus の課金対象）に数えるため、更新後はイベント数と費用の増加を確認する（公式）
 
 **コード例**:
 ```ts
@@ -399,6 +401,10 @@ Sentry.init({
 
 // ページ全体の寿命で 1 組の Vitals に戻したい場合のみ、soft navigation を無効化する
 // integrations: [Sentry.browserTracingIntegration(), Sentry.webVitalsIntegration({ softNavigations: false })]
+
+// Vercel Speed Insights（@vercel/speed-insights 2.1.0+）は soft navigation の計測が既定で有効。
+// 止めたいときだけ softNavs={false} を渡して再デプロイする
+// <SpeedInsights softNavs={false} />  または  injectSpeedInsights({ softNavs: false });
 
 // Bad: soft navigation を含む全遷移を 1 つの p75 にまとめて、ページロード用の閾値で評価する
 // （遷移種別で絞り込まないダッシュボード / アラート）
@@ -415,12 +421,17 @@ Sentry.init({
 > "Soft navigations are Chromium-only for now, and the heuristics for what counts as one may still change."
 > ([Measuring soft navigation web vitals](https://blog.sentry.io/measuring-soft-navigation-web-vitals/), Sentry Blog、セクション "Measuring the whole journey") ※2026-10-29に実際にfetch成功
 
+> "Speed Insights captures LCP, FCP, INP, and CLS for soft navigations and includes these measurements in your Real Experience Score. TTFB is not captured because there is no new document request."
+> ([Speed Insights now measures soft navigations](https://vercel.com/changelog/speed-insights-now-measures-soft-navigations), Vercel Changelog、本文) ※2026-11-18に実際にfetch成功
+
 **出典**:
 - [Measuring soft navigation web vitals](https://blog.sentry.io/measuring-soft-navigation-web-vitals/) (Sentry Blog、Sentry SDK v11 の soft navigation Web Vitals) ※2026-10-29に実際にfetch成功
+- [Speed Insights now measures soft navigations](https://vercel.com/changelog/speed-insights-now-measures-soft-navigations) (Vercel Changelog、Speed Insights の soft navigation 既定計測・Navigation Type フィルタ・課金) ※2026-11-18 fetch
+- [Speed Insights Configuration with @vercel/speed-insights](https://vercel.com/docs/speed-insights/package) (Vercel 公式 docs、`softNavs` オプション。2.1.0+) ※2026-11-18 fetch
 
-**バージョン**: Sentry JavaScript SDK v11+（`browserTracingIntegration`）、soft navigation の報告は Chromium 151+
-**確信度**: 高（Sentry SDK の挙動は提供元である Sentry の公式ブログ。soft navigation のブラウザ仕様は発展途上のため変更の可能性あり）
-**最終更新**: 2026-10-29
+**バージョン**: Sentry JavaScript SDK v11+（`browserTracingIntegration`）、`@vercel/speed-insights` 2.1.0+（`softNavs`）、soft navigation の報告は Chromium 151+
+**確信度**: 高（Sentry SDK・Vercel Speed Insights の挙動はそれぞれ提供元の公式情報。soft navigation のブラウザ仕様は発展途上のため変更の可能性あり）
+**最終更新**: 2026-11-18
 
 ---
 

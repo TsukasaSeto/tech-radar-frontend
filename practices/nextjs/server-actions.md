@@ -654,3 +654,90 @@ RUN npm run build
 **バージョン**: Next.js 14+（16.3 のセルフホスト構成で確認）
 **確信度**: 高（鍵がビルド出力に埋め込まれる点は公式ドキュメント、Action ID が鍵から導出される点は公式リポジトリのテストとソースで確認）
 **最終更新**: 2026-10-25
+
+---
+
+### 10. Server Action の本文上限（既定 1MB）を前提にファイル送信を設計し、上限は `experimental.serverActions.bodySizeLimit` で必要な分だけ上げる
+
+Server Action に送るリクエスト本文の上限は既定で 1MB。画像などを `FormData` で送るフォームは、上限を `next.config.ts` の `experimental.serverActions.bodySizeLimit` で用途に合わせて上げ、クライアント側でも送信前にサイズを検査して、上限超過をユーザー向けのメッセージで返す。ホスティング側の上限（Vercel Functions は 4.5MB）はこの設定では変わらないため、それを超えるファイルは Server Action を経由させずストレージへ直接アップロードする。
+
+**根拠**:
+- 1MB の既定上限は、大きなデータの解析によるサーバー資源の消費や DDoS を防ぐためのもの（公式）。上限を上げるほどこの防御が弱まるので、必要な値だけに留める
+- 上限は数値（バイト数）か `bytes` 形式の文字列（`'500kb'`・`'3mb'` など）で指定する。Next.js 16.4 時点でも `bodySizeLimit` は experimental で、`experimental.serverActions` の下に書く必要がある（公式）
+- 上限は multipart の本文全体にかかるため、900KB の画像とほかのフィールドを合わせて上限を超えることがあると報告されている（dev.to の記事）。クライアントで `file.size` を検査すれば、サーバーのエラーではなく入力エラーとして返せる
+- Vercel Functions はリクエスト本文の上限が 4.5MB で、超えると `413: FUNCTION_PAYLOAD_TOO_LARGE` を返す（Vercel 公式）。`bodySizeLimit` をこれより大きくしても、Vercel 上ではプラットフォーム側で拒否される
+
+**コード例**:
+```ts
+// next.config.ts
+import type { NextConfig } from 'next';
+
+// Good: 用途に必要な分だけ上げる（Next.js 16.4 時点でも experimental の下に書く）
+const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '4mb', // Vercel の 4.5MB 上限を下回る値にする
+    },
+  },
+};
+
+export default nextConfig;
+
+// Bad: experimental の外に書く（公式ドキュメントの指定位置と異なる）
+// const nextConfig: NextConfig = { serverActions: { bodySizeLimit: '4mb' } };
+
+// Bad: 上限エラーを避けるために必要以上の値を設定する（大きな本文の解析負荷・DDoS の防御が弱まる）
+// experimental: { serverActions: { bodySizeLimit: '100mb' } }
+```
+
+```tsx
+// app/profile/avatar-form.tsx
+'use client';
+
+import { useActionState } from 'react';
+import { uploadAvatar } from './actions';
+
+const MAX_BYTES = 4 * 1024 * 1024; // next.config.ts の bodySizeLimit と揃える
+
+export function AvatarForm() {
+  const [state, formAction] = useActionState(uploadAvatar, { message: '' });
+
+  return (
+    <form
+      action={formAction}
+      onSubmit={(e) => {
+        // Good: 送信前にサイズを検査し、上限超過を入力エラーとして伝える
+        const file = new FormData(e.currentTarget).get('avatar');
+        if (file instanceof File && file.size > MAX_BYTES) {
+          e.preventDefault();
+          alert('画像は 4MB 以下にしてください');
+        }
+      }}
+    >
+      <input type="file" name="avatar" accept="image/*" />
+      <button type="submit">アップロード</button>
+      <p>{state.message}</p>
+    </form>
+  );
+}
+```
+
+**アンチパターン**:
+- 動画や大きな PDF も Server Action の `FormData` で送り、`bodySizeLimit` を上げて対応しようとする（ホスティング側の上限で止まる。署名付き URL でストレージへ直接送る）
+- クライアントのサイズ検査だけで Server Action 側の検証を省く（クライアントの検査は UX のため。ファイル種別・サイズの検証は Rule #5 のとおり Action 内でも行う）
+
+**出典引用**:
+> "By default, the maximum size of the request body sent to a Server Action is 1MB, to prevent the consumption of excessive server resources in parsing large amounts of data, as well as potential DDoS attacks."
+> ([next.config.js: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions), セクション "bodySizeLimit") ※2026-11-18に実際にfetch成功
+
+> "The maximum payload size for the request body or the response body of a Vercel Function is 4.5 MB."
+> ([Vercel Functions Limits](https://vercel.com/docs/functions/limitations), セクション "Request body size") ※2026-11-18に実際にfetch成功
+
+**出典**:
+- [next.config.js: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions) (Next.js 公式 docs v16.4.6、既定 1MB・`experimental.serverActions.bodySizeLimit` の書式) ※2026-11-18 fetch
+- [Vercel Functions Limits](https://vercel.com/docs/functions/limitations) (Vercel 公式 docs、リクエスト本文 4.5MB 上限と `413: FUNCTION_PAYLOAD_TOO_LARGE`) ※2026-11-18 fetch
+- [Next.js Server Actions: Swallowed Redirects and Body Limits](https://dev.to/rshday/nextjs-server-actions-swallowed-redirects-and-body-limits-2lh2) (dev.to、上限が multipart 本文全体にかかる点とクライアント側の事前検査。記事は `serverActions` をトップレベルに書く例を示すが、公式 docs の指定位置に合わせた) ※2026-11-18 fetch
+
+**バージョン**: Next.js 14+（App Router）。`bodySizeLimit` は Next.js 16.4.6 の公式 docs 時点でも experimental
+**確信度**: 高
+**最終更新**: 2026-11-18
