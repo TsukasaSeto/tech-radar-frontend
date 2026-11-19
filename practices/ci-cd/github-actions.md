@@ -8,6 +8,7 @@
 
 `typecheck` / `lint` / `test` / `build` の 4 ステップを `.github/workflows/ci.yml` に集約し、PR で必ず実行する。
 ワークフローを細分化しすぎず、最小限のジョブで保守性を保つ。短いチェックは 1 ジョブの中で順に実行し、checkout と依存インストールを 1 回で済ませる（Rule #14）。
+Next.js 16 以降は `next build` が lint を実行せず `next lint` も削除されたため、`lint` ステップは `eslint`（または Biome）を直接呼ぶ独立したステップとして残す。
 
 **根拠**:
 - 細かい workflow file が増えると保守不能になる（同じセットアップを毎回書く）
@@ -15,6 +16,7 @@
 - ジョブを分けるとジョブ数だけ checkout と依存インストールが重複し、課金も 1 分未満切り上げでジョブごとに積み上がる（Rule #12）
 - ジョブ間の依存（`needs:`）で並列化と直列化を制御できる
 - テストコマンドを `python3 scripts/test_sample.py || true` のように書き換えると、テストが落ちても右側の `true` が成功してステップが緑になり、失敗が CI に届かない、と報告されている。`ci.yml` の `test` / `typecheck` / `lint` ステップには `|| true` や `continue-on-error: true` を付けず、ゲートとして残したいステップは意図せず緑にならないかをレビューで確認する
+- Next.js 16 では `next lint` が削除され、`next build` は lint を実行しなくなった（`next.config` の `eslint` オプションも削除）。`build` が通れば lint も済んだという前提の CI は lint を素通りする。移行は公式 codemod（`npx @next/codemod@canary next-lint-to-eslint-cli .`）か、`"lint": "eslint"` への書き換えで行う。v16 で `next lint` を呼ぶと `Invalid project directory provided, no such directory: .../lint` という原因の分かりにくいエラーになる、と報告されている
 - failed run の調査も 1 ファイル内なら追いやすい
 
 **標準テンプレート**（pnpm + Node セットアップは Composite Action に切り出して共通化する）:
@@ -89,10 +91,16 @@ jobs:
 - [CIに載っているテストが、落ちても緑だった](https://zenn.dev/miyakona/articles/ci-tests-failure-propagation) (Zenn miyakona、`|| true` / `continue-on-error: true` で失敗が CI に届かなくなる例。単一の個人記事のため補足根拠) ※2026-10-31 fetch
   > "テストは走ります。ただ、落ちても右側のtrueが成功するため、ステップは緑です。"
   > (同記事、冒頭の `python3 scripts/test_sample.py || true` の例)
+- [Next.js Docs: How to upgrade to version 16](https://nextjs.org/docs/app/guides/upgrading/version-16#next-lint-command) (Next.js 公式、`next lint` の削除・`next build` が lint を実行しない・codemod) ※2026-11-19 fetch
+  > "The next lint command has been removed. Use Biome or ESLint directly. next build no longer runs linting."
+  > (セクション "next lint Command")
+- [Next.js 16 で next lint が「no such directory」になる／middleware.ts はまだ動く](https://qiita.com/kai_kou/items/8214f1d5791c9e9d741d) (Qiita kai_kou、16.3.1 で `next lint` がディレクトリ名として解釈されるエラーの実測と `"lint": "eslint"` への書き換え) ※2026-11-19 fetch
+  > "「lint というディレクトリがない」と言われます。"
+  > (セクション "1. next lint は、エラーメッセージが原因を隠す")
 
-**バージョン**: GitHub Actions（例は Node 24、pnpm 11、actions/checkout v7 / actions/setup-node v7 / pnpm/setup v3）
+**バージョン**: GitHub Actions（例は Node 24、pnpm 11、actions/checkout v7 / actions/setup-node v7 / pnpm/setup v3）。lint を独立させる注意は Next.js 16+
 **確信度**: 高
-**最終更新**: 2026-10-31
+**最終更新**: 2026-11-19
 
 ---
 
