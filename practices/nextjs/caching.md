@@ -48,10 +48,12 @@ Next.js 14+ には4つのキャッシュ層がある。それぞれの役割と�
 ### 2. `revalidateTag` と `revalidatePath` でオンデマンド再検証する
 
 データ更新時はタグベースまたはパスベースのオンデマンド再検証を使う。
+CMS の Webhook などからの無効化は、更新されたコンテンツと、それを載せる一覧のタグだけに絞る（全ページを `revalidatePath` で一括無効化しない）。
 v16 では `revalidateTag` に第 2 引数（`'max'` 推奨）が必須で、Server Action で更新を即時に反映したい場合は `updateTag` を使う。
 
 **根拠**:
 - タグベースはデータの種類に対応して複数ページを一括無効化できる。`revalidateTag` はそのタグを使うすべてのページのデータを、`revalidatePath` は指定したページ / layout のパスを無効化する
+- 無効化は「期限切れの印を付ける」だけで、作り直しは次のアクセスで起きる。ボットが巡回するサイトでは印を付けたページがほぼ全件作り直されるため、Webhook で全ページを一括無効化すると `revalidate` を延ばした効果が公開のたびに打ち消され、Vercel の ISR Writes が膨らんだと報告されている。同じ記事は、タグ文字列を 1 か所で定義して fetch 側と Webhook 側で共有し（綴りのずれで無効化漏れが黙って残るのを防ぐ）、slug やカテゴリの変更では新旧両方の値のタグを無効化している
 - Server Actions と組み合わせることでミューテーション後の自動更新が可能。ミューテーションを行う Action では、認証・入力検証を先に行い、許可したフィールドだけを DAL に渡す（`server-actions.md` #5）
 - v16 では `revalidateTag(tag)` の 1 引数版は非推奨（TypeScript の型エラーになる）。`revalidateTag(tag, 'max')` は stale-while-revalidate、`updateTag(tag)` は Server Action 専用で、期限切れにしてすぐ取り直す（read-your-writes）
 - タグ付きのデータを経由しないルート（`next.tags` / `cacheTag` を付けずに取得したデータで描画するルート）は、`revalidateTag` を呼んでも更新されない。この場合は取得にタグを付けるか、`revalidatePath` でパスを直接無効化するか、Cache Components 無効時はルートに `export const revalidate = <秒数>` を指定して時間ベースで再生成させる（Cache Components 有効時は `revalidate` を export できないので、`'use cache'` + `cacheLife` を使う）
@@ -136,9 +138,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 - [Next.js Docs: sitemap.xml](https://nextjs.org/docs/app/api-reference/file-conventions/metadata/sitemap) (Next.js 公式、sitemap は Request-time API などを使わない限りデフォルトでキャッシュされる) ※2026-10-25 確認
 - [Next.js sitemap not updating? Here's the real fix](https://dev.to/techpotions/nextjs-sitemap-not-updating-heres-the-real-fix-2257) (dev.to techpotions、サイトマップが更新されない事例と `export const revalidate` による ISR 対応) ※2026-07-29に実際にfetch成功
 
+- [Next.js の ISR とオンデマンド再検証の落とし穴（Vercel の請求が膨らんで気づいたこと）](https://zenn.dev/fuelda/articles/nextjs-isr-revalidation-pitfalls) (Zenn Fuelda、全件無効化と期限延長の両立しなさ・タグ定義の一元化) ※2026-11-19 fetch
+  > "全件無効化の Webhook を残したまま期限だけ延ばすと、公開回数の分だけ延長の効果が打ち消されることになります。"
+  > (セクション "全件無効化と期限延長は両立しない")
+
 **バージョン**: Next.js 13+（`revalidateTag` の第 2 引数と `updateTag` は 16+。`export const revalidate` は Cache Components 無効時のみ）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-19
 
 ---
 

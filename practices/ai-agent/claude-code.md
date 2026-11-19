@@ -4904,3 +4904,58 @@ disallowedTools: Write, Edit, NotebookEdit, Bash
 **最終更新**: 2026-11-10
 
 ---
+
+### 65. auto-compact で残す内容は PreCompact hook の標準出力で指示する — ログ出力は stderr に分ける
+
+手動の `/compact <指示>` と違い、自動圧縮（auto-compact）には指示を渡す引数がない。PreCompact hook が終了コード 0 で標準出力に書いた文字列は、手動・自動のどちらでも圧縮要約の指示として使われるので、「進行中の作業と完了条件・ユーザーが決めたこと・変更したファイル・未解決のエラー・次の一手」のような残す項目をここで指示する。
+逆に、ログ退避などの PreCompact hook が進捗メッセージを標準出力に `echo` すると、その文字列も要約の指示として渡る。ログや失敗の通知は stderr に出す。
+
+**根拠**:
+- 公式 docs（Hooks reference > PreCompact output）は、exit 0 でブロックしなかった PreCompact hook の stdout を圧縮要約の指示として使い、hook 1 つあたり 10,000 文字で切ると明記している
+- 入力の `trigger` は `manual` / `auto`、`custom_instructions` は手動 `/compact` で渡した文字列（無ければ `null`）、自動では常に `null`（公式 docs）。手動で指示が渡されたときは何も出力せずに終わればユーザーの指示を上書きしない
+- exit 2 や `"decision": "block"` で圧縮を止められるが、API のコンテキスト上限エラーから回復するための自動圧縮を止めると、そのリクエストは失敗する（公式 docs）。指示を出すだけの hook はブロックしない
+- Zenn の記事は、hook の中で `transcript_path` の会話を読み、別の `claude -p` に指示文を書かせて stdout に出す構成を Claude Code 2.1.325 で検証し、auto-compact 4 回すべてで要約が指示どおりの行で始まったと報告している（空文字を返す対照では 0 回）。子の `claude -p` に `--setting-sources ""` を付けて hooks を読ませず、PreCompact の再帰を防いでいる
+- 同記事は、生成器にツールの結果を渡さなかった版では「テスト未確認」と状態を読み違えたと報告している。毎回同じ方針で足りるなら、固定の指示文を出すだけの hook で十分
+
+**コード例**:
+```bash
+#!/bin/bash
+# ~/.claude/hooks/compact-instructions.sh（settings.json の hooks.PreCompact に登録）
+INPUT=$(cat)
+# Good: 手動の /compact <指示> があればユーザーの指示を優先し、何も出さない
+if [ "$(jq -r '.custom_instructions // empty' <<<"$INPUT")" != "" ]; then
+  exit 0
+fi
+# Good: stdout がそのまま要約の指示になる（10,000 文字以内）
+cat <<'TXT'
+要約には次を必ず残す: 進行中の作業と完了条件 / ユーザーが決めたこと・禁じたこと（原文で）/
+変更したファイルのパスと状態 / 未解決のエラー / 次の一手。解決済みの試行錯誤と長いコマンド出力は捨ててよい。
+TXT
+exit 0
+
+# Bad: ログ用の hook が進捗を stdout に出す（この文字列まで要約の指示になる）
+# echo "transcript を退避しました: $DEST"
+# Good: ログや通知は stderr に出す
+# echo "transcript を退避しました: $DEST" >&2
+```
+
+**アンチパターン**:
+- auto-compact には指示を渡せないと考え、圧縮のたびに手動 `/compact` を打つ運用に頼る
+- 指示文を生成する hook が失敗したときに exit 2 で圧縮を止める（上限エラーからの回復ではリクエストが失敗する）。失敗時は何も出さず exit 0 で抜ける
+
+**出典引用**:
+> "When a PreCompact hook exits 0 and doesn't block, Claude Code uses its stdout as instructions for the compaction summary."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "PreCompact output") ※2026-11-19に実際にfetch成功
+
+> "PreCompact hook が標準出力に書いた文字列は、auto-compact の要約の指示として使われます。"
+> ([Claude Code の auto-compact に、その会話専用の指示を渡す — PreCompact hook で指示文を生成する](https://zenn.dev/jasagiri/articles/d132330d5dc580), セクション 冒頭（最初の見出しの前）) ※2026-11-19に実際にfetch成功
+
+**出典**:
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、PreCompact の stdout が要約の指示になる・10,000 文字の上限・`trigger` / `custom_instructions`・上限エラー回復時のブロックはリクエスト失敗) ※2026-11-19 fetch
+- [Claude Code の auto-compact に、その会話専用の指示を渡す — PreCompact hook で指示文を生成する](https://zenn.dev/jasagiri/articles/d132330d5dc580) (Zenn jasagiri、2.1.325 での e2e 検証と `claude -p` による指示文生成) ※2026-11-19 fetch
+
+**バージョン**: Claude Code（e2e 検証は 2.1.325）
+**確信度**: 高
+**最終更新**: 2026-11-19
+
+---
