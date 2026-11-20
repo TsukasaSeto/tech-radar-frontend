@@ -1423,6 +1423,7 @@ hooks はイベント種別ごとに「何を目的にするか」を層で分�
 - **冪等性チェックの必須化**: 実行後の検証フェーズでは「同じスクリプトを2回実行してもデータが重複しないか」を必ず確認する。AI が「完了した」と言うだけでなく実際のログ・diff・クエリ結果などの証拠を表示させることで、「流暢だが未検証の主張」によるインシデントを防ぐ
 - **シェルリダイレクトは文字列パターンマッチをすり抜ける**: `rm -rf ~` は正規表現でブロックできても、`rm -rf ~ 2>/dev/null` のようにリダイレクトを付け足すと同じ正規表現が素通りする実測例が報告されている。これは自作フックだけでなく Claude Code 自身の公式許可チェックにも共通する弱点で、シェルが実際にコマンドをどう解釈するかと、文字列マッチャーがどう区切るかが一致しない箇所を突かれる。PreToolUse の正規表現は「コマンド全体の文字列」ではなく、リダイレクト・パイプ・`&&` 連結を含めてシェルが実際に解釈する形を意識して設計する
 - **hook の `matcher` を特定ツール（例: `Write|Edit`）に絞ると、AI が別ツール（`Bash`）を選んだ場合にルールが一切届かない**: 25 回の CLAUDE.md 単体指示は全 25 回遵守されたのに対し、同じ一文を `Write|Edit` にマッチする hook へ移した途端、AI が `Bash` 経由で目的を達成した 5 回すべてで hook が発火せず届かなかった実測がある（exit code は 0 のまま、エラー表示なし）。この実測は PostToolUse で指示文を差し込む方式（exit 0）での結果で、PostToolUse はツールの実行後に発火するため、差し込んだ指示はすでに行われた操作を止められず、どのツールを選ぶかという初動の判断にも効かない。一方、PreToolUse hook は `permissionDecision: "deny"` か exit code 2 を返せばツール呼び出しを実行前にブロックできる（公式 hooks リファレンス）。禁止したい操作は PreToolUse で止め、`matcher` は `Bash` などの迂回経路まで含めて設定する。初動のツール選択に影響させたい方針は CLAUDE.md 側に置く。逆向きの迂回も起きる: `matcher: "Bash"` だけのブロック用 PreToolUse hook では、`Write` ツールで同じファイルを作る操作が 3 回中 2 回素通りし、`matcher: "Bash|Write"` に広げると 0 回になった実測がある。素通りした操作は「成功・エラーなし・終了コード 0」で返るため、ログだけでは迂回に気づきにくい（matcher の迂回はこのルールを正本とし、Rule #9 からはここを参照する）
+- **`Stop` フックで終了を止めるときは、問題の明細も stderr に出す**: 公式 hooks リファレンスでは、stdout が JSON でない（プレーンテキストか空の）フックが exit 2 で終わると「Blocking error. Your stderr is the reason」となり、Claude に渡る理由は stderr だけになる。明細を stdout、件数だけを stderr に出していた Stop フックでは、Claude に届いていたのは件数の 1 行だけだったと報告されている（人が端末で実行すると両方が同じ画面に出るため気づきにくい）。作成時に `bash hook.sh >out.txt 2>err.txt; echo "exit=$?"` のように出力先を分けて確かめる。Claude だけでは直せない条件で止め続けないよう、入力の `stop_hook_active` を見るか、公式の「8 回連続の継続で次のブロックを無視して終了する」上限（`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` で変更可）を前提にする
 
 **フック層の分担**:
 | 層 | イベント | 目的 | 同期実行時の `exit 2` | `async: true` |
@@ -1607,12 +1608,18 @@ sys.exit(0)  # 問題がなければ何も返さず終了を許す
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、PreToolUse は exit 2 / `permissionDecision: "deny"` で実行前にブロックでき、PostToolUse は「the tool already ran」で実行を止められない) ※2026-10-25 確認（routine-followup マージ時の修正）
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、入力は stdin の JSON・Stop の入力は `last_assistant_message` / `stop_hook_active`・継続は `decision: "block"`・PreCompact の入力は `transcript_path`・Stop と PreCompact は同期なら exit 2 で止められる・`continue: false` には `stopReason` を添える) ※2026-10-25 確認
 - [AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson) (Zenn numarn、`matcher: Bash` のみでは `Write` ツール経由の迂回を防げない実測。Rule #9 から集約) ※2026-08-05 fetch
+- [Claude Code の Stop フックで自動チェックを作ったら、エラーの中身が4か月半 Claude に届いていなかった](https://zenn.dev/alu_programming/articles/claude-code-stop-hook-docs-gate) (Zenn、exit 2 の Stop フックで stdout に出した明細が Claude に渡っていなかった実例) ※2026-11-20に実際にfetch成功
+  > "Stop フックが「終了コード 2」を受け取ったとき、AI に「続ける理由」として渡すのは stderr に出した文字だけです。"
+  > (セクション "問題の中身を、AI に届かないほうに出していた")
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、exit 2 + プレーンテキスト stdout は stderr が理由になる・Stop の 8 回連続継続上限) ※2026-11-20に実際にfetch成功
+  > "after stop hooks have continued the turn eight times in a row, Claude Code overrides the next block and ends the turn"
+  > (セクション "Stop input")
 - [ESLint Command Line Interface — --fix](https://eslint.org/docs/latest/use/command-line-interface#--fix) (ESLint 公式 docs、`--fix` は対象ファイルの修正可能な問題を直す) ※2026-10-25 確認
 - [gitleaks `.pre-commit-hooks.yaml`](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (gitleaks 公式、pre-commit フックの `entry` は `gitleaks git --pre-commit --redact --staged --verbose` で、Layer 0 の例と同じフラグ構成。`git` サブコマンドは v8.19.0 以降) ※2026-10-25 確認
 
 **バージョン**: Claude Code（全バージョン共通）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-20
 
 ---
 
@@ -4715,6 +4722,7 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 - 出典記事は Claude Code 2.1.293 / Windows 11 / Haiku、各ケース 1 回の実測で、閉じ忘れ・閉じ括弧の後ろの文字・小文字のツール名・綴り違い・全角括弧・余分な `)` の 6 種類すべてで `Read` の `deny` が効かなかったと報告している（`Bash` で試したのは閉じ忘れのみ）。同じ配列にある正しい `deny` は効いた
 - 同記事では `claude doctor` の終了コードは 0 で、末尾の `N warnings found` にも数えられなかった。ツール名の綴り違い・全角括弧・余分な `)` は `doctor` に何も出なかったが `deny` は効かなかった。出力が無いことは正しいルールの証明にならない
 - 記事の検証は 2.1.293 で、公式 docs は 2.1.302 時点。他の版・OS・対話モードでの挙動は確認されていない。`ask` の閉じ忘れも効かなかったが 1 ケースのみ
+- 2.1.326 で `--allowedTools` / `--disallowedTools` / `--tools` の値に完全なルールの形でないエントリがあると起動時に警告が出るようになった（公式 CHANGELOG）。ただし 2.1.328 の `claude -p --allowedTools` の実測では、閉じ括弧なし・括弧前の空白・括弧後の余計な文字には警告が出た一方、小文字の `bash(git *)` は警告が出ないまま何も許可されず（3 回とも実行不可）、警告も標準エラーに 1 行出るだけで実行は止まらなかったと報告されている。無人実行のログに stderr を残し、ツール名は大文字始まりで書く
 
 **コード例**:
 ```jsonc
@@ -4756,10 +4764,16 @@ claude doctor | sed -n '/Invalid settings/,/^$/p'
 - [Errors](https://code.claude.com/docs/en/errors) (Claude Code 公式 docs、Malformed Tool(content) rule はスキップされ doctor に列挙される) ※2026-10-27 fetch
 - [Settings](https://code.claude.com/docs/en/settings) (Claude Code 公式 docs、Settings Error / Settings Warning の区別) ※2026-10-27 fetch
 - [Claude Codeの Invalid permission rule was skipped を実測: 書式ミスのdenyは効かない](https://zenn.dev/yorusuzu/articles/claude-code-invalid-permission-rule-skipped) (Zenn、6 種類の壊し方で deny が効かない実測・doctor の見落とし挙動) ※2026-10-27 fetch
+- [Claude Code CHANGELOG 2.1.326](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (Claude Code 公式、CLI のツール指定値に起動時警告を追加) ※2026-11-20に実際にfetch成功
+  > "Added a startup warning when an `--allowedTools`, `--disallowedTools` or `--tools` value has an entry that doesn't look like a complete rule"
+  > (セクション "2.1.326")
+- [許可ルールの書き間違いに警告が出るようになったのに小文字のbashは黙って効かない](https://zenn.dev/marunage_kacho/articles/ai-trial-rule-warning) (Zenn、2.1.328 で警告の出るケース・出ないケースを実測) ※2026-11-20に実際にfetch成功
+  > "ツール名を小文字でbash(git *)と書くと、警告は出ません。そして何も許可されない。"
+  > (セクション "直ってないところ")
 
-**バージョン**: Claude Code 2.1.x（2.1.293 / Windows 11 で実測。公式 docs は 2.1.302 時点）
+**バージョン**: Claude Code 2.1.x（2.1.293 / Windows 11 で実測。公式 docs は 2.1.302 時点。CLI 値の起動時警告は 2.1.326+、小文字ツール名の実測は 2.1.328）
 **確信度**: 高（公式 docs がスキップ挙動を明記。パターン1、検証記事は補足出典）
-**最終更新**: 2026-10-27
+**最終更新**: 2026-11-20
 
 ---
 

@@ -205,6 +205,7 @@ DAL の戻り値は必ず DTO（Data Transfer Object）に整形し、公開し�
 - RSC Payload の肥大化抑制にもなる（不要フィールドを落とす）
 - Client Component に渡した props は HTML 内の RSC ペイロード（`self.__next_f.push(...)`）にそのまま載る。静的書き出し環境で、props に含めたスラッシュ無しの `path` 文字列を Google が拾い続けた事例が報告されている（描画側のリンク・canonical を整えても、渡したデータの中身は消えない）。渡すデータの形は読み込み口で一箇所にそろえる
 - OWASP の Next.js Security Cheat Sheet も同じ境界を明示的な原則として挙げている（後述の出典引用）
+- ログイン前に使う API（会員登録時のメール重複チェックなど）でも、画面が使うのは真偽値だけなのに名前・電話番号まで返していた検証例が報告されている。同記事では、ログインなしで会員番号から引ける API を順に呼ぶだけで 4,000 件が 0.3 秒で取れ、レート制限をかけても 429 の後に待って再試行するだけで対象の全件が取れたとされている。認証の外にある API ほど、返すフィールドを画面が使うものだけに絞る
 
 **コード例**:
 ```ts
@@ -269,12 +270,15 @@ export const getUser = cache(async (id: string) => {
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、DTO による明示的なフィールド境界を「Control Data Crossing into the Browser」として原則化) ※2026-08-31に実際にfetch成功
 - [Next.js Docs: How to implement authentication — Using Data Transfer Objects](https://nextjs.org/docs/app/guides/authentication#using-data-transfer-objects-dto) (Next.js公式、必要なフィールドだけを返す DTO の推奨) ※2026-10-25 確認
+- [認証基盤を入れても、APIから情報は抜ける。OAuth・NextAuth・Supabase・Cloudflareで認可が残る](https://zenn.dev/aeyesec/articles/d17f8a333b79c3) (Zenn、ログイン前 API の過剰なレスポンスと列挙の実測) ※2026-11-20に実際にfetch成功
+  > "画面が使うのは "registered":true だけなのに、名前も電話番号も返しています。"
+  > (セクション "手元のサーバで試す")
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
 **確信度**: 高（Next.js 公式ガイドの DTO 推奨 + OWASP公式チートシート）
-**最終更新**: 2026-11-01
+**最終更新**: 2026-11-20
 
 ---
 
