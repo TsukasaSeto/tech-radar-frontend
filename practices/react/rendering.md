@@ -103,6 +103,7 @@ return <PlainButton onClick={handleClick} />;
 **根拠**:
 - React は `key` を使ってコンポーネントのidentityを判断する
 - インデックスが key だと並び替え時に誤ったコンポーネントを再利用する
+- フォーカスは DOM ノードに乗るため、key が安定していれば並び替え後もフォーカスは移動した項目に付いていく。`key={index}` では同じ位置のノードが別データを表示し、フォーカスが位置に残る。↑↓ ボタンでカードを並び替える UI で、`key={index}` にすると押した直後にフォーカスが隣のカードのボタンへ移り、続けて Enter を押すと意図しないカードが動いたと報告されている（見た目の順序は正しいので、キーボード操作で試さないと気づかない）
 - `Math.random()` を key に使うとレンダリングのたびに全リストアイテムが再マウントされ、入力状態・フォーカス・アニメーションがリセットされる
 - UUID を使う場合はオブジェクト生成時に一度だけ払い出し、render 関数内では生成しない
 
@@ -134,10 +135,13 @@ const newItem = { id: crypto.randomUUID(), name: '...' }; // 追加時に一度�
 **出典**:
 - [React Docs: Rendering Lists](https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key) (React公式)
 - [なんとなく付けていたReactのkeyの役割を理解する](https://zenn.dev/uraaaa24/articles/bfeb6d3dcb01ba) (Zenn、Math.random anti-pattern と UUID 生成タイミング) ※2026-05-31 fetch
+- [Reactのkeyが決めていたのは描画の速さではなく、フォーカスの行き先だった —— key={index}で対照実験した](https://zenn.dev/matsutake_prgrm/articles/key-decides-focus-continuity) (Zenn、並び替え後のフォーカスの行き先を key ごとに比較。React 19.2.8 / Next.js 16.3.0) ※2026-11-20に実際にfetch成功
+  > "key が決めているのは「どの DOM ノードが同じものか」で、フォーカスはノードに乗っています。"
+  > (セクション "なぜそうなるのか")
 
 **バージョン**: React 18+
 **確信度**: 高
-**最終更新**: 2026-05-31
+**最終更新**: 2026-11-20
 
 ---
 

@@ -131,6 +131,7 @@ INP は 200ms 以内を目標とする。長いタスクを分割し、メイン
 - 200ms を超えるインタラクション遅延はユーザーが「遅い」と感じる閾値
 - 長時間のJS実行、不必要なレンダリング、大きなDOMが主な原因
 - `startTransition` のコールバックはその場で同期的に実行されるため、`startTransition(() => setResults(items.filter(...)))` の `filter` はイベントハンドラの中で走り、入力をブロックする。後回しになるのは再レンダリングだけなので、重い計算は `useDeferredValue` で遅延させた値を使ってレンダー中に行う。1 回の計算自体が長いなら Web Worker やタスク分割に移す
+- スクリプトの読み込みを「最初の操作まで」遅らせると Lighthouse の TBT・点数は改善するが、処理は最初の操作の直後に動くため、その間の 2 回目の操作が待たされる。250ms のスクリプトで、1 回目の約 80ms 後の 2 回目のクリックの入力遅延が 192〜202ms になった実測（Event Timing API、Chromium 153）が報告されている（`defer` で読んだ場合は 16ms 未満）。INP は最も遅い操作で決まるため、遅延読み込みを入れたらページを開いてすぐ 2 回続けて操作して測る
 
 **コード例**:
 ```tsx
@@ -173,10 +174,13 @@ function SearchResults({ items }: { items: Item[] }) {
 - [React Docs: useDeferredValue](https://react.dev/reference/react/useDeferredValue) (React公式)
 - [Speed Insights deprecates First Input Delay on November 1st](https://vercel.com/changelog/speed-insights-deprecates-first-input-delay-on-november-first) (Vercel Changelog、FID 計測の終了と INP への一本化) ※2026-10-02に実際にfetch成功
   > "The deprecation won't require changes on your side, affect your score, or prevent you from viewing existing FID data."
+- [「最初の操作まで遅らせた」スクリプトは、2回目のタップを200ms待たせます【Event Timing API で実測】](https://qiita.com/Rapls/items/57322dc34308938561ad) (Qiita、操作まで遅延したスクリプトが 2 回目の操作の INP を悪化させる実測) ※2026-11-20に実際にfetch成功
+  > "遅らせた処理は、最初の操作の直後に動く。そのあいだの操作は待たされる"
+  > (セクション "点数と INP を両方見る")
 
 **バージョン**: React 18+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-20
 
 ---
 
@@ -314,6 +318,6 @@ export function DeferredScripts() {
 }
 ```
 
-注意点: チャットウィジェットなど「ページロード直後から表示が必要」なスクリプトには適用不可。また、イベント発火前にコンバージョンが発生した場合（直帰ユーザー）はアナリティクスが計測されない。適用可否は計測要件と相談して判断すること。
+注意点: チャットウィジェットなど「ページロード直後から表示が必要」なスクリプトには適用不可。また、イベント発火前にコンバージョンが発生した場合（直帰ユーザー）はアナリティクスが計測されない。適用可否は計測要件と相談して判断すること。遅延したスクリプトは最初の操作の直後に動き、直後の操作の INP を悪化させうる（Rule #3 参照）。
 
 **確信度**: 既存（高）→ 高（実測 LCP 0.6s・GTmetrix 100点で実証済み）

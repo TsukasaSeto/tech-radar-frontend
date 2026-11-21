@@ -290,9 +290,11 @@ Middleware が認証・リダイレクト・ヘッダー付与のみでボディ
 - 大きなボディを持つリクエストで TTFB が改善しうる
 - Rule #1（Proxy は楽観的な認証チェックとリダイレクトに限定）に従っていればボディを読む必要は通常なく、設計方針と整合する
 - 既定値は `false` のため、有効化するまで既存プロジェクトには影響しない
+- Vercel Functions の大きなリクエストボディ（最大 20MiB、Public Beta）を `VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` で有効にしたプロジェクトでは、Routing Middleware はヘッダーとメタデータだけを受け取り、ボディはプロジェクト単位で届かなくなる。Next.js 16 の `proxy.ts`（Node.js ランタイム）はこの opt-in の対象になる。Edge のまま残した `middleware.ts`（と Edge runtime の Functions）は 4.5MB 上限のままで、超えるボディには 413 を返す
 
 **注意**:
 - Middleware 内で `request.json()` / `request.formData()` / `request.text()` 等を呼ぶ場合は有効化しない
+- ボディを読む Middleware がある状態で `VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` を有効にしない
 - 設定変更後は再デプロイが必要
 
 **コード例**:
@@ -319,7 +321,10 @@ export const config: VercelConfig = {
 
 **出典**:
 - [Skip sending request bodies to Routing Middleware](https://vercel.com/changelog/skip-sending-request-bodies-to-routing-middleware) (Vercel Changelog 2026-10-08) ※2026-10-08 fetch
+- [Vercel Functions now support request bodies up to 20MiB](https://vercel.com/changelog/vercel-functions-now-support-request-bodies-up-to-20mib) (Vercel Changelog 2026-11-20、大きなボディを有効にすると Middleware にボディが届かない・Edge は 4.5MB 上限のままで、20MiB に載せる手段として `runtime: 'nodejs'` か Next.js の `proxy.ts` を挙げる) ※2026-11-20に実際にfetch成功（Edge と `proxy.ts` の記述は 2026-11-22 確認）
+  > "When a project opts in, Routing Middleware receives request headers and metadata but no request body, enforced at the project level."
+  > (セクション "本文（2 段落目）")
 
 **バージョン**: Vercel デプロイ限定（セルフホストには適用されない）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-20
