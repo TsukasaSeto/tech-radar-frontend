@@ -774,6 +774,7 @@ LCP 候補となるヒーロー画像は lazy にせず `loading="eager"` にす
 - `loading="lazy"` はビューポート近くまでスクロールされるまで画像取得を遅延する（Chrome 77+, Firefox 75+, Safari 15.4+）
 - `decoding="async"` は、画像のデコード完了を待たずにほかのコンテンツの表示を更新してよいというブラウザへのヒント（デコード処理がメインスレッドから外れることを保証するものではない）
 - ファーストビュー画像に `loading="lazy"` を付けると LCP が遅延するため除外が必要
+- 一覧グリッドをループで描画する場合は、インデックスで「先頭 N 件は eager、それ以降は lazy」と決める。N は固定値ではなく、主要な画面幅で初期ビューポートに収まる件数（デスクトップの 1 行目、モバイルの 1〜2 件）を実際のレイアウトで確かめて決める
 - Next.js の `<Image>` は既定で `loading="lazy"`。Next.js 16 で `priority` は非推奨になったので、LCP 画像には `loading="eager"` を付ける。`fetchPriority="high"` / `preload` を足すかどうかは `practices/performance/core-web-vitals.md` #1 の条件に従う（`preload` と `loading` / `fetchPriority` は併用しない）。v15 以前は `priority` を使う
 
 **コード例**:
@@ -834,9 +835,11 @@ import Image from 'next/image';
 - [web.dev: Browser-level image lazy-loading](https://web.dev/articles/browser-level-image-lazy-loading) (web.dev)
 - [web.dev: Optimizing Largest Contentful Paint](https://web.dev/articles/optimize-lcp) (web.dev)
 - [Next.js Docs: Image Component](https://nextjs.org/docs/app/api-reference/components/image) (Next.js 公式、v16 での `priority` 非推奨と `preload` / `loading` / `fetchPriority` の使い分け、`loading` の既定値) ※2026-10-25 確認
+- [Lazy loading a product grid: which images should never get loading="lazy"](https://dev.to/elias_0549e0e2ef8cf6ad89a/lazy-loading-a-product-grid-which-images-should-never-get-loadinglazy-fl1) (dev.to elias、商品グリッドでインデックスにより eager / lazy を切り替える実装) ※2026-11-14 fetch
+  > "EAGER_COUNT is a judgment call, not a magic number."（セクション "In a grid component, decide by index"）
 
 **バージョン**: HTML Living Standard / `fetchpriority` は Chrome 101+, Safari 17.2+ / Next.js 16+（`priority` は v15 以前）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-14
 
 ---

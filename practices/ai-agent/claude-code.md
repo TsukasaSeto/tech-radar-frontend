@@ -4680,7 +4680,7 @@ Claude Code の hook は既定では「壊れても操作が通る」fail-open �
 - 有効な allow JSON を出しても exit 1 なら失敗扱い（Node の未捕捉例外は exit 1）。exit 2 は `onFailure` に関係なく阻止され stderr が理由として表示される
 - 別環境（Claude Code 2.1.316 / Windows 11 / Git Bash）の検証でも、PreToolUse フックで操作を止めたのは exit 2 だけで、検査スクリプトが exit 1・exit 3・例外で落ちると 3 回中 3 回とも操作が実行された。`onFailure: "block"` を付けると exit 1・例外・ファイル名の打ち間違いのいずれでも 0 回（阻止）だった。「検査で見つかったら exit 1」と書いた秘密情報チェックが `git push` を止められなかった実例が報告されている
 - 判定スクリプトが分割モジュールの import に失敗すると、main() の try/catch に届く前に Python が exit 1 で終わる。「exit 1 だけ通し、他の非ゼロは拒否」でも、異常終了と正常な答えが同じ値になりうるため、判定スクリプトは正常に動けば常に exit 0 で `found` / `none` を出力し、フックは「exit 0 かつ `none`」のときだけ通す（通す条件を 1 つに絞る）設計が報告されている
-- `onFailure` は `command` / `http` hook のみ有効。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
+- `onFailure` は `command` / `http` / `mcp_tool` hook で有効（`mcp_tool` hook は v2.1.328+）。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
 
 **コード例**:
 ```json
@@ -4737,10 +4737,11 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 **出典**:
 - [exit 1でClaude Codeフックは止まるか33回試した](https://zenn.dev/ai_jarvis/articles/88ffbd67ebdec1) (Zenn、2.1.316 で exit 1 / 3 / 例外が素通りし、`onFailure: "block"` で阻止) ※2026-11-03 fetch
 - [「該当なし」と「判定器が落ちた」が同じ終了コード1だった](https://zenn.dev/itaraiguma/articles/deny-hook-exit-code-matcher-fail-open) (Zenn、判定結果を終了コードでなく出力に載せて fail-closed にする設計) ※2026-11-03 fetch
+- [Hooks reference — Block the action when a hook fails](https://code.claude.com/docs/en/hooks#block-the-action-when-a-hook-fails) (Claude Code 公式 docs、`onFailure` は `command` / `http` / `mcp_tool` hook に効く。`mcp_tool` hook は v2.1.328+) ※2026-11-22 確認（routine-followup マージ時の追加）
 
 **バージョン**: Claude Code v2.1.295+（検証は 2.1.303・2.1.316 / Windows 11 / Git Bash）
 **確信度**: 中（パターン1c採用。検証環境は Windows のみ。2 つの独立した検証で exit 1 の素通りを確認）
-**最終更新**: 2026-11-03
+**最終更新**: 2026-11-14
 
 ---
 
@@ -5001,5 +5002,123 @@ npm run dev &
 **バージョン**: Claude Code（2026-11-11 時点の公式 docs）
 **確信度**: 高
 **最終更新**: 2026-11-11
+
+---
+
+### 60. Code Mode を有効にする前に、auto mode の分類器がツール呼び出し単位で審査しなくなることを前提に、必ず止める操作を deny / ask ルールと PreToolUse フックで守る
+
+Code Mode（実験的機能、`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`）では、Claude はツールを直接呼ばず、複数のツール呼び出しをまとめた JavaScript を書いて実行する。auto mode の分類器はこのコードを実行前に 1 回だけ審査し、内側の個々のツール呼び出しは審査しない。分類器は実行時に決まる値（検索結果から取ったパスなど）も見ないため、「分類器が危険な呼び出しを止めてくれる」前提の運用は成り立たない。必ず止めたい操作は `permissions.deny` / `ask` ルールと、`Bash` など実際のツール名にマッチする PreToolUse フック（`"onFailure": "block"` 付き）に置く。コード内の各ツール呼び出しはいつもの名前でこれらを通るので、実行時に決まった値で判定できる。`REPL`（コードを実行するツール）にマッチするフックで `tool_input.code` を読む方法は、コード全体を実行前に見る補助にとどめる（文字列の連結や実行時の値は見えない）。組織で使わせない場合は managed settings で `0` を設定する。
+
+**根拠**:
+- 公式 docs（Code Mode > Permission checks）によると、コードが行う各ツール呼び出しは deny / ask ルールと PreToolUse フックを通るが、auto mode の分類器はコード単位でしか審査せず、実行時に計算される値を見ない。公式はこのため「制御が必要な呼び出しにはルールやフックを残す」よう案内している
+- Bash のルールはコマンド文字列に対してマッチするので、Code Mode の有無にかかわらず、ルールが一致しない形で拒否対象のコマンドを実行できてしまう（一致仕様は Rule #36。コマンド文字列に依存しない制限はサンドボックスで行う）
+- Code Mode では、コードから実行したコマンドが `cd 'app' && git push` のような複合コマンドの形でフックに届く。Bash にマッチするフックは、コマンド全体の先頭だけでなく `&&` / `||` / `;` / `|` で分けた各部分を検査する（Bash ルールと同じ扱い。`git -C . push` のような等価な別形式の再検査は Rule #9）
+- コードから呼ばれたツールの PreToolUse フックが失敗したときの扱いは版で異なる。v2.1.323〜2.1.328 では、起動失敗・強制終了・126 / 127 / 128 超の exit・HTTP エラー・不正な出力でも `onFailure` 未設定のまま呼び出しが拒否されていた。v2.1.329 以降は、タイムアウト以外の失敗では Code Mode 外と同じく呼び出しが通る（fail-open）。ガード用のフックは Rule #54 のとおり `"onFailure": "block"` を付ける
+- タイムアウト（エラー文 `the hook did not finish`）は v2.1.329 以降も、`onFailure` 未設定なら呼び出しが拒否される。通したいフックには `"onFailure": "continue"` を明示し、`timeout` を処理に足りる長さにする
+- `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE` はプロジェクトの settings では無視されるため、クローンしたリポジトリが勝手に Code Mode を有効にすることはない。逆に managed settings で `0` を設定すれば組織全体で無効化できる（managed settings から有効化はできない）
+- 2026-11-14 の公式 docs 更新でこれらの記述が permission modes / hooks のページにも追加されたと Qiita の差分記事が報告している
+
+**コード例**:
+```jsonc
+// ~/.claude/settings.json — Code Mode を試すときも、止める操作はルールとフックに置く
+{
+  "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "1" },
+  "permissions": {
+    "deny": ["Bash(git push *)", "Bash(rm -rf *)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        // Good: コード内の Bash 呼び出しも 1 件ずつ Bash としてこのフックを通る（実行時に決まった値で判定できる）
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/block-push.sh",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        // 補助: コード全体を実行前に見る（tool_input.code に JavaScript が入る）。
+        // 文字列の連結や実行時の値は見えないので、これだけをガードにしない
+        "matcher": "REPL",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/check-code.sh",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+```bash
+#!/bin/bash
+# ~/.claude/hooks/block-push.sh — Bash の呼び出しをサブコマンドに分けて検査し、本番向けの操作を exit 2 で止める
+cmd=$(jq -r '.tool_input.command // ""') || { echo "hook の入力を読めない" >&2; exit 2; }
+# Code Mode では `cd 'app' && git push` の形で届くので、&& / || / ; / | / 改行で分けて各部分の先頭を見る
+while IFS= read -r part; do
+  part="${part#"${part%%[![:space:]]*}"}"
+  case "$part" in
+    "git push"|"git push "*|"terraform apply"|"terraform apply "*)
+      echo "本番に影響する操作は hook で止めています: $part" >&2
+      exit 2 ;;
+  esac
+done < <(printf '%s\n' "$cmd" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+exit 0
+```
+
+```bash
+#!/bin/bash
+# ~/.claude/hooks/check-code.sh — 補助: 本番向け操作の文字列を含むコードを実行前に exit 2 で止める
+code=$(jq -r '.tool_input.code // ""') || { echo "hook の入力を読めない" >&2; exit 2; }
+if printf '%s' "$code" | grep -qE 'git push|--prod|terraform apply'; then
+  echo "本番に影響する操作は Code Mode で実行しない" >&2
+  exit 2
+fi
+exit 0
+```
+
+```jsonc
+// managed settings — 組織で Code Mode を使わせない
+{ "env": { "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE": "0" } }
+```
+
+**アンチパターン**:
+- auto mode の分類器に危険操作の検知を任せたまま Code Mode を有効にする（分類器はコード単位でしか審査せず、実行時の値を見ない）
+- PreToolUse フックのタイムアウトを短くしたまま Code Mode を使う（タイムアウトすると `onFailure` 未設定でも呼び出しが拒否され、作業が止まる）
+- 「Code Mode ならフックが壊れても呼び出しは止まる」と考えて、ガード用フックに `"onFailure": "block"` を付けない（v2.1.329 以降は、タイムアウト以外の失敗では呼び出しが通る）
+- `REPL` フックでコードの文字列を検査するだけでガードにする（文字列の連結や、検索結果など実行時に決まる値で抜けられる）
+
+**出典引用**:
+> "Auto mode: the classifier reviews each piece of code before it runs, not each tool call. It doesn’t see values computed at run time"
+> ([Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode), セクション "Permission checks") ※2026-11-14に実際にfetch成功
+
+> "In Code Mode, a `git push` in a folder named `app` can reach your hook as `cd 'app' && git push`."
+> ([Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode), セクション "Permission checks") ※2026-11-22 確認（routine-followup マージ時の追加）
+
+> "On v2.1.329 or later, expect a call from code to run by default after a hook failure other than `the hook did not finish`."
+> ([Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode), セクション "Tool call refused by a hook") ※2026-11-22 確認（routine-followup マージ時の差し替え）
+
+> "審査されるのは Claude が書いたコードで、実行前に 1 回だけです。そのコードの内側で呼ばれる個々のツール呼び出しは審査されません。"
+> ([11/14 の公式ドキュメント更新：Code Mode と権限・フックの挙動、サブエージェントのモデル](https://qiita.com/akihidem/items/db350c6ca4d850158c22), セクション "Code Mode を使うと、権限判定とフックの前提が変わる") ※2026-11-14に実際にfetch成功
+
+**出典**:
+- [Run tool calls from code with Code Mode](https://code.claude.com/docs/en/code-mode) (Claude Code 公式 docs、Permission checks・Tool call refused by a hook・Block Code Mode for your organization・Requirements) ※2026-11-14に実際にfetch成功
+- [Choose a permission mode](https://code.claude.com/docs/en/permission-modes) (Claude Code 公式 docs、auto mode の分類器と Code Mode の関係) ※2026-11-14に実際にfetch成功
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、Code Mode では PreToolUse のタイムアウトの挙動が異なる旨) ※2026-11-14に実際にfetch成功
+- [11/14 の公式ドキュメント更新：Code Mode と権限・フックの挙動、サブエージェントのモデル](https://qiita.com/akihidem/items/db350c6ca4d850158c22) (Qiita akihidem、公式 docs の追加文の差分整理) ※2026-11-14に実際にfetch成功
+- [Run tool calls from code with Code Mode — Tool call refused by a hook](https://code.claude.com/docs/en/code-mode#tool-call-refused-by-a-hook) (Claude Code 公式 docs、v2.1.329 以降はタイムアウト以外のフック失敗で呼び出しが通る・ガード用フックには `"onFailure": "block"`) ※2026-11-22 確認（routine-followup マージ時の追加）
+- [Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (公式リポジトリ、2.1.329 "Changed Code Mode so a PreToolUse hook that errors no longer refuses a script's tool call, as outside Code Mode") ※2026-11-22 確認（routine-followup マージ時の追加）
+
+**バージョン**: Claude Code v2.1.323+（Code Mode は実験的機能。対話型ターミナルセッションのみで、`-p` / Agent SDK / クラウドセッションでは使えない。フック失敗時の既定の扱いは v2.1.329 で変更）
+**確信度**: 高
+**最終更新**: 2026-11-14
 
 ---
