@@ -11,6 +11,7 @@ LCP 画像を lazy にしないこと（`next/image` の既定は `loading="lazy
 - LCP はページの主要コンテンツが表示されるタイミングを測定する
 - Google の検索ランキング（Core Web Vitals）に影響する
 - 遅い LCP はユーザーが離脱する主要因の1つ
+- `loading="lazy"` を外しても、JS の遅延読み込みライブラリやプラグイン（lazysizes 系など）が `<img data-src="..." class="lazyload" src="data:...">` に書き換えていると、JS が動いて画面内と判定されるまで本物の画像を取りに行かない。LCP 要素は DevTools の Performance パネルで特定し、`data-src` / `lazyload` が付いていればプラグインの除外クラス（例: `skip-lazy`。対応クラス名はプラグインの説明で確認）を付け、あわせて `loading="eager"` と `fetchpriority="high"` を付ける。CMS テーマのアイキャッチ画像にこの 3 つを付けて LCP が 3.8 秒から 1.9 秒になった事例が報告されている（画像の大きさ・形式は変えていない）
 - Next.js 16 で `next/image` の `priority` は非推奨になり、`preload`・`loading="eager"`・`fetchPriority` に分かれた。公式は多くの場合 `preload` ではなく `loading="eager"` か `fetchPriority="high"` を使うよう案内している
 
 **コード例**:
@@ -59,10 +60,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 - [web.dev: LCP](https://web.dev/lcp/) (web.dev)
 - [Next.js Docs: Image Optimization](https://nextjs.org/docs/app/building-your-application/optimizing/images) (Next.js公式)
 - [Next.js Docs: Image Component](https://nextjs.org/docs/app/api-reference/components/image) (Next.js公式、"Starting with Next.js 16, the `priority` property has been deprecated in favor of the `preload` property"、"In most cases, you should use `loading="eager"` or `fetchPriority="high"` instead of `preload`.") ※2026-10-25 確認
+- [WordPressで最初の画像を遅延読み込みから外したら、LCPが3.8秒から1.9秒になった](https://zenn.dev/myajo/articles/ea12c9d5070034) (Zenn、JS 遅延読み込みの `data-src` 書き換えが LCP 画像の取得を遅らせる例と、除外クラスでの対処) ※2026-11-16に実際にfetch成功
+  > 「変えたのはアイキャッチ画像の属性だけで、画像の大きさや形式はそのままです。」
 
 **バージョン**: Next.js 13+（`priority` は 16 で非推奨）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-16
 
 ---
 
