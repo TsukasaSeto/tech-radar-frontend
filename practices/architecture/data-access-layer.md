@@ -125,6 +125,7 @@ export default nextConfig;
 - 認可ロジックが DAL に集約されることで「どこを直すべきか」の認知コストが下がる
 - いわゆる IDOR（Insecure Direct Object Reference）は「認証は通っているが認可（本人のリソースか）を忘れる」典型パターン。`fetch → if 文で弾く` ではなく `findOne({ id, userId })` のように**クエリの WHERE 句自体にユーザー条件を含める**と、認可チェックの書き忘れがそもそも成立しにくくなる
 - AI コーディングエージェントが生成した認可ロジックは「コンパイルもレビューも通るが所有者チェックが抜けている」形になりやすく、アプリ固有の認可ルールはシグネチャ型スキャナでは検知できない。エンドポイントごとの所有ルールを明文化し、**別テナントの有効なセッションで他テナントのオブジェクトを取りにいくと 404 になる**クロステナントテストで固定する
+- ログイン前に使う API（会員登録・パスワード再設定など）は認証の外にあり、認可もかけられないので、残る守りは「何をキーに引けるか」と「何を返すか」（#3）になる。ログインなしで会員番号から引ける API を順に呼ぶだけで 4,000 件が 0.3 秒で取れ、1 秒 20 回のレート制限をかけた版でも 429 の後に待って再試行するだけで対象の 200 件すべてが取れた検証例が報告されている。未認証で呼べる公開 DAL 関数では、推測できるキー（連番の会員番号など）で個人データを引けるようにしない。レート制限は時間を稼ぐだけで、認可の代わりにならない
 
 **コード例**:
 ```ts
@@ -177,6 +178,9 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 - [Why AI Coding Agents Keep Writing Broken Access Control](https://snyk.io/blog/ai-coding-agents-broken-access-control/) (Snyk Blog、エージェント生成コードの BOLA/IDOR とクロステナントテスト) ※2026-10-01 fetch
 - [Next.js Docs: How to implement authentication — Authorization](https://nextjs.org/docs/app/guides/authentication#authorization) (Next.js公式、`verifySession()` を DAL に置き `cache()` でラップする形と、`cache()` がレンダー外では重複排除しない注意) ※2026-10-25 確認
 - [Next.js Docs: unauthorized](https://nextjs.org/docs/app/api-reference/functions/unauthorized) (Next.js公式、Experimental で `experimental.authInterrupts` が必要) ※2026-10-25 確認
+- [認証基盤を入れても、APIから情報は抜ける。OAuth・NextAuth・Supabase・Cloudflareで認可が残る](https://zenn.dev/aeyesec/articles/d17f8a333b79c3) (Zenn、ログイン前 API を会員番号で順に引く列挙の実測と、レート制限が認可の代わりにならない点) ※2026-11-22 確認
+  > "レート制限は時間を稼げても、穴は塞ぎません。"
+  > (セクション "手元のサーバで試す")
 
 > "if (!order || order.userId !== req.user.id) { return res.status(404).json({ error: "見つかりません" }) }"（"どう直すか" セクション。さらに安全な形として `findOne({ id: req.params.id, userId: req.user.id })` というクエリ時点フィルタを推奨）
 > ([AIで作ったアプリで一番危ない穴：他人のデータが見えてしまう「認可漏れ」の話](https://zenn.dev/heygeek/articles/ai-authorization-idor-deep-dive), Zenn, セクション "どう直すか") ※2026-07-27に実際にfetch成功
@@ -188,7 +192,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
 
 **バージョン**: Next.js 16+（`unauthorized()` / `forbidden()` は 15.1 で追加、現在も Experimental）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-20
 
 ---
 
@@ -205,6 +209,7 @@ DAL の戻り値は必ず DTO（Data Transfer Object）に整形し、公開し�
 - RSC Payload の肥大化抑制にもなる（不要フィールドを落とす）
 - Client Component に渡した props は HTML 内の RSC ペイロード（`self.__next_f.push(...)`）にそのまま載る。静的書き出し環境で、props に含めたスラッシュ無しの `path` 文字列を Google が拾い続けた事例が報告されている（描画側のリンク・canonical を整えても、渡したデータの中身は消えない）。渡すデータの形は読み込み口で一箇所にそろえる
 - OWASP の Next.js Security Cheat Sheet も同じ境界を明示的な原則として挙げている（後述の出典引用）
+- ログイン前に使う API（会員登録時のメール重複チェックなど）でも、画面が使うのは真偽値だけなのに名前・電話番号まで返していた検証例が報告されている。認証の外にある API ほど、返すフィールドを画面が使うものだけに絞る。フィールドを絞っても、推測できるキーで引ける API の列挙は防げない（詳細は #2 を参照）
 
 **コード例**:
 ```ts
@@ -269,12 +274,15 @@ export const getUser = cache(async (id: string) => {
 - [Next.jsの考え方 / Data Access Layer（DAL）— データの単一の出入り口](https://zenn.dev/akfm/books/nextjs-basic-principle)
 - [OWASP Cheat Sheet Series: Next.js Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/commit/057627b3df718979f972bf7491a772f422229a37) (OWASP公式、DTO による明示的なフィールド境界を「Control Data Crossing into the Browser」として原則化) ※2026-08-31に実際にfetch成功
 - [Next.js Docs: How to implement authentication — Using Data Transfer Objects](https://nextjs.org/docs/app/guides/authentication#using-data-transfer-objects-dto) (Next.js公式、必要なフィールドだけを返す DTO の推奨) ※2026-10-25 確認
+- [認証基盤を入れても、APIから情報は抜ける。OAuth・NextAuth・Supabase・Cloudflareで認可が残る](https://zenn.dev/aeyesec/articles/d17f8a333b79c3) (Zenn、ログイン前 API の過剰なレスポンスと列挙の実測) ※2026-11-20に実際にfetch成功
+  > "画面が使うのは "registered":true だけなのに、名前も電話番号も返しています。"
+  > (セクション "手元のサーバで試す")
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
 **確信度**: 高（Next.js 公式ガイドの DTO 推奨 + OWASP公式チートシート）
-**最終更新**: 2026-11-01
+**最終更新**: 2026-11-20
 
 ---
 
