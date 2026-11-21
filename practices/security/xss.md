@@ -220,11 +220,13 @@ function buildAllowedUpstreamRequest(userInput: string): URL {
 
 Server Component から Client にデータを渡す目的で `<script type="application/json">` 等にデータを埋め込む際、
 `</script>` 文字列を含む JSON はタグを早期終了させて XSS を発生させる。`<` `>` `&` `'` をエスケープする。
+SEO 用の JSON-LD（`<script type="application/ld+json">`）も同じで、CMS 由来の説明文などを `JSON.stringify` しただけで埋め込まない。
 
 **根拠**:
 - `JSON.stringify({ name: '</script><script>alert(1)</script>' })` の出力には `</script>` がそのまま含まれる
 - ブラウザは `</script>` を見つけた時点で `<script>` を終了するため、後続のスクリプトが実行される
 - `<` `>` `&` を Unicode エスケープ（`\u003c` `\u003e` `\u0026`）すると JSON としては有効なまま、HTML としては安全になる
+- Next.js 公式の JSON-LD ガイドも、`JSON.stringify` は XSS 用の悪意ある文字列を無害化しないとして `<` を `\u003c` に置き換える例を示し、JSON-LD は実行コードではないので `next/script` ではなくネイティブの `<script>` を Server Component で出力するよう案内している（初期 HTML に入るため、JavaScript を実行しないクローラーにも届く）
 - Next.js の `<Script>`（`next/script`）はインラインの中身（children / `dangerouslySetInnerHTML`）をエスケープせず、JavaScript としてそのまま実行する。Next.js がエスケープするのは自分が出力するデータ（RSC Payload の `self.__next_f.push(...)`、App Router の `beforeInteractive` を包む `self.__next_s.push(...)`、Pages Router の `__NEXT_DATA__`）だけで、Pages Router の `beforeInteractive` のインライン中身は HTML の `<script>` にそのまま出力される
 - App Router の `beforeInteractive` を包む部分のエスケープも 16.2.5 / 15.5.16 の修正で入ったもので、13.0.0 以降の未修正版では信頼できない値で `<script>` を抜けられた（GHSA-gx5p-jg67-6x7h / CVE-2026-44580）。修正版でもエスケープされるのは包む部分だけで、中身のコードに文字列連結した値は守られない
 
@@ -305,10 +307,16 @@ export function UserInit({ name }: { name: string }) {
 - [Next.js Docs: Scripts — Inline Scripts](https://nextjs.org/docs/app/guides/scripts#inline-scripts) (Next.js 公式、インラインの中身は JavaScript として書く。エスケープの記述はない) ※2026-10-25 確認
 - [vercel/next.js: packages/next/src/client/script.tsx](https://github.com/vercel/next.js/blob/canary/packages/next/src/client/script.tsx) / [pages/_document.tsx](https://github.com/vercel/next.js/blob/canary/packages/next/src/pages/_document.tsx) / [shared/lib/htmlescape.ts](https://github.com/vercel/next.js/blob/canary/packages/next/src/shared/lib/htmlescape.ts) (GitHub、中身は `innerHTML` / `textContent` でそのまま実行、`htmlEscapeJsonString` は Next.js 自身のデータにだけ使う) ※2026-10-25 確認
 - [GHSA-gx5p-jg67-6x7h: Cross-site scripting in beforeInteractive scripts with untrusted input](https://github.com/vercel/next.js/security/advisories/GHSA-gx5p-jg67-6x7h) (Next.js 公式アドバイザリ、CVE-2026-44580。影響 >=13.0.0 <15.5.16 / >=16.0.0 <16.2.5) ※2026-10-25 確認
+- [Next.js Docs: How to implement JSON-LD in your Next.js application](https://nextjs.org/docs/app/guides/json-ld) (Next.js 公式、JSON-LD の `<` エスケープとネイティブ `<script>` の推奨) ※2026-11-19 fetch
+  > "The following snippet uses JSON.stringify, which does not sanitize malicious strings used in XSS injection."
+  > (セクション "How to implement JSON-LD in your Next.js application")
+- [JSON-LD in the Next.js App Router: typed, safe, in the initial HTML, and in sync with the page](https://dev.to/liaxim/json-ld-in-the-nextjs-app-router-typed-safe-in-the-initial-html-and-in-sync-with-the-page-42jm) (dev.to、CMS の説明文に `</script>` が入る例と `JsonLd` コンポーネントでの `\u003c` 置換) ※2026-11-19 fetch
+  > "JSON.stringify alone is not safe inside a script tag."
+  > (セクション "Escape it properly")
 
 **バージョン**: 全モダンブラウザ（`next/script` の挙動は Next.js 16.4.3 のソースで確認）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-19
 
 ---
 
