@@ -5405,3 +5405,75 @@ npx modern-web-guidance@latest legacy-scan .
 **最終更新**: 2026-11-18
 
 ---
+
+### 65. auto-compact で残す内容は PreCompact hook の標準出力で指示する — ログ出力は stderr に分ける
+
+手動の `/compact <指示>` と違い、自動圧縮（auto-compact）には指示を渡す引数がない。毎回同じ方針で足りるなら、プロジェクト直下の CLAUDE.md に "Compact Instructions" 節を置いて「進行中の作業と完了条件・ユーザーが決めたこと・変更したファイル・未解決のエラー・次の一手」のような残す項目を書けばよく、hook は要らない（公式）。
+PreCompact hook は、圧縮のたびに変わる情報（作業ツリーの変更ファイル、会話から生成した指示文など）を指示に足したいときに使う。終了コード 0 で標準出力に書いた文字列は、手動・自動のどちらでも圧縮要約の指示として使われる。
+逆に、ログ退避などの PreCompact hook が進捗メッセージを標準出力に `echo` すると、その文字列も要約の指示として渡る。ログや失敗の通知は stderr に出す。
+
+**根拠**:
+- 公式 docs（How Claude Code works > When context fills up）は、圧縮で残す内容を制御する方法として CLAUDE.md の "Compact Instructions" 節と `/compact <指示>` を挙げている。Manage costs effectively にも、プロジェクト直下の CLAUDE.md に `# Compact instructions` を書く例がある
+- 公式 docs（Hooks reference > PreCompact output）は、exit 0 でブロックしなかった PreCompact hook の stdout を圧縮要約の指示として使い、hook 1 つあたり 10,000 文字で切ると明記している
+- 入力の `trigger` は `manual` / `auto`、`custom_instructions` は手動 `/compact` で渡した文字列（無ければ `null`）、自動では常に `null`（公式 docs）。手動で指示が渡されたときは何も出力せずに終わればユーザーの指示を上書きしない
+- exit 2 や `"decision": "block"` で圧縮を止められるが、API のコンテキスト上限エラーから回復するための自動圧縮を止めると、そのリクエストは失敗する（公式 docs）。指示を出すだけの hook はブロックしない
+- Zenn の記事は、hook の中で `transcript_path` の会話を読み、別の `claude -p` に指示文を書かせて stdout に出す構成を Claude Code 2.1.325 で検証し、auto-compact 4 回すべてで要約が指示どおりの行で始まったと報告している（空文字を返す対照では 0 回）。子の `claude -p` に `--setting-sources ""` を付けて hooks を読ませず、PreCompact の再帰を防いでいる
+- 同記事は、生成器にツールの結果を渡さなかった版では「テスト未確認」と状態を読み違えたと報告している。生成器の呼び出しは圧縮のたびに費用と待ち時間（記事では haiku で数秒から 40 秒ほど）も上乗せする。毎回同じ方針で足りるなら、固定の指示文を出すだけの hook ではなく CLAUDE.md の "Compact Instructions" 節に書く
+
+**コード例**:
+```markdown
+<!-- Good: 毎回同じ方針は、プロジェクト直下の CLAUDE.md に書く（hook は要らない） -->
+# Compact instructions
+
+要約には次を必ず残す: 進行中の作業と完了条件 / ユーザーが決めたこと・禁じたこと（原文で）/
+変更したファイルのパスと状態 / 未解決のエラー / 次の一手。解決済みの試行錯誤と長いコマンド出力は捨ててよい。
+```
+
+```bash
+#!/bin/bash
+# ~/.claude/hooks/compact-instructions.sh（settings.json の hooks.PreCompact に登録）
+# 圧縮のたびに変わる情報（ここでは作業ツリーの変更ファイル）を指示に足すときだけ hook を使う
+INPUT=$(cat)
+# Good: 手動の /compact <指示> があればユーザーの指示を優先し、何も出さない
+if [ "$(jq -r '.custom_instructions // empty' <<<"$INPUT")" != "" ]; then
+  exit 0
+fi
+CWD=$(jq -r '.cwd // empty' <<<"$INPUT")
+CHANGED=$(git -C "${CWD:-.}" status --short 2>/dev/null | head -n 50)
+# Good: stdout がそのまま要約の指示になる（10,000 文字以内）
+if [ -n "$CHANGED" ]; then
+  printf '要約には、次の未コミットの変更ファイルのパスと、それぞれの作業状態を必ず残す:\n%s\n' "$CHANGED"
+fi
+exit 0
+
+# Bad: ログ用の hook が進捗を stdout に出す（この文字列まで要約の指示になる）
+# echo "transcript を退避しました: $DEST"
+# Good: ログや通知は stderr に出す
+# echo "transcript を退避しました: $DEST" >&2
+```
+
+**アンチパターン**:
+- auto-compact には指示を渡せないと考え、圧縮のたびに手動 `/compact` を打つ運用に頼る（固定の方針は CLAUDE.md の "Compact Instructions" 節、圧縮のたびに変わる情報は PreCompact hook で渡せる）
+- 指示文を生成する hook が失敗したときに exit 2 で圧縮を止める（上限エラーからの回復ではリクエストが失敗する）。失敗時は何も出さず exit 0 で抜ける
+
+**出典引用**:
+> "To control what's preserved during compaction, add a "Compact Instructions" section to CLAUDE.md or run `/compact` with a focus (like `/compact focus on the API changes`)."
+> ([How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works), セクション "When context fills up") ※2026-11-22 確認
+
+> "When a PreCompact hook exits 0 and doesn't block, Claude Code uses its stdout as instructions for the compaction summary."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "PreCompact output") ※2026-11-19に実際にfetch成功
+
+> "PreCompact hook が標準出力に書いた文字列は、auto-compact の要約の指示として使われます。"
+> ([Claude Code の auto-compact に、その会話専用の指示を渡す — PreCompact hook で指示文を生成する](https://zenn.dev/jasagiri/articles/d132330d5dc580), セクション 冒頭（最初の見出しの前）) ※2026-11-19に実際にfetch成功
+
+**出典**:
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、PreCompact の stdout が要約の指示になる・10,000 文字の上限・`trigger` / `custom_instructions`・上限エラー回復時のブロックはリクエスト失敗) ※2026-11-19 fetch
+- [Claude Code の auto-compact に、その会話専用の指示を渡す — PreCompact hook で指示文を生成する](https://zenn.dev/jasagiri/articles/d132330d5dc580) (Zenn jasagiri、2.1.325 での e2e 検証と `claude -p` による指示文生成) ※2026-11-19 fetch
+- [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works) (Claude Code 公式 docs、"When context fills up" で圧縮時に残す内容を CLAUDE.md の "Compact Instructions" 節か `/compact <指示>` で制御すると案内) ※2026-11-22 確認
+- [Manage costs effectively](https://code.claude.com/docs/en/costs) (Claude Code 公式 docs、"Manage context proactively" でプロジェクト直下の CLAUDE.md に `# Compact instructions` を書く例) ※2026-11-22 確認
+
+**バージョン**: Claude Code（e2e 検証は 2.1.325）
+**確信度**: 高
+**最終更新**: 2026-11-19
+
+---
