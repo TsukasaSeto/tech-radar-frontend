@@ -747,3 +747,99 @@ export async function updateItem(formData: FormData) {
 **バージョン**: React 19+（`<form action>` に関数を渡す場合）、Next.js 15+（App Router / Server Actions）
 **確信度**: 高
 **最終更新**: 2026-11-16
+
+---
+
+### 10. Server Action の本文上限（既定 1MB）を前提にファイル送信を設計し、上限は `experimental.serverActions.bodySizeLimit` で必要な分だけ上げる
+
+Server Action に送るリクエスト本文の上限は既定で 1MB。画像などを `FormData` で送るフォームは、上限を `next.config.ts` の `experimental.serverActions.bodySizeLimit` で用途に合わせて上げ、クライアント側でも送信前にサイズを検査して、上限超過をユーザー向けのメッセージで返す。ホスティング側の上限（Vercel Functions は既定で 4.5MB）はこの設定では変わらないため、それを超えるファイルは Server Action を経由させずストレージへ直接アップロードする。
+
+**根拠**:
+- 1MB の既定上限は、大きなデータの解析によるサーバー資源の消費や DDoS を防ぐためのもの（公式）。上限を上げるほどこの防御が弱まるので、必要な値だけに留める
+- 上限は数値（バイト数）か `bytes` 形式の文字列（`'500kb'`・`'3mb'` など）で指定する。Next.js 16.4 時点でも `bodySizeLimit` は experimental で、`experimental.serverActions` の下に書く必要がある（公式）
+- 上限は、`multipart/form-data` の境界・パートヘッダー・フィールドのメタデータを含む生のリクエスト本文全体にかかる（公式。上限付近のアップロードには 10〜20KB の余裕を見るのが目安）。上限ちょうどのファイルは送れないので、クライアントで検査するファイルサイズの上限は `bodySizeLimit` から余裕を引いた値にする（dev.to の記事も、900KB の画像とほかのフィールドを合わせて 1MB を超えた例を挙げている）。クライアントで `file.size` を検査すれば、サーバーのエラーではなく入力エラーとして返せる
+- Vercel Functions はリクエスト本文の上限が既定で 4.5MB で、超えると `413: FUNCTION_PAYLOAD_TOO_LARGE` を返す（Vercel 公式）。既定のままなら、`bodySizeLimit` をこれより大きくしてもプラットフォーム側で拒否される。Vercel Functions の大きなリクエストボディ（最大 20MiB、Public Beta）は `VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` で有効にする opt-in で、Node.js / Python / Bun の runtime・fluid compute・Performance（4 GB、Pro / Enterprise）メモリが条件。Edge runtime は 4.5MB 上限のまま。有効にするとプロジェクト単位で Routing Middleware にボディが届かなくなる（`practices/nextjs/middleware.md` #6）
+
+**コード例**:
+```ts
+// next.config.ts
+import type { NextConfig } from 'next';
+
+// Good: 用途に必要な分だけ上げる（Next.js 16.4 時点でも experimental の下に書く）
+const nextConfig: NextConfig = {
+  experimental: {
+    serverActions: {
+      bodySizeLimit: '4mb', // Vercel の既定上限 4.5MB を下回る値にする
+    },
+  },
+};
+
+export default nextConfig;
+
+// Bad: experimental の外に書く（公式ドキュメントの指定位置と異なる）
+// const nextConfig: NextConfig = { serverActions: { bodySizeLimit: '4mb' } };
+
+// Bad: 上限エラーを避けるために必要以上の値を設定する（大きな本文の解析負荷・DDoS の防御が弱まる）
+// experimental: { serverActions: { bodySizeLimit: '100mb' } }
+```
+
+```tsx
+// app/profile/avatar-form.tsx
+'use client';
+
+import { useActionState } from 'react';
+import { uploadAvatar } from './actions';
+
+// next.config.ts の bodySizeLimit（'4mb' = 4 * 1024 * 1024 バイト）は multipart の境界やほかのフィールドも含む。
+// Bad: ファイルの上限を bodySizeLimit と同じ値にする（上限付近のファイルが検査を通ってもサーバーで上限超過になる）
+// Good: multipart のオーバーヘッドとほかのフィールドの分の余裕を引く
+const BODY_SIZE_LIMIT = 4 * 1024 * 1024;
+const MAX_FILE_BYTES = BODY_SIZE_LIMIT - 64 * 1024;
+
+export function AvatarForm() {
+  const [state, formAction] = useActionState(uploadAvatar, { message: '' });
+
+  return (
+    <form
+      action={formAction}
+      onSubmit={(e) => {
+        // Good: 送信前にサイズを検査し、上限超過を入力エラーとして伝える
+        const file = new FormData(e.currentTarget).get('avatar');
+        if (file instanceof File && file.size > MAX_FILE_BYTES) {
+          e.preventDefault();
+          alert('画像は 3.9MB 以下にしてください');
+        }
+      }}
+    >
+      <input type="file" name="avatar" accept="image/*" />
+      <button type="submit">アップロード</button>
+      <p>{state.message}</p>
+    </form>
+  );
+}
+```
+
+**アンチパターン**:
+- 動画や大きな PDF も Server Action の `FormData` で送り、`bodySizeLimit` を上げて対応しようとする（ホスティング側の上限で止まる。署名付き URL でストレージへ直接送る）
+- クライアントのサイズ検査だけで Server Action 側の検証を省く（クライアントの検査は UX のため。ファイル種別・サイズの検証は Rule #5 のとおり Action 内でも行う）
+
+**出典引用**:
+> "By default, the maximum size of the request body sent to a Server Action is 1MB, to prevent the consumption of excessive server resources in parsing large amounts of data, as well as potential DDoS attacks."
+> ([next.config.js: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions), セクション "bodySizeLimit") ※2026-11-18に実際にfetch成功
+
+> "The limit applies to the raw HTTP request body, including the bytes that `multipart/form-data` adds for boundaries, part headers, and field metadata."
+> ([next.config.js: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions), セクション "bodySizeLimit") ※2026-11-22 確認
+
+> "Vercel Functions accept request bodies up to 4.5 MB by default"
+> "Request bodies up to 20 MiB are available in Public Beta for the Node.js, Python, and Bun runtimes."
+> ([Vercel Functions Limits](https://vercel.com/docs/functions/limitations), セクション "Request body size") ※2026-11-22 確認
+
+**出典**:
+- [next.config.js: serverActions](https://nextjs.org/docs/app/api-reference/config/next-config-js/serverActions) (Next.js 公式 docs v16.4.6、既定 1MB・`experimental.serverActions.bodySizeLimit` の書式) ※2026-11-18 fetch。上限が multipart のオーバーヘッドを含む生の本文にかかり、上限付近では 10〜20KB の余裕を見る点は ※2026-11-22 確認
+- [Vercel Functions Limits](https://vercel.com/docs/functions/limitations) (Vercel 公式 docs、リクエスト本文は既定 4.5MB・20MiB は Public Beta の opt-in とその条件・Edge runtime は 4.5MB のまま・超過時は `413: FUNCTION_PAYLOAD_TOO_LARGE`) ※2026-11-22 確認
+- [Vercel Functions now support request bodies up to 20MiB](https://vercel.com/changelog/vercel-functions-now-support-request-bodies-up-to-20mib) (Vercel Changelog 2026-11-20、`VERCEL_SUPPORT_LARGE_REQUEST_BODY=1` による opt-in) ※2026-11-22 確認
+- [Next.js Server Actions: Swallowed Redirects and Body Limits](https://dev.to/rshday/nextjs-server-actions-swallowed-redirects-and-body-limits-2lh2) (dev.to、上限が multipart 本文全体にかかる点とクライアント側の事前検査。記事は `serverActions` をトップレベルに書く例を示すが、公式 docs の指定位置に合わせた) ※2026-11-18 fetch
+
+**バージョン**: Next.js 14+（App Router）。`bodySizeLimit` は Next.js 16.4.6 の公式 docs 時点でも experimental。Vercel の 20MiB のリクエストボディは 2026-11-20 時点で Public Beta
+**確信度**: 高
+**最終更新**: 2026-11-18
