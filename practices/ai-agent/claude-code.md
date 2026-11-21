@@ -1416,6 +1416,8 @@ hooks はイベント種別ごとに「何を目的にするか」を層で分�
 **根拠**:
 - `PreToolUse` + `exit 2` でシークレット検出・予算超過・破壊操作を機械的にブロックできる
 - `UserPromptSubmit` でキーワードマッチしてドキュメントやコンテキストを自動注入し、毎回の手動指示を省ける
+- `UserPromptSubmit` は人が打ったプロンプトだけで発火するわけではない。公式 docs によると、セッションスコープの定期タスク（`/loop` の各反復を含む）、バックグラウンドのサブエージェントからの報告、別セッションからのメッセージでも走る。入力検査・ログ記録をこのフックに載せるなら、人以外の入力でも動く前提で判定とログの書式を作る
+- `UserPromptSubmit` の `command` / `http` / `mcp_tool` フックは既定タイムアウトが 30 秒（他の多くのイベントは 600 秒）で、タイムアウトすると `additionalContext` を含む出力は捨てられてプロンプトはそのまま Claude に届く。重い注入処理は `timeout` を明示し、注入できなかったらプロンプトを止めたい場合は `onFailure: "block"` を付ける（Rule #54）
 - `SessionStart` フックでポリシーファイルを stdout に出力すると、`/clear` 後もセッション毎にコンテキストが自動復元される（「/clearが怖くなくなる」効果）。stdout 上限は約10,000文字 — 超える場合は同スクリプトを `-Part 0`, `-Part 1` 等に分割して複数フックで並列実行する。ポリシーを英語テレグラフ形式で記述すると60〜70%トークン削減できる
 - `Stop` フックで会話終了時に git の未 push 状態を表示すると、コミット漏れを防げる
 - `Stop` フックはループガード（暴走時のハードストップ）にも使える—同一行が8回以上繰り返される場合に `{"continue": false}` を返して強制停止。「自己制御は自己が壊れたとき機能しない」ため外部 failsafe が必要
@@ -1612,10 +1614,13 @@ sys.exit(0)  # 問題がなければ何も返さず終了を許す
 - [AIに「Bashは禁止」と門番を立てたら、3回中2回は別の道から同じファイルが作られていた](https://zenn.dev/numarn/articles/claude-pretooluse-hook-guard-handson) (Zenn numarn、`matcher: Bash` のみでは `Write` ツール経由の迂回を防げない実測。Rule #9 から集約) ※2026-08-05 fetch
 - [ESLint Command Line Interface — --fix](https://eslint.org/docs/latest/use/command-line-interface#--fix) (ESLint 公式 docs、`--fix` は対象ファイルの修正可能な問題を直す) ※2026-10-25 確認
 - [gitleaks `.pre-commit-hooks.yaml`](https://github.com/gitleaks/gitleaks/blob/master/.pre-commit-hooks.yaml) (gitleaks 公式、pre-commit フックの `entry` は `gitleaks git --pre-commit --redact --staged --verbose` で、Layer 0 の例と同じフラグ構成。`git` サブコマンドは v8.19.0 以降) ※2026-10-25 確認
+- [Hooks reference — UserPromptSubmit](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、人の入力以外での発火場面と 30 秒の既定タイムアウト) ※2026-11-17に実際にfetch成功
+  > "`UserPromptSubmit` hooks have a default timeout of 30 seconds for `command`, `http`, and `mcp_tool` types, shorter than the 600-second default for those types on most other events."
+- [11/17 の公式ドキュメント更新：サブエージェントの呼び出しと非対話実行の前提](https://qiita.com/akihidem/items/e98641f8909f1167e9f2) (Qiita akihidem、2026-11-17 の hooks ページ追記を紹介) ※2026-11-17に実際にfetch成功
 
-**バージョン**: Claude Code（全バージョン共通）
+**バージョン**: Claude Code（全バージョン共通。`onFailure` は v2.1.295+）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-17
 
 ---
 
@@ -5199,3 +5204,144 @@ echo ".claude/settings.local.json" >> .gitignore
 **バージョン**: Claude Code（`.claude/settings.local.json` の `permissions.allow`）
 **確信度**: 中（保存先と除外の範囲は公式 docs、秘密が平文で残る点と調査件数は単一記事の報告）
 **最終更新**: 2026-11-16
+
+---
+
+### 62. Mods の `tool.call` で書く安全ガードは `.catch` で fail closed にし、導入前に `claude plugin validate` で何をするかを確認する
+
+Mods（Claude Code v2.1.287+ でプラグインに入れる JavaScript / TypeScript の関数フック）で「止めるためのガード」を書くときは、ガード関数が例外・タイムアウトで落ちたら操作が素通りする前提で設計する。公式 docs によると、`.catch` の無い hook が `next` を呼ぶ前に失敗すると Claude Code はその hook を読み飛ばし、コマンドは mod が無いときと同じように実行される。公開・push・削除のように止まらないと困るガードには `.catch` を付けて `{ deny }` を返し、速度目的など壊れても作業を塞ぎたくないガードには付けない、と用途で使い分ける。設定ファイルの settings hook で同じことをする場合は Rule #54 の `onFailure: "block"` を使う。
+
+**根拠**:
+- 公式 docs（React to events > Handle a hook that fails）は、`.catch` ハンドラで `next.called` を見て「ガードが `next` を呼ぶ前に落ちたなら拒否、呼んだ後なら結果をそのまま返す」形を fail closed の書き方として示している。`next.error.kind` には `'throw'` / `'timeout'` などの理由が入る
+- `.catch` ハンドラ自体も別の時間制限を持ち、ハンドラまで落ちると hook は無いものとして扱われる。ハンドラは判定をやり直さず、拒否を返すだけの短い処理にする
+- `prompt.submit` のガードでは拒否は `{ drop }`、`config.set` では `{ deny }` を返す（公式 docs の events reference による）
+- Mods はサンドボックス化されず、ユーザー権限でファイル・環境変数・ネットワークに触れられ、`deny` / `ask` ルールや `PreToolUse` フックが止める呼び出しを承認できる（組み込みガードが読み込まれていれば既定では防がれる）。第三者の mod は導入前に `claude plugin validate <dir>` で、どのイベントを扱い何を要求するかを実行せずに一覧する
+- 実例として、Zenn への公開 push を止めるガードには `.catch` を付けて失敗時は push を止め、重い処理の直列化ガードには付けずに壊れたら通す、という使い分けが報告されている。同じ記事は、確認ダイアログ（`$.ui.ask`）を出せない `claude -p` のような場面では push を止める分岐を入れている
+- 別の著者は、`prompt.submit` / `tool.call` / `session.append` の 3 か所で秘密値を伏せる mod を作り、settings hook では書き換えられない「送信するプロンプト本文」と「保存される会話の行」まで伏せられることを mod を選んだ理由に挙げている
+
+**コード例**:
+```javascript
+// hooks/register.js — Good: 公開 push を止めるガードは fail closed
+export function register(on) {
+  const guard = async ($, e, next) => {
+    if (!/\bgit\b.*\bpush\b/.test(e.command)) return next(e)
+    const ok = await runPrepublishGate($, e) // 失敗すると throw しうる自前の検査
+    if (!ok) return { deny: '公開前ゲートで問題が見つかったため push を止めました。' }
+    return next(e)
+  }
+
+  // on は登録を返し、.catch はこの hook だけに失敗時のハンドラを付ける
+  on('tool.call', { tool: 'Bash' }, guard).catch(async ($, e, next) => {
+    if (next.called) return next(e) // guard が next を呼んだ後に落ちた: 結果をそのまま返す
+    return { deny: 'push ガード自体が失敗したため（' + next.error.kind + '）、安全側で止めました。' }
+  })
+}
+
+// Bad: .catch なし。runPrepublishGate が throw / timeout すると hook は読み飛ばされ、push がそのまま走る
+// on('tool.call', { tool: 'Bash' }, guard)
+```
+
+```bash
+# 第三者の mod を入れる前に、扱うイベントと要求する操作を実行せずに確認する
+claude plugin validate ./some-mod
+```
+
+**アンチパターン**:
+- CLAUDE.md に「push する前に確認」と書くだけで、エージェントの Bash 経路にガードを置かない
+- 止めるためのガードを `.catch` なしで登録し、ガードの例外を「止まった」と思い込む
+- `.catch` ハンドラの中で検査をやり直し、ハンドラ自体をタイムアウトさせる
+
+**出典引用**:
+> "If this hook throws or times out, Claude Code skips it and the command goes on as it would without the mod."
+> ([React to events](https://code.claude.com/docs/en/plugins/mods/events), Claude Code 公式 docs, セクション "Guard or change a tool call") ※2026-11-17に実際にfetch成功
+
+> "To make a hook that blocks calls fail closed, add a `.catch` error handler that answers in its place."
+> ([React to events](https://code.claude.com/docs/en/plugins/mods/events), セクション "Handle a hook that fails") ※2026-11-17に実際にfetch成功
+
+**出典**:
+- [Mods overview](https://code.claude.com/docs/en/plugins/mods/overview) (Claude Code 公式 docs、v2.1.287+ で既定有効、サンドボックス化されないこと、`claude plugin validate` による事前確認、settings hook との比較表) ※2026-11-17 fetch
+  > "Mods aren't sandboxed."（セクション "What a mod can reach"）
+- [CLAUDE.mdに書いたルールを、Claude Code Modsの関数で機械に守らせる](https://zenn.dev/anikuma/articles/claude-code-mods-rule-guard) (Zenn アニクマ、公開 push ガードは `.catch` で fail closed・直列化ガードは fail open にした使い分けと `claude -p` での停止) ※2026-11-17に実際にfetch成功
+  > "Mods のフックは例外やタイムアウトで落ちると読み飛ばされ、元の処理が走る。"（セクション "heavy-serial-guard は、壊れたら通す側に倒した"）
+- [Claude Codeのmodで、AIに渡る前にアクセスキーを伏せる](https://zenn.dev/ekispert_api/articles/claude-code-mods) (Zenn lyusei、`prompt.submit` / `tool.call` / `session.append` で秘密値を伏せる mod と settings hook との違い) ※2026-11-17に実際にfetch成功
+  > "伏せたいのは、モデルに送る前とトランスクリプトに保存する前の両方なので、modを選びました。"（セクション "modとは何か"）
+
+**バージョン**: Claude Code v2.1.287+（ターミナル。Desktop app は v2.1.286+）
+**確信度**: 高
+**最終更新**: 2026-11-17
+
+---
+
+### 63. コーディングエージェントに HTML / CSS / ブラウザ API を書かせるプロジェクトでは Chrome の Modern Web Guidance を導入し、`claude-plugins-official` 経由の導入は `googlechrome` マーケットプレイスへ切り替える
+
+Modern Web Guidance は Google Chrome が公開するコーディングエージェント向けスキルで、エージェントが HTML / CSS / Web API の作業中に CLI でガイドを検索・取得し、Baseline の互換データに沿ったモダンな実装パターンとフォールバックをコンテキストに入れる。2026-11-10 に v1.0.0 が stable になった。古い書き方に寄りがちなエージェントに、ブラウザ標準の新しい機能を、使えないブラウザ向けの代替（フォールバック）付きで使わせる目的で入れる。JavaScript の量が減るとは限らず、生成コードに外部 CDN のポリフィルが混ざることもあるため、導入後は出力を確認する（根拠の 5 つ目）。
+
+**根拠**:
+- 公式 README は、学習データに古いコードが多いためエージェントが古いパターンを選び、標準機能で済む処理に肥大した JavaScript を書きがちだと導入理由を説明している
+- CLI（`search` / `retrieve` / `legacy-scan`）はオフラインで動き、Origin Trial の API や直近 3 か月の単一エンジン機能（volatile）のガイドは `retrieve` で止まる。使わせる場合だけ `.mwgrc` の `allowOriginTrials` / `allowVolatileFeatures` をコミットしてチームで共有する
+- 公式 README によると、Anthropic は 10/12 に組み込みマーケットプレイス `claude-plugins-official` のサードパーティプラグイン更新を止めており、そこから入れた Modern Web Guidance は `v0.0.194` で止まっている。`googlechrome` マーケットプレイスへ入れ替える。Claude Code ではサードパーティのマーケットプレイスは auto-update が既定で off なので、入れ替えたら `/plugin` の Marketplaces タブで `googlechrome` の auto-update を有効にする（README の手順も同じ）
+- Claude Code での追試では、日本語 1 行の依頼でも 20 回中 17 回スキルが起動し、対応ブラウザが限られる新しい機能を使う回が 0/20 から 19/20 に増えた一方、1 回あたりの費用は中央値で 2.2 倍・時間は 16 秒増えたと報告されている。同じ記事は、`claude -p` で回す場合はスキルの `npx` コマンドの許可を足さないとガイドが読まれないと報告している。スキル本体は、許可するなら `npx -y modern-web-guidance@latest *` を名指しし、bare の `npx *` は許可しないよう指示している
+- 同じ追試では、スキルが代替を付けるため JavaScript の行数は減らず（中央値 17.5 → 20 行）、20 回中 7 回はポリフィルを外部 CDN から読み込むコードが入った。スキル本体は、CLAUDE.md / AGENTS.md にブラウザ対応方針（`Baseline YYYY` の目標や「ポリフィルを入れない」など）があれば代替を省くとしているが、記事の追試では `Baseline 2024` を書いても CDN からの読み込みは残った。生成コードの外部スクリプト読み込みはレビューで確認する（外部 CDN のリスクは `practices/security/dependency-security.md` #9）
+
+**コード例**:
+```bash
+# Good: プロジェクト直下で導入し、定期的に更新する
+npx modern-web-guidance@latest install
+npx modern-web-guidance@latest update
+
+# Good: Claude Code のプラグインとして入れる場合は googlechrome マーケットプレイスから（README の順）
+# 既に claude-plugins-official から入れている場合は、先にそちらを外す
+/plugin uninstall modern-web-guidance@claude-plugins-official
+/plugin marketplace add GoogleChrome/modern-web-guidance
+/plugin install modern-web-guidance@googlechrome
+# Marketplaces タブで googlechrome を選び、auto-update を有効にする（サードパーティは既定で off）
+/plugin
+/reload-plugins
+
+# Good: 無人の claude -p では、スキルの npx コマンドだけを名指しで許可する（Windows は npx.cmd の行も要る）
+claude -p "..." --allowedTools "Bash(npx -y modern-web-guidance@latest *)" "Bash(npx.cmd -y modern-web-guidance@latest *)"
+
+# Bad: npx 全体を許可する（任意の npm パッケージを確認なしで実行できてしまう）
+# claude -p "..." --allowedTools "Bash(npx *)"
+
+# 既存コードの古いパターンを洗い出す
+npx modern-web-guidance@latest legacy-scan .
+```
+
+```jsonc
+// .mwgrc（任意。コミットしてチームで共有する）— 実験的 API を使わせる場合だけ有効にする
+{ "allowOriginTrials": false, "allowVolatileFeatures": false }
+```
+
+**アンチパターン**:
+- `claude-plugins-official` から入れたまま更新されていないことに気づかない
+- `googlechrome` マーケットプレイスへ入れ替えたが auto-update を有効にせず、再び更新が止まる
+- 無人の `claude -p` でスキルを入れただけで、ガイド取得に必要な `npx` の実行許可を与えない。逆に `Bash(npx *)` で npx 全体を許可する
+- Origin Trial / volatile 機能のゲートを全員の環境で外し、対応ブラウザの限られる API を無条件に採用させる
+- 「JavaScript が減る」と期待して入れ、生成コードに外部 CDN からのポリフィル読み込みが入っていないかを確認しない
+
+**出典引用**:
+> "Coding agents often default to older patterns because LLM training data contains vast amounts of legacy code."
+> ([GoogleChrome/modern-web-guidance README](https://github.com/GoogleChrome/modern-web-guidance), Google Chrome 公式, セクション "Why?") ※2026-11-17に実際にfetch成功
+
+> "Anthropic stopped updating third-party plugins in their built-in `claude-plugins-official` marketplace on Oct 12"
+> ([GoogleChrome/modern-web-guidance README](https://github.com/GoogleChrome/modern-web-guidance), セクション "Updating") ※2026-11-17に実際にfetch成功
+
+**出典**:
+- [コーディングエージェントに今のWebプラットフォームの書き方を渡すModern Web Guidance](https://zenn.dev/suwash/articles/modern-web-guidance_20261115) (Zenn suwa-sh、v1.0.0 の仕組み・配布リポジトリ・導入コマンドの整理) ※2026-11-17に実際にfetch成功
+  > "2026 年 11 月 10 日にバージョン 1.0 が stable として公開されました。"（セクション "Modern Web Guidanceとは"）
+- [AI が今どきの HTML・CSS を書くようになると噂の Chrome 公式スキルを、Claude Code で試してみた](https://qiita.com/kakushigoto/items/ba704c992898a551f08f) (Qiita kakushigoto、Claude Code での起動率・新機能の採用率・費用増と `claude -p` の許可不足、JavaScript の行数が減らなかったことと外部 CDN からのポリフィル読み込み 7/20) ※2026-11-17に実際にfetch成功
+  > "claude -p で回す人は、許可を足さないとガイドが読まれません"（セクション "先に結論"）
+  > "20 回中 7 回にはポリフィルを CDN から読み込むコードも入りました。"（セクション "先に結論"）
+- [GoogleChrome/modern-web-guidance README](https://github.com/GoogleChrome/modern-web-guidance) (Google Chrome 公式、セクション "Updating"。`claude-plugins-official` からの切り替えは uninstall → marketplace add → install → `/plugin` で AutoUpdate を有効化 → `/reload-plugins`) ※2026-11-22 確認
+- [modern-web-guidance SKILL.md](https://github.com/GoogleChrome/modern-web-guidance/blob/main/skills/modern-web-guidance/SKILL.md) (スキル本体、許可する `npx` コマンドの範囲と、ブラウザ対応方針があれば代替を省くこと) ※2026-11-22 確認
+  > "When requesting tool permissions, allowlist `npx -y modern-web-guidance@latest *` (or `pnpx modern-web-guidance@latest *`) specifically, never bare `npx *` or `pnpx *`."（セクション "Using npx / pnpx"）
+- [Install plugins — Keep plugins updated](https://code.claude.com/docs/en/plugins/install#keep-plugins-updated) (Claude Code 公式 docs、auto-update は `claude-plugins-official` などの公式マーケットプレイスでは既定で on、サードパーティのマーケットプレイスでは既定で off。`/plugin` の Marketplaces タブで切り替える) ※2026-11-22 確認
+  > "Off by default: every other marketplace, including the community marketplace, third-party marketplaces, and local development marketplaces."
+- CSS の書き方そのもの（論理プロパティ・`:focus-visible`・opacity / transform）は `practices/web-standards/css.md` #10 を参照
+
+**バージョン**: modern-web-guidance 1.0.0+（Node.js 22+）
+**確信度**: 中（導入・更新の手順と許可の範囲は提供元の README / スキル本体と Claude Code 公式 docs で確認。導入効果は 1 記事の実測で、新しい機能の採用は増えたが JavaScript は減らなかった）
+**最終更新**: 2026-11-17
+
+---

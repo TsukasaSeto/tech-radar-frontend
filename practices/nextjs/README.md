@@ -10,7 +10,7 @@ Next.js の App Router、Server Components、Server Actions、ルーティング
 - `caching.md` - キャッシュ戦略
 - `server-actions.md` - Server Actions の活用
 - `middleware.md` - Proxy（旧 Middleware、v16 の `proxy.ts`）の運用
-- `security-headers.md` - `headers()` API による静的セキュリティヘッダー設定（静的ヘッダーの値の正本。CSP は `../security/csp.md`）
+- `security-headers.md` - `headers()` API による静的セキュリティヘッダー設定（静的ヘッダーの値の正本。CSP は `../security/csp.md`）と Route Handler の CORS
 - `../architecture/data-access-layer.md` - DAL（データアクセスの単一出入り口）
 
 ## 設計判断の優先順位
