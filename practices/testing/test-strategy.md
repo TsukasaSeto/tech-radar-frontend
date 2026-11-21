@@ -378,6 +378,8 @@ LLM（大規模言語モデル）を活用する機能は、ユニットテス�
 - モデルのバージョン更新・プロンプト変更・コンテキスト変化で挙動が変わるため、継続的な評価が必要
 - 50〜200件の本番データサンプルに対して精度・関連性・安全性などのスコアを計算し、閾値を下回ったらアラートを出すパターンが有効
 - 人間によるラベリングコストが高い場合は LLM-as-a-judge（評価用 LLM が採点）で自動評価できる
+- エージェントを使う機能やエージェントに使わせるソフトウェア（API / CLI / MCP サーバー）は、必要な LLM 呼び出し回数で層を分ける: 決定的テスト（0 回）/ 1 ターン eval（1 回: 最初に選ぶコマンドや引数が正しいか）/ E2E eval（2 回以上: タスク全体を完了できたか）。捕まえたい問題から出発し、それを捕まえられる最も下の層を選ぶ。安くて速い下の層がテストの大半を占めるようにする（Vercel 公式ブログ）
+- E2E eval は 1 タスクを複数回試行して集計する。「そもそもできるか」は Pass@k（k 回中 1 回以上成功する確率）、「毎回任せられるか」は Pass^k（k 回すべて成功する確率）で測り、効率（ステップ数など）は成功した試行だけで測る。ログ上は成功したリクエストでも要件違い（アイスを頼んだのにホットを注文）を検出できるのは結果を採点する eval だけ
 
 **コード例**:
 ```ts
@@ -464,11 +466,14 @@ jobs:
 
 **出典**:
 - [Why Unit Tests Aren't Enough for LLM Features](https://dev.to/benchwright/why-unit-tests-arent-enough-for-llm-features-18m6) (dev.to benchwright / 2026-05) ※2026-05-06に実際にfetch成功
+- [WTF are evals? How to test agents and the software they use](https://vercel.com/blog/wtf-are-evals) (Vercel Blog、LLM 呼び出し回数によるテスト層の分類・最下層を選ぶ原則・Pass@k / Pass^k) ※2026-11-12 fetch
+  > "To use the pyramid, start with the problem you want to catch and pick the lowest tier that can catch it."（セクション "The agentic testing pyramid"）
+  > "Pass^k: the chance that all k trials pass. Answers “can I rely on it every time?”"（セクション "Step 2: Define metrics"）
 - [Claude Docs: Models overview](https://platform.claude.com/docs/en/about-claude/models/overview) (Anthropic 公式、現行の Claude API ID は `claude-fable-5-1` / `claude-opus-5-5` / `claude-sonnet-5-5` / `claude-haiku-5-5`。迷ったら Claude Opus 5.5 から始めるよう案内。`claude-opus-4-7` は利用可能なレガシー扱い。Claude Opus 5.5 の thinking は常に有効) ※2026-10-25 確認
 
 **バージョン**: Node.js 20+, @anthropic-ai/sdk 0.30+
-**確信度**: 中（ブログ記事 2 本。本ルールの dev.to と追加根拠の Zenn）
-**最終更新**: 2026-10-25
+**確信度**: 中（ブログ記事 2 本。本ルールの dev.to と追加根拠の Zenn。層の分け方と Pass@k / Pass^k は Vercel 公式ブログ）
+**最終更新**: 2026-11-12
 
 ---
 
