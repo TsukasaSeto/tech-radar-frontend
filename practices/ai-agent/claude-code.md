@@ -5345,3 +5345,63 @@ npx modern-web-guidance@latest legacy-scan .
 **最終更新**: 2026-11-17
 
 ---
+
+### 64. WebFetch を一部のサイトだけに許可するときは `WebFetch(domain:...)` を apex と `*.` サブドメインの 2 行で書き、全許可は bare の `WebFetch` と `WebFetch(domain:*)` の違いで選ぶ
+
+調べ物はさせたいが任意のサイトには行かせたくない場合、`permissions.allow` に `WebFetch(domain:<host>)` を並べる。ルールはリクエスト先 URL のホスト名に照合され、`example.com` と `*.example.com` は互いを含まないため、両方が必要なら 2 行書く。全ドメインを許可・拒否するときは、サンドボックスの通信許可まで変えたいかどうかで bare の `WebFetch` と `WebFetch(domain:*)` を選び分ける。
+
+**根拠**:
+- 照合は大文字小文字を区別せず、ルールとホスト名の両方から末尾の `.` を取り除く（`example.com.` と `example.com` は同じ扱い）（公式）
+- `WebFetch(domain:example.com)` は `example.com` だけに一致し、`api.example.com` は含まない。`WebFetch(domain:*.example.com)` は任意の深さのサブドメイン（`a.b.example.com` も含む）に一致するが、`example.com` 自体には一致しない（公式）
+- 先頭の `*.` と単独の `*` 以外の位置のワイルドカードは、ドットの間の文字列にしか一致しない。`WebFetch(domain:example.*)` は `example.org` に一致するが `example.evil.com` には一致せず、攻撃者が取得できるドメインに末尾ワイルドカードが当たらないようになっている（公式）
+- bare の `WebFetch` と `WebFetch(domain:*)` はどちらも全 URL を対象にするが、`domain:` 形式だけがそのドメインをサンドボックスの許可 / 拒否ドメイン一覧にも加える。allow に `WebFetch(domain:*)` を置くと、サンドボックス内のコマンドも任意のホストへ通信できるようになる。deny に bare の `WebFetch` を置くとツール自体が無くなり、`WebFetch(domain:*)` ではツールは残ったまま毎回の取得が拒否される（公式）
+- WebFetch ルールのワイルドカードは Claude Code v2.1.172 以降で照合に使われる（公式）。古い版では `*.` の行が効かない
+- サンドボックスが `WebFetch(domain:...)` の allow / deny ルールで解釈するワイルドカードは、先頭の `*.` と単独の `*`（v2.1.186 以降）だけ。`example.*` のような位置のワイルドカードは取得には効くが、サンドボックス内のコマンドには効かない（公式）
+- 合流は逆向きにも起きる。サンドボックス内のコマンドの通信先を承認するときに「Yes, and don't ask again」を選ぶと、そのホストは `WebFetch(domain:...)` の allow ルールとしてローカル設定に保存され、WebFetch ツールもそのホストを確認なしで取得できるようになる（公式）。サンドボックス側の `sandbox.network.allowedDomains` は #13、deny の `Read(...)` が `sandbox.filesystem.denyRead` に合算される同型の仕組みは #36、承認の保存先と秘密の混入は #61 を参照
+
+**コード例**:
+```jsonc
+// .claude/settings.json
+// Good: 公式ドキュメントと自社ドメインだけを確認なしで取得させる（apex とサブドメインを別々に書く）
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:nextjs.org)",
+      "WebFetch(domain:react.dev)",
+      "WebFetch(domain:example.com)",
+      "WebFetch(domain:*.example.com)"
+    ]
+  }
+}
+
+// Good: 取得は確認なしで許可しつつ、サンドボックスの通信許可は変えない → bare 形式
+// { "permissions": { "allow": ["WebFetch"] } }
+
+// Bad: *.example.com だけを書いて example.com も許可したつもりになる（apex には一致しない）
+// { "permissions": { "allow": ["WebFetch(domain:*.example.com)"] } }
+
+// Bad: 「確認なしで取得させたい」だけなのに domain:* を allow に置く（サンドボックス内のコマンドも全ホストに届くようになる）
+// { "permissions": { "allow": ["WebFetch(domain:*)"] } }
+```
+
+**アンチパターン**:
+- `WebFetch(domain:example.*)` が `example.co.jp` のような多段の TLD にも一致すると期待する（ワイルドカードはドットを越えない）
+- 外部サイトの取得を止める目的で deny に `WebFetch(domain:*)` を置き、サンドボックス内のコマンドの通信まで止まることに気付かない
+
+**出典引用**:
+> "`WebFetch(domain:*.example.com)` matches any subdomain at any depth, such as `api.example.com` or `a.b.example.com`, but not `example.com` itself"
+> ([Configure permissions](https://code.claude.com/docs/en/permissions), セクション "WebFetch") ※2026-11-18に実際にfetch成功
+
+> "*.example.com はサブドメインだけに一致し、example.com 自体は別に書く"
+> ([Claude Code の WebFetch を特定ドメインだけ許可する設定](https://zenn.dev/aicoding_guide/articles/acg-claude-code-webfetch-domain-allow), セクション "要点") ※2026-11-18に実際にfetch成功
+
+**出典**:
+- [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、WebFetch の `domain:` 照合規則・ワイルドカードの範囲・bare 形式との違い・v2.1.172 の要件) ※2026-11-18 fetch
+- [Claude Code の WebFetch を特定ドメインだけ許可する設定](https://zenn.dev/aicoding_guide/articles/acg-claude-code-webfetch-domain-allow) (Zenn AIコーディングガイド、公式 docs の要点の要約) ※2026-11-18 fetch
+- [Sandboxing — Network isolation](https://code.claude.com/docs/en/sandboxing) (Claude Code 公式 docs、通信先の承認で「Yes, and don't ask again」を選ぶと `WebFetch(domain:...)` の allow ルールとして保存されること・サンドボックスが解釈するワイルドカードは先頭の `*.` と単独の `*`（v2.1.186+）だけであること) ※2026-11-22 確認
+
+**バージョン**: Claude Code v2.1.172+（WebFetch ルールのワイルドカード）。`WebFetch(domain:*)` のサンドボックスへの反映は v2.1.186+
+**確信度**: 高
+**最終更新**: 2026-11-18
+
+---

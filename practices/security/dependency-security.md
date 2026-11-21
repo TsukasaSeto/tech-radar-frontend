@@ -1111,6 +1111,7 @@ polyfill.io 事件（2024年、配信元ドメインが攻撃者に買収され�
 - CDN ドメインのオーナーシップ変更（買収・期限切れ再取得）は外部から観測しにくく、攻撃者が改ざんしたスクリプトをそのまま全訪問者に配信できる
 - `Promise`・`fetch`・`Array.prototype.includes` 等の機能は現行サポート対象ブラウザでネイティブ実装済みのため、polyfill 系 CDN の多くは既に不要
 - SRI（`integrity` 属性で SHA ハッシュを固定）は配信内容が変わった場合にブラウザがロードをブロックする W3C 標準機能
+- 配信元ベンダー自体が侵害されると、許可済みホストから正規の証明書で汚染ファイルが配られ、HTTPS も CSP の `script-src` allowlist も止められない。2026-11-16 の Optimizely 侵害では、`cdn.optimizely.com` から配られたコードが外部スクリプトを追加で読み込み、決済カード情報の窃取などを行う作りだったと報告されている。A/B テスト等の中身が動的に変わるタグには SRI を付けられないため、`connect-src` を絞って `report-to` で未知の送信先への通信を検知する層を足す（Zenn の診断員による解説記事。侵害の概要は Malwarebytes の報告でも確認。違反レポートの収集は `practices/security/csp.md` #3）
 
 **コード例**:
 ```bash
@@ -1146,17 +1147,23 @@ grep -rhoE '<(script|link)[^>]+(src|href)="https?://[^"]+"' ./public
 - 外部 CDN スクリプトを npm パッケージとは別の問題として管理しない
 - SRI なしで外部スクリプトを読み込む（配信元が改ざんされた際に防御できない）
 - 動的 URL（バージョン非固定）の CDN スクリプトに SRI 付与を試みる（SRI はバージョン固定 URL でのみ有効）
+- 動的に中身が変わるベンダータグを `script-src` の allowlist に載せただけで安全とみなす（許可済みホストが汚染されると素通りする）
 
 **出典引用**:
 > "polyfill.io が埋めていた機能(Promise、fetch、`Array.prototype.includes` など)は、現行のサポート対象ブラウザではほぼネイティブ実装済み"
 > ([polyfill.io事件に学ぶサプライチェーン攻撃 ― 外部スクリプト棚卸しとSRI/CSPの実装手順](https://zenn.dev/braind_zenn/articles/braind-polyfill-supply-chain-sri-csp), セクション "Comprehensive Countermeasures") ※2026-06-11に実際にfetch成功
 
+> "CSP は「知らないホストからの読み込み」は止められても、「許可済みホストの中身の変化」までは止められません。"
+> ([信頼したドメインから配られたマルウェア。Optimizely侵害で見直す外部スクリプトの守り方](https://zenn.dev/rudy_candy/articles/optimizely-third-party-js-defense), セクション "2. CSP でスクリプトの出どころを絞る") ※2026-11-18に実際にfetch成功
+
 **出典**:
+- [信頼したドメインから配られたマルウェア。Optimizely侵害で見直す外部スクリプトの守り方](https://zenn.dev/rudy_candy/articles/optimizely-third-party-js-defense) (Zenn、動的なベンダータグには SRI が使えず、`connect-src` + レポートで検知する使い分け) ※2026-11-18 fetch
+- [CNN, BBC, Zoom, and other sites served malicious code in supply-chain attack](https://www.malwarebytes.com/blog/news/2026/11/cnn-bbc-zoom-and-other-sites-served-malicious-code-in-supply-chain-attack) (Malwarebytes、2026-11-16 に Optimizely のファイル経由で 178 組織のサイトに決済カード窃取・暗号資産の送金先書き換えを行うコードが配られた) ※2026-11-22 確認
 - [polyfill.io事件に学ぶサプライチェーン攻撃 ― 外部スクリプト棚卸しとSRI/CSPの実装手順](https://zenn.dev/braind_zenn/articles/braind-polyfill-supply-chain-sri-csp) (Zenn / braind_zenn, polyfill.io 事件ケーススタディ + SRI/CSP 実装手順) ※2026-06-11 fetch
 
 **バージョン**: ブラウザ共通（SRI は Chrome/Firefox/Safari/Edge 全対応）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-18
 
 ---
 
