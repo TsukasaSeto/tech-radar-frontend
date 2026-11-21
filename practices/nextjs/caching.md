@@ -845,6 +845,9 @@ export const ensureStatic = 'navigation';
 - Medium（GHSA-vc7v-qv4w-wrv8）: ネストした公開 `use cache` で、内側が root parameter を読みつつ早い値と遅い非同期値を返し、外側が遅い値を待たずに終わると、内側の root parameter 依存が記録される前に外側のエントリが保存され、テナント・サイト・ロケール固有の内容が別の値のリクエストへ配信されうる
 - Medium（GHSA-rhh4-g77r-r9qj）: 異なるバイナリ引数が同じキャッシュ識別になりうる。その引数でユーザーやアカウントを区別し、他の識別入力が一致すると、他ユーザーのキャッシュ結果を受け取る／自分の結果を他ユーザーに配信させることができる（無関係なキャッシュエントリへの任意アクセスではない）
 - 記事が示す影響条件は「Cache Components 有効」「root parameter／セキュリティ上重要な引数を扱う」。条件に当たらないアプリは影響を受けないが、修正版への更新自体は条件に関係なく行う（`middleware.md` Rule #5 の方針と同じ）
+- 修正版への更新は新しい誤エントリの書き込みを止めるだけで、既に保存されたエントリは消さない。公式は High の件で「誤った結果は revalidate か evict されるまで後続の呼び出しに配信されうる」と書いている。該当構成だった場合は、更新後に残ったエントリの後始末まで行う（どこに何が残るかは個人記事の報告で、永続先ごとの残り方は記事も未検証の部分がある）
+- `unstable_cache` のエントリはデプロイをまたいで残る（記事）。該当する `unstable_cache` のタグは `revalidateTag(tag, { expire: 0 })`（Server Action 内なら `updateTag(tag)`）で即時に失効させるか、ホストのデータキャッシュを purge する。`revalidateTag(tag, 'max')` は再検証が終わるまで古いエントリを返し続ける stale-while-revalidate で、誤エントリをもう一度配信しうるため後始末には使わない（公式 docs。`{ expire: 0 }` は古いエントリを返さない）
+- 既定（インメモリ）の `use cache` のエントリはデプロイごとに分かれ、新しいデプロイでは空から始まる。`use cache: remote` やカスタム cache handler（Redis 等）は保存先を purge し、タグの無効化だけに頼らない（ネストの件では root parameter の依存が記録される前にエントリが保存されるため。記事）
 
 **コード例**:
 ```tsx
@@ -869,6 +872,8 @@ async function getProfile(userKey: Uint8Array) {
 **アンチパターン**:
 - 修正版へ更新せず、アプリが「条件に当たらないはず」と判断して放置する
 - マルチテナント構成で、移行途中の `unstable_cache` と `use cache` の併用を放置する（Rule #3 / #6 の移行は同じ関数を二重に包まない形で完了させる）
+- 修正版へ更新・再デプロイしただけで完了とし、永続化されたキャッシュに残った他テナントのエントリを即時失効・purge しない
+- 漏えいしたエントリの後始末に `revalidateTag(tag, 'max')` を使う（再検証が終わるまで誤エントリが配信される。`{ expire: 0 }` か `updateTag` を使う）
 
 **出典引用**:
 > "Applications with Cache Components enabled can disclose cached content across root-parameter values when the same public use cache function is called both directly and from inside unstable_cache."
@@ -877,11 +882,21 @@ async function getProfile(userKey: Uint8Array) {
 > "Distinct binary arguments passed to a use cache function can produce the same cache identity."
 > ([November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release), セクション "Cross-user cache disclosure and poisoning through binary use cache arguments (Medium Severity)") ※2026-11-03に実際にfetch成功
 
+> "That result can then be stored and served to later callers with the same arguments until the entry is revalidated or evicted."
+> ([November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release), セクション "Cross-tenant cache disclosure when combining unstable_cache and use cache (High Severity)") ※2026-11-15に実際にfetch成功
+
+> "Stale content is never served, so the next request is a blocking revalidate/cache miss."
+> ([revalidateTag | Next.js](https://nextjs.org/docs/app/api-reference/functions/revalidateTag), セクション "Revalidation Behavior" の `{ expire: 0 }` の項) ※2026-11-22 確認
+
 **出典**:
 - [November 2026 Security Release](https://nextjs.org/blog/november-2026-security-release) (Next.js 公式ブログ、2026-11-03公開。修正版 v16.4.5 / v15.5.29) ※2026-11-03に実際にfetch成功
+- [Next.js November 2026 security release: are you affected, and how to patch (16.4.5 and 15.5.29)](https://dev.to/vishall/nextjs-november-2026-security-release-are-you-affected-and-how-to-patch-1645-and-15529-4oo2) (dev.to、更新後も保存済みの誤エントリが残るため revalidate / purge まで行う手順) ※2026-11-15 fetch
+  > "Upgrading stops new wrong entries. It doesn't remove ones already stored."
+  > (セクション "How to patch")
+- [revalidateTag | Next.js](https://nextjs.org/docs/app/api-reference/functions/revalidateTag) (Next.js 公式 docs、`'max'` は再検証中も古いエントリを返す・`{ expire: 0 }` は古いエントリを返さない・Server Action 外で即時に失効させるなら `{ expire: 0 }`) ※2026-11-22 確認
 
 **バージョン**: Next.js 16.4.5+ / 15.5.29+（Cache Components 有効時）
-**確信度**: 高（Next.js 公式ブログ）
-**最終更新**: 2026-11-03
+**確信度**: 高（Next.js 公式ブログ・公式 docs。更新後にどこへ何が残るかは個人記事の報告）
+**最終更新**: 2026-11-15
 
 ---
