@@ -1175,6 +1175,8 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - 初回の月次リリースは当初 2026-07-20 予定だったが 2026-07-21 に変更され、Next.js 16.2 / 15.5 系に high 4件・medium 5件の脆弱性修正を含む
 - ad-hoc パッチは実際に発動している: 2026-09-22 に out-of-band 緊急リリースがあり、`next/og` の Node.js `ImageResponse` 実装が上流 Satori 依存の脆弱性経由で Remote Code Execution（Critical, GHSA-vcvr-r3jv-pc5j）の影響を受けると告知された。対象は Next.js `>=16.2.0 <16.3.6`。修正版 `16.3.6`（15.x 系は RCE 自体の対象外だが hardening を含む `15.5.26`）が即日公開され、Edge の `ImageResponse` 実装は影響を受けない。月次サイクルとは別に、こうした Critical 脆弱性は告知当日中のアップグレードを要する
 - 2026-09-30 の月次リリース（v16.3.8 / v15.5.27）は、予告から内容が 2 回変わった。9/29 に公開された 16.3.7 はバグ修正のみでセキュリティ修正を含まず、修正版は 16.3.8 / 15.5.27 に変更された。さらに当日、予告していた 9 件のうち critical 1件・high 1件が上流依存の調整待ちで後日のリリースに回され、修正は 7 件（high 1・medium 5・low 1）になった。予告時点の版番号や件数で対応を確定せず、告知ページの日付付き追記とリリース当日の本告知で対象と修正版を確かめる。同リリースには `next dev` の MCP エンドポイントが接続元 Web サイトを検証せず、悪意あるサイト経由でソースやルート情報を読める問題（Low）も含まれ、開発サーバーも更新対象になる
+- Next.js チームは advisory 件数の増加（2024: 6 件 → 2025: 14 件 → 2026: 51 件（2026-11-17 時点））を AI による発見コストの低下で説明しており、2026 年分の 70% は 1 年以上前のコード（43% は 3 年以上前）にあった。新機能を使っていない古いアプリでも月次リリースの対象になる前提で、パッチ適用枠を毎月確保する
+- Next.js 16.4 以降は `next dev` / `next build` が実行中のバージョンが既知の脆弱性の影響を受けると通知し、DevTools の Vulnerability Insight はコーディングエージェントに渡せるプロンプトを出す。`npx next@canary upgrade --agent` は advisory と照合して、修正のある最も古いメジャーの中で最新の安全な版を選ぶため、パッチのためだけにメジャーアップグレードを強いられない（エージェントへの委譲手順は `practices/ai-agent/claude-code.md` #27 を参照）
 - 各脆弱性には**影響条件**が明記される（例: SSRF は `images.remotePatterns` 設定時のみ、Draft Mode 漏えいは Cache Components / `experimental.useCache` 有効時のみ、MCP エンドポイントの情報漏えいは `next dev` のみ）。自アプリの設定と突き合わせて優先度を決める
 - 月次枠とは別に、上流依存（upstream dependencies）の脆弱性修正は out-of-band の臨時リリースになることがある。2026-10-08 には「10/14 に Critical 2件・High 1件（うち2件は上流調整のため9月リリースから延期）を修正する臨時アップデート」が事前告知され、詳細アドバイザリ（影響範囲・対象バージョン・手順）は当日公開とされた。告知日と公開日の間にアップグレード検証環境と担当を確保しておく
 - 月次の枠外でも out-of-band の臨時リリースが出る。2026-10-14 には 9月リリースから上流依存の遅延で見送られた修正を含む v16.4.1 / v15.5.28 が公開され、`use cache` 関数が typed array を複数返す場合の認証不要 RCE（Critical、回避策なし）、SVG の Image Optimization 経由の RCE（Critical、Next.js を glibc 系 Linux で動かしている場合に影響。回避策は Next.js が使う `sharp` を 0.35.5 以上にすること）、Server Actions を使う App Router の DoS（High）を修正した。告知を見たら次の月次枠を待たず、当日中に使用中の系列の修正版へ更新する（`npm install next@16.4.1` / `npm install next@15.5.28`。`next@latest` は 15 系から 16 系のようにメジャーを跨ぐので緊急パッチには使わない）
@@ -1185,6 +1187,7 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
 - Next.js Blog（`https://nextjs.org/blog`）を月次で確認するプロセスを CI/リリース計画に組み込む（Renovate/Dependabot の自動 PR だけに頼らず、深刻度と告知内容を人が確認する）
 - 月次告知で「high 深刻度を含む」と分かった時点で、次回リリース日までにアップグレード検証環境を用意しておく
 - ad-hoc（緊急）パッチの告知は深刻度に関わらず最優先でトリアージする
+- 16.4 以降は `next build` の脆弱性通知を CI ログで拾えるようにし、告知を見落としても既知の脆弱な版のままリリースしない
 - 告知に「Critical を含む」と書かれていたら、公開当日にアドバイザリを読んで対象バージョンを確認し、同日中に patch を適用できるよう日程を空けておく（詳細は公開当日まで出ない前提で計画する）
 - 告知の「回避策なし」「Cache Components / Server Actions を使うアプリのみ影響」といった適用条件を確認し、自アプリが該当しなくても（告知が "upgrade immediately even if ..." と明記する場合）アップグレードを優先する
 
@@ -1211,10 +1214,13 @@ Next.js は 2026-07-13 に、それまでの unscheduled ad-hoc パッチ運用�
   > "Updates are now available in v16.4.1 (Active LTS) and v15.5.28 (Maintenance LTS) to address these issues. Please patch your Next.js dependencies to maintain the security of your applications." (セクション冒頭)
   > "There is no known workaround for affected applications. You should upgrade immediately even if your application does not have similar functions."
   > (セクション "Impact" — Unauthenticated Remote Code Execution in `use cache` functions returning typed arrays)
+- [How we're using AI to make Next.js more secure](https://nextjs.org/blog/how-were-using-ai-to-make-nextjs-more-secure) (Next.js 公式ブログ、advisory 増加の理由・月次リリースの事前告知・16.4 の脆弱性通知と `upgrade --agent` の版選択) ※2026-11-17に実際にfetch成功
+  > "Releases now come out roughly once a month and are announced in advance, so you can plan your upgrades, and hosting providers can put protections in place before details go public."（セクション "Trail of Bits engagement"）
+  > "Starting in Next.js 16.4, next dev and next build tell you when the version you're running is affected by a known vulnerability."（セクション "Keeping your apps secure"）
 
 **バージョン**: Next.js 16.2+ / 15.5+（2026-11-03 時点の修正版は 16.4.5 / 15.5.29（10-14 は 16.4.1 / 15.5.28）。`next/og` の Node.js `ImageResponse` RCE 対策は 16.3.6 以降で 15.x は対象外）
 **確信度**: 高
-**最終更新**: 2026-11-03
+**最終更新**: 2026-11-17
 
 ---
 

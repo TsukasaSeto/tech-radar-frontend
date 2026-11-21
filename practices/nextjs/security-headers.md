@@ -1,6 +1,6 @@
 # Next.js セキュリティヘッダーのベストプラクティス
 
-`next.config.ts` の `headers()` API を使った静的セキュリティヘッダーの設定と、実レスポンスでの検証方法。静的セキュリティヘッダーの値はこのファイルの #1 を正本とする。リクエストごとに nonce が変わる CSP はこのファイルの対象外（`proxy.ts` で付与する。`../security/csp.md` #6 を参照）。
+`next.config.ts` の `headers()` API を使った静的セキュリティヘッダーの設定と、実レスポンスでの検証方法。静的セキュリティヘッダーの値はこのファイルの #1 を正本とする。リクエストごとに nonce が変わる CSP はこのファイルの対象外（`proxy.ts` で付与する。`../security/csp.md` #6 を参照）。リクエストの `Origin` によって変わる Route Handler の CORS ヘッダーは #3 で扱う。
 
 ## ルール
 
@@ -128,5 +128,76 @@ URL にトークンを載せる画面で Referer 漏えいを避けるために 
 **バージョン**: Next.js 16.3.8 で報告（Origin 比較は Server Actions の CSRF 対策として公式 docs に記載）
 **確信度**: 中（パターン1c。`Origin` の `null` 化条件と Server Actions の比較は MDN / Next.js 公式で確認済み。500 になる実機再現は 1 記事）
 **最終更新**: 2026-11-08
+
+---
+
+### 3. Route Handler の CORS は固定 allowlist と `Origin` の完全一致で返し、`Vary: Origin` を付け、認可の代わりにしない
+
+別オリジンから読ませる必要がある Route Handler だけに CORS ヘッダーを付け、`Origin` リクエストヘッダーをスキーム・ホスト・ポートまで含めた固定の allowlist と完全一致で照合し、一致したときだけ `Access-Control-Allow-Origin` に返す。CORS はブラウザが強制する読み取り許可にすぎないので、各リクエストの認証・認可はサーバー側で CORS が無いものとして行う。
+
+**根拠**:
+- CORS ヘッダーを送らないのが安全な既定。許可したオリジンはユーザーのデータを読めるので、許可リストは「ユーザーのデータを任せるオリジンの一覧」として扱う
+- `Origin` を検査せずに反射すると、`Access-Control-Allow-Credentials: true` と組み合わさって任意のサイトが認証済みレスポンスを読める。前方一致・後方一致・ゆるい正規表現（`example.com` の後方一致は `attackerexample.com` も通す）、`null`、`http://` オリジン、サブドメインの一括許可も避ける
+- CORS は CSRF を防がない。フォームの `POST` のようにプリフライト無しで送られるリクエストは、レスポンスが読めなくてもサーバーで処理される（Server Actions の CSRF は #2 と `practices/nextjs/server-actions.md` を参照）
+- `Access-Control-Allow-Origin` が `Origin` によって変わるなら `Vary: Origin` を付ける。無いと CDN などのキャッシュが別オリジン向けのヘッダー付きレスポンスを返しうる
+- プリフライトの `OPTIONS` は資格情報を含まないので、セッションを要求せず、処理も行わず、実際のリクエストで認可する。`Access-Control-Max-Age` はブラウザ側で上限（Chromium 2 時間・Firefox 24 時間）があり、ポリシー変更が反映される程度に短くする
+- ローカルの開発サーバーや社内サービスから `Access-Control-Allow-Origin: *` を返さない。公開サイトがユーザーのブラウザ経由でそれらのレスポンスを読めてしまう
+
+**コード例**:
+```ts
+// app/api/orders/route.ts — Good: 固定 allowlist の完全一致 + Vary: Origin
+const ALLOWED_ORIGINS = new Set(['https://app.example.com', 'https://admin.example.com']);
+
+function corsHeaders(origin: string | null): Headers {
+  const headers = new Headers({ Vary: 'Origin' });
+  if (origin && ALLOWED_ORIGINS.has(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin);
+    headers.set('Access-Control-Allow-Credentials', 'true');
+  }
+  return headers;
+}
+
+// プリフライト: セッションを要求せず、何も実行しない
+export async function OPTIONS(request: Request) {
+  const headers = corsHeaders(request.headers.get('origin'));
+  headers.set('Access-Control-Allow-Methods', 'GET');
+  headers.set('Access-Control-Allow-Headers', 'Content-Type');
+  headers.set('Access-Control-Max-Age', '600');
+  return new Response(null, { status: 204, headers });
+}
+
+export async function GET(request: Request) {
+  const session = await verifySession(); // CORS とは独立に認証・認可する
+  if (!session) return new Response('Unauthorized', { status: 401 });
+  const orders = await getOrders(session.userId);
+  return Response.json(orders, { headers: corsHeaders(request.headers.get('origin')) });
+}
+
+// Bad: Origin をそのまま反射し、資格情報も許可する（任意のサイトが認証済みレスポンスを読める）
+// headers.set('Access-Control-Allow-Origin', request.headers.get('origin') ?? '*');
+// headers.set('Access-Control-Allow-Credentials', 'true');
+// Bad: 後方一致（attackerexample.com も通る）
+// if (origin?.endsWith('example.com')) { ... }
+```
+
+**アンチパターン**:
+- `next.config.ts` の `headers()` で全ルートに `Access-Control-Allow-Origin: *` を付ける（読ませる必要のないエンドポイントまで開く）
+- CORS で許可したオリジンからのリクエストだからと、認証・認可を省く
+- 資格情報付きリクエストでワイルドカードが拒否されるのを回避するために `Origin` を反射する
+
+**出典引用**:
+> "CORS is not access control. The browser enforces it, and only for scripts running in the browser."
+> ([CORS Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html), OWASP Cheat Sheet Series, セクション "What CORS Does and Doesn't Protect") ※2026-11-17に実際にfetch成功（raw.githubusercontent.com 経由で本文取得）
+
+> "Compare the `Origin` request header against a fixed allowlist of full origins (scheme, host and port), and only echo it back in `Access-Control-Allow-Origin` if it matches exactly."
+> ([CORS Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/CORS_Security_Cheat_Sheet.html), セクション "Allowing Origins") ※2026-11-17に実際にfetch成功
+
+**出典**:
+- [New CS: CORS Security Cheat Sheet (#2969)](https://github.com/OWASP/CheatSheetSeries/commit/a4c8b96f4cb9a5a16402726273639d36dd6ab385) (OWASP CheatSheetSeries、2026-11 に新設されたチートシートのコミット) ※2026-11-17 フィードで確認
+- [CORS Security Cheat Sheet（原稿）](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/CORS_Security_Cheat_Sheet.md) (OWASP、allowlist・資格情報・プリフライトとキャッシュ・社内サービスの各節) ※2026-11-17 fetch
+
+**バージョン**: Next.js App Router（Route Handlers）。CORS は Fetch Standard 準拠の全モダンブラウザ
+**確信度**: 高
+**最終更新**: 2026-11-17
 
 ---

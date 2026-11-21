@@ -41,6 +41,7 @@ app/
 **根拠**:
 - `generateStaticParams` が返したパラメータごとに、ビルド時にページが生成される。返さなかったパスはリクエスト時に生成される
 - `params` は Promise で渡されるので `await` して読む（v16 で同期アクセスは削除された）
+- props の型は自作の `{ params: { slug: string } }` ではなく、`next dev` / `next build` / `next typegen` が生成するグローバル型 `PageProps<'/blog/[slug]'>` で付ける。Next.js 16.3.1 の検証では、自作型で `await` を忘れると型チェックもビルドも通り、本番で HTTP 200 の空ページになって警告も出ないと報告されている。`PageProps` なら `params.slug` へのアクセスが `Promise` 型のエラー（TS2339）としてビルド時に止まる
 - 生成対象外のパスを 404 にしたい場合、Cache Components 無効時は `export const dynamicParams = false` を使える。Cache Components 有効時は `dynamicParams` を export するとビルドが失敗するので、データが見つからないときにページ側で `notFound()` を呼ぶ
 
 **コード例**:
@@ -56,21 +57,31 @@ export async function generateStaticParams() {
 // Cache Components 無効時のみ: 生成対象外のパスを 404 にする（有効時はビルドエラーになるので書かない）
 export const dynamicParams = false;
 
-export default async function BlogPost({ params }: { params: Promise<{ slug: string }> }) {
+// Good: PageProps はグローバル型（import 不要）。await を忘れるとビルドの型チェックで落ちる
+export default async function BlogPost({ params }: PageProps<'/blog/[slug]'>) {
   const { slug } = await params;
   const post = await fetchPost(slug);
   if (!post) notFound(); // Cache Components 有効時は、生成対象外のパスもここで 404 にする
   return <article>{post.content}</article>;
 }
+
+// Bad: v14 期の自作型。await しなくても型チェックが通り、params.slug は undefined のまま描画される
+// export default function BlogPost({ params }: { params: { slug: string } }) {
+//   return <h1>{params.slug}</h1>;
+// }
 ```
 
 **出典**:
 - [Next.js Docs: generateStaticParams](https://nextjs.org/docs/app/api-reference/functions/generate-static-params) (Next.js公式)
 - [Next.js Docs: Migrating to Cache Components — `dynamicParams` is not supported](https://nextjs.org/docs/app/guides/migrating-to-cache-components#dynamicparams-is-not-supported) (Next.js 公式、Cache Components 有効時に `dynamicParams` を export するとビルドが失敗し、代わりに `notFound()` を使う) ※2026-10-25 確認
+- [Next.js Docs: page.js — Page Props Helper](https://nextjs.org/docs/app/api-reference/file-conventions/page) (Next.js 公式、`PageProps` はグローバル型で `next dev` / `next build` / `next typegen` で生成される) ※2026-11-17 fetch
+  > "PageProps is a globally available helper."
+- [Next.js 16 で params を await し忘れると、警告もエラーも出ず空で表示される](https://qiita.com/kai_kou/items/e3a6091f09dccddb0527) (Qiita kai_kou、16.3.1 で自作型は HTTP 200 の空ページ、`PageProps` は TS2339 でビルド失敗の実測) ※2026-11-17に実際にfetch成功
+  > "HTTP 200 で中身が空。警告なし"（セクション "結論から"）
 
 **バージョン**: Next.js 15+（`params` は Promise。v14 以前は同期オブジェクト、v16 で同期アクセスは削除）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-17
 
 ---
 
