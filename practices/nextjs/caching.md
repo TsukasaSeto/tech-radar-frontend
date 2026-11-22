@@ -187,6 +187,7 @@ Cache Components 有効時は `dynamic` / `revalidate` / `fetchCache` を export
 - `'force-dynamic'` はルート全体をリクエストごとにレンダリングし、`fetch` をキャッシュしない設定になる
 - `cookies()` / `headers()` などの Request-time API を使うと、`dynamic` を書かなくても動的レンダリングになる。v16 ではこれらは `await` して使う（同期アクセスは削除された）
 - Cache Components 有効時は、キャッシュしていないデータと Request-time API が最初からリクエスト時に実行されるので、`dynamic` の指定は不要になり、export するとエラーになる（公式の移行ガイド）
+- Request-time API を条件分岐の後ろで呼ぶと、ビルド時の条件で静的と判定されることがある。「認証の環境変数が無ければ `null` を返す」関数が `headers()` より前に return していたため、ビルド時に環境変数が入らない Cloudflare Workers Builds（OpenNext）でトップページが静的と判定され、実行時に `headers()` が呼ばれて `DYNAMIC_SERVER_USAGE` の 500 になったと報告されている。リクエストごとに結果が変わる関数は分岐の前に `await headers()`（または `await connection()`）を読み、ビルド時と同じ条件（環境変数を空にした `next build`）でルートが `ƒ (Dynamic)` になるか確かめる
 
 **コード例**:
 ```tsx
@@ -207,10 +208,13 @@ export default async function Page() {
 - [Next.js Docs: Route Segment Config](https://nextjs.org/docs/app/api-reference/file-conventions/route-segment-config) (Next.js公式)
 - [Next.js Docs: Migrating to Cache Components — `dynamic = "force-dynamic"`](https://nextjs.org/docs/app/guides/migrating-to-cache-components#dynamic--force-dynamic) (Next.js 公式、有効時は `dynamic` / `revalidate` / `fetchCache` を export するとエラーになり、削除して `<Suspense>` / `use cache` に置き換える) ※2026-10-25 確認
   > "After enabling the flag, route segments that still export `dynamic`, `revalidate`, or `fetchCache` will error."
+- [Next.js を Cloudflare Workers（OpenNext）に移したらトップページだけ 500（DYNAMIC_SERVER_USAGE）になった話](https://qiita.com/miii_/items/1f198651ef3943ead814) (Qiita、ビルド時と実行時の環境変数の差で静的/動的判定が食い違った事例。Next.js 16.4.6 / @opennextjs/cloudflare 1.20.17) ※2026-11-22 fetch
+  > "リクエストごとに結果が変わる関数は、条件分岐の前に headers() などを読んでおく"
+  > (セクション "まとめ")
 
 **バージョン**: Next.js 13+（`dynamic` の export。コード例の `await cookies()` は 15+、16 で必須）。Cache Components 有効時は使えない
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-22
 
 ---
 

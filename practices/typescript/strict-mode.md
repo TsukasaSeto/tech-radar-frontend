@@ -561,3 +561,54 @@ typescript-eslint が TS 7.0 を拒否する場合は、公式が案内する np
 **最終更新**: 2026-10-25
 
 ---
+
+### 10. JSON などのモジュールを型付きで import するときは `with { type: "json" }`（Import attributes）で書き、`assert` を使わない
+
+`import pkg from "./package.json" assert { type: "json" }` の `assert` 構文（Import assertions）は、仕様上 `with` を使う Import attributes に置き換わった。TypeScript は 5.8 の `--module nodenext` でこれをエラーにし、6.0 ではモジュール設定に関係なく非推奨としてエラーにする。Node.js 22 も `assert` を受け付けない。既存コードの `assert {` を `with {` に一括置換し、新規コードでは `with` だけを使う。
+
+> "Thus, the asserts syntax is now deprecated in TypeScript 6.0, and using it will lead to an error"
+> ([TypeScript 6.0 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html), セクション "Deprecated: asserts Keyword on Imports")
+
+**根拠**:
+- TypeScript 5.8 は `--module nodenext` のとき import assertion をエラーにする（`Import assertions have been replaced by import attributes. Use 'with' instead of 'assert'`）。`node18` ではまだ許可される（公式）
+- TypeScript 6.0 では `asserts` キーワードの import 構文自体が非推奨になり、使うとエラーになる（公式）
+- Node.js 22 は `assert` 構文の import assertion を受け付けない（TypeScript 5.8 リリースノートの記述）
+- `assert` は TC39 で Stage 3 まで進んだ後、ブラウザが JSON を取りに行くリクエストの種類（`Sec-Fetch-Dest` や CSP の判定）を変えられない設計だったため、2023 年に Stage 2 へ差し戻され、`with` を使う Import attributes として作り直されたと整理されている（Findy Tech Blog）。Chrome は 126 で `assert` を削除したと報告されている
+- Stage 3 の提案は「実装して試す段階」で、構文が変わるとランタイム・型チェッカー・リンター・バンドラーのすべてに影響し、ツールごとに対応時期もずれる（Node.js 22 から TypeScript 5.8 まで 10 か月の開き）。プロダクションコードで Stage 3 の構文を先取りするのは避け、使う場合は 1 か所にまとめて一括置換できるようにする（Findy Tech Blog）
+
+**コード例**:
+```ts
+// Bad: Import assertions（TS 5.8 nodenext / TS 6.0 でエラー、Node.js 22 で SyntaxError）
+import pkg from "./package.json" assert { type: "json" };
+
+// Good: Import attributes（ES2025）
+import pkg from "./package.json" with { type: "json" };
+
+// Good: 動的 import でも with を使う
+const { default: data } = await import("./data.json", { with: { type: "json" } });
+```
+
+**アンチパターン**:
+- `assert` を残したまま `tsconfig.json` の `module` を `node18` に固定してエラーを回避する（ランタイム側の Node.js 22+ で動かなくなる問題は残る）
+- Stage 3 の構文をプロダクションコードの全域に直接書く（仕様が覆ったときにツールチェーン全体の更新と全箇所の書き換えが必要になる）
+
+**出典引用**:
+> "Node.js 22 no longer accepts import assertions using the assert syntax."
+> ([TypeScript 5.8 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html), セクション "Restrictions on Import Assertions Under --module nodenext") ※2026-11-22に実際にfetch成功
+
+> "Thus, the asserts syntax is now deprecated in TypeScript 6.0, and using it will lead to an error"
+> ([TypeScript 6.0 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html), セクション "Deprecated: asserts Keyword on Imports") ※2026-11-22に実際にfetch成功
+
+> "つまりStage 3は「確定」ではなく「実装して試す段階」です。"
+> ([Stage 3でも仕様は変わる。それでもTC39のプロポーザルをJavaScriptで先取りするための判断基準](https://tech.findy.co.jp/entry/2026/11/22/070000), セクション "Stage 3は「必要な変更」が起こりうる段階") ※2026-11-22に実際にfetch成功
+
+**出典**:
+- [TypeScript 5.8 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-8.html) (TypeScript 公式、`--module nodenext` での import assertion のエラー化と Node.js 22 の非対応) ※2026-11-22 fetch
+- [TypeScript 6.0 Release Notes](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-6-0.html) (TypeScript 公式、`asserts` キーワードの非推奨化) ※2026-11-22 fetch
+- [Stage 3でも仕様は変わる。それでもTC39のプロポーザルをJavaScriptで先取りするための判断基準](https://tech.findy.co.jp/entry/2026/11/22/070000) (Findy Tech Blog、Import assertions が Stage 2 に差し戻された経緯と Stage 3 の先取り判断) ※2026-11-22 fetch
+
+**バージョン**: TypeScript 5.8+（`--module nodenext` でエラー）/ 6.0+（全般でエラー）、Node.js 22+
+**確信度**: 高
+**最終更新**: 2026-11-22
+
+---

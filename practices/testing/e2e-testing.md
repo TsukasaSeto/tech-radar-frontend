@@ -844,3 +844,69 @@ if (log.includes('locator.click: Timeout')) notifyFlaky();
 **最終更新**: 2026-11-11
 
 ---
+
+### 12. 日付・時刻に依存する画面の E2E は `page.goto` の前に `page.clock.setFixedTime` で時計を固定し、`timezoneId` / `locale` も設定で揃える
+
+「今日の予約」「今週」のように現在時刻で表示が変わる画面は、実行日や CI のタイムゾーン（GitHub Actions は UTC）で結果が変わる。Playwright の `page.clock.setFixedTime` で `Date.now()` / `new Date()` を固定し、ページ側の初期化が走る `page.goto` より前に呼ぶ。タイムゾーンと言語は `playwright.config.ts` の `use.timezoneId` / `use.locale` で固定する。
+
+**根拠**:
+- `setFixedTime` は `Date.now()` と `new Date()` だけを固定し、`setTimeout` などのタイマーはそのまま動く。トーストが数秒後に消えるといった画面の動きを確かめつつ、表示する日付だけを決められる（公式）
+- 公式は「まず `setFixedTime` を使い、合わない場合に `install`（時間の停止・早送り・tick）を使う。`setSystemTime` は高度な用途のみ」としている（公式）
+- ページを開いた時点で現在時刻を元にデータを作るアプリでは、`page.goto` の後に固定しても間に合わない（Zenn 記事の報告）
+- タイムゾーンを日本時間に固定すると安定する一方、本番（UTC で動くサーバー）でだけ起きるずれを隠す。固定したテストとは別に、日付計算のユニットテストを `TZ=UTC` でも回すと報告されている（Zenn 記事）
+
+**コード例**:
+```ts
+// playwright.config.ts
+import { defineConfig } from '@playwright/test';
+
+export default defineConfig({
+  use: {
+    baseURL: 'http://localhost:4173/',
+    locale: 'ja-JP',
+    timezoneId: 'Asia/Tokyo',
+  },
+});
+
+// e2e/today.spec.ts
+import { test, expect } from '@playwright/test';
+
+// Good: 固定する時刻は定数にまとめ、なぜその時刻かをコメントで残す
+/** 2026-11-25（水）10:00。サンプルデータはこの日を基準に作られる */
+export const NOW = new Date('2026-11-25T10:00:00+09:00');
+
+test('今日の予約が表示される', async ({ page }) => {
+  // Good: goto の前に固定する
+  await page.clock.setFixedTime(NOW);
+  await page.goto('./');
+  await expect(page.getByText('今日の予約').first()).toBeVisible();
+});
+
+// Bad: ページを開いた後に固定する（初期化時の new Date() は実際の日時のまま）
+test('今日の予約が表示される（Bad）', async ({ page }) => {
+  await page.goto('./');
+  await page.clock.setFixedTime(NOW);
+});
+```
+
+**アンチパターン**:
+- 実行日の曜日や月末に依存するテストを、時計を固定せずに書く（特定の日だけ落ちる）
+- タイムゾーン固定のテストだけで日付計算を検証し、`TZ=UTC` の実行を持たない
+
+**出典引用**:
+> "Often you only need to fake `Date.now` while keeping the timers going."
+> ([Playwright Docs: Clock](https://github.com/microsoft/playwright/blob/main/docs/src/clock.md), セクション "Test with predefined time") ※2026-11-22に実際にfetch成功
+
+> "ポイントは、page.goto より前に時計を固定することです。"
+> ([日付に左右されないテストにする：Vitest と Playwright の page.clock](https://zenn.dev/takahkok0812/articles/d6b26f71011c42), セクション "3. ブラウザの時計を固定する（page.clock）") ※2026-11-22に実際にfetch成功
+
+**出典**:
+- [Playwright Docs: Clock](https://github.com/microsoft/playwright/blob/main/docs/src/clock.md) (Playwright 公式。playwright.dev が egress 不可のため GitHub 上の docs ソースで取得。`setFixedTime` / `install` / `setSystemTime` の使い分け) ※2026-11-22 fetch
+- [Playwright Docs: Emulation](https://github.com/microsoft/playwright/blob/main/docs/src/emulation.md) (Playwright 公式、`timezoneId` / `locale` の設定) ※2026-11-22 fetch
+- [日付に左右されないテストにする：Vitest と Playwright の page.clock](https://zenn.dev/takahkok0812/articles/d6b26f71011c42) (Zenn、`goto` 前の固定・`TZ=UTC` でのテスト追加の実例) ※2026-11-22 fetch
+
+**バージョン**: Playwright 1.45+（`page.clock`）
+**確信度**: 高
+**最終更新**: 2026-11-22
+
+---
