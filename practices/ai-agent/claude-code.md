@@ -3833,6 +3833,7 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - 「設定は受理されるが enforcement では機能しない」問題は Claude Code に固有ではない。Codex CLI では `PreToolUse` フックが bash コマンドに対して確かに発火して deny を返しているにもかかわらず、コマンドがそのまま実行されてしまう不具合が Windows 環境で再現・報告されている（ファイル書き込み系の `apply_patch` には効くが bash には効かない）。deny を設定しただけで安全と判断せず、実際にブロックされるかを手動検証する必要があるのはツールを問わない共通の教訓である
 - Linux の sandbox では、`sandbox.filesystem.denyRead` の glob（例: `**/.env`）の展開中に `EACCES` のディレクトリ（Docker Compose の bind mount が作る `0700` の DB データディレクトリ等）が 1 つでもあると、通知なしにそのパターン全体の展開を放棄して fail-open になっていた（Claude Code v2.1.283 での報告）。sandbox の実装である sandbox-runtime は v0.0.77（2026-09-18、PR #503）で glob の探索を作り直し、読めないディレクトリがあってもほかの部分の展開を続け、一覧できなかったディレクトリは丸ごと deny する（fail-closed）形になった。報告記事は Claude Code v2.1.284 でこの修正が取り込まれたとしている。それより古い版を使う環境では、(1) glob の探索範囲を `./webapp/**/.env` のように絞る、(2) `./.env` `./webapp/.env` と固定パスを列挙する、(3) bind mount を Named Volume に移す、のいずれか（または併用）で回避する。修正後も、広すぎる glob は無関係なディレクトリまで隠すため、探索範囲を絞る (1) は続ける価値がある
 - 作業フォルダの外を守る `deny` を `Edit(../shared/**)` のように `../` で書くと、公式のパス記法（`//path` / `~/path` / `/path` / `path`）に該当せず、警告も出ないまま書き込みが止まらない場合がある（Windows / Claude Code 2.1.296 の実測）。公式も「ルールはアンカー配下のファイルにしか一致しない」とし、`Read(.env)` は親ディレクトリの `.env` を止めないと明記しているため、作業ディレクトリ基準の相対パスで外側を指すことはできない。ファイルシステムのルートからの絶対パスを `//` で書く（Windows は `//c/work/...`、macOS / Linux は `//Users/...` や `//home/...`）。書いた規則が効くかはダミーファイルへの書き込みで試し、AI の返答ではなくファイルのハッシュが変わったかで判定する。なお `deny` は組み込みツール向けのため、Bash を自動許可していると `node` スクリプト経由の書き込みは止まらない（OS 権限やサンドボックスと併用する）
+- 書き込み側でも同じことが起きる。`Edit(profile/**)` の deny があっても、`sed -i` とリダイレクト（`>`）は拒否される一方、`python3 -c "open(...).write(...)"` や python の heredoc による書き換えは通ったと Claude Code 2.1.309（macOS）で実測報告されている。`sandbox.enabled: true` + `failIfUnavailable: true` + `allowUnsandboxedCommands: false` を加えると 3 経路とも OS が `Operation not permitted` で止めた（`allowUnsandboxedCommands: false` がないと、失敗したコマンドをサンドボックス外で再試行する確認に回る）
 
 **コード例**:
 ```json
@@ -3904,10 +3905,13 @@ AI エージェント（Autofix 等）が自動生成する修正 PR は人間�
 - [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、`permissions` のキー・Read / Edit deny の適用範囲・"What a Bash rule doesn't match"・"How deep a pattern matches": ルールはアンカー配下のファイルにしか一致しない) ※2026-10-25 確認
 - [Configure the sandboxed Bash tool](https://code.claude.com/docs/en/sandboxing) (Claude Code 公式 docs、`denyRead` は Read ツールを止めない・permission rules と sandbox 設定の合算) ※2026-10-25 確認
 - [linux: collapse read-deny globs to directories, and mount denies where paths resolve（anthropics/sandbox-runtime PR #503）](https://github.com/anthropics/sandbox-runtime/pull/503) (sandbox-runtime 公式リポジトリ、2026-09-17 マージ・v0.0.77 で公開。読めないサブツリーは探索から外れるだけになり、一覧できないディレクトリは丸ごと deny する) ※2026-10-25 確認
+- [AIに編集を禁止したディレクトリを、AIが python で書き換えていた](https://zenn.dev/sutokei/articles/edit-deny-python-bypass) (Zenn すぅ、`Edit(...)` deny を python の書き込みがすり抜け、サンドボックス併用で止まった実測。2.1.309 / macOS) ※2026-11-22 fetch
+  > "同じファイルに対して、Edit ツールは止められ、python は通っていました。"
+  > (セクション "何が起きたか")
 
 **バージョン**: Claude Code 2.1.224 未満では末尾スラッシュ付きパス（`"~/"`）がすり抜ける場合があるとの言及あり
 **確信度**: 中
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-22
 
 ---
 
@@ -5372,6 +5376,7 @@ npx modern-web-guidance@latest legacy-scan .
 - WebFetch ルールのワイルドカードは Claude Code v2.1.172 以降で照合に使われる（公式）。古い版では `*.` の行が効かない
 - サンドボックスが `WebFetch(domain:...)` の allow / deny ルールで解釈するワイルドカードは、先頭の `*.` と単独の `*`（v2.1.186 以降）だけ。`example.*` のような位置のワイルドカードは取得には効くが、サンドボックス内のコマンドには効かない（公式）
 - 合流は逆向きにも起きる。サンドボックス内のコマンドの通信先を承認するときに「Yes, and don't ask again」を選ぶと、そのホストは `WebFetch(domain:...)` の allow ルールとしてローカル設定に保存され、WebFetch ツールもそのホストを確認なしで取得できるようになる（公式）。サンドボックス側の `sandbox.network.allowedDomains` は #13、deny の `Read(...)` が `sandbox.filesystem.denyRead` に合算される同型の仕組みは #36、承認の保存先と秘密の混入は #61 を参照
+- `WebFetch(domain:...)` の allow ルールは承認の省略だけでなく auto mode の審査範囲にも効く。`web-fetch` サブエージェントのタスク内の全 URL が allow ルールか事前承認済みドメインで覆われていると、分類器は起動前のタスク説明と終了時の作業・報告の 2 つの確認を省き、サブエージェントは `dontAsk` モードで始まる（承認が要るそれ以外の取得は拒否される。3 つ目の確認は引き続き実行される）。allow を広く書くほど省かれる範囲が広がる（公式）
 
 **コード例**:
 ```jsonc
@@ -5413,10 +5418,12 @@ npx modern-web-guidance@latest legacy-scan .
 - [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、WebFetch の `domain:` 照合規則・ワイルドカードの範囲・bare 形式との違い・v2.1.172 の要件) ※2026-11-18 fetch
 - [Claude Code の WebFetch を特定ドメインだけ許可する設定](https://zenn.dev/aicoding_guide/articles/acg-claude-code-webfetch-domain-allow) (Zenn AIコーディングガイド、公式 docs の要点の要約) ※2026-11-18 fetch
 - [Sandboxing — Network isolation](https://code.claude.com/docs/en/sandboxing) (Claude Code 公式 docs、通信先の承認で「Yes, and don't ask again」を選ぶと `WebFetch(domain:...)` の allow ルールとして保存されること・サンドボックスが解釈するワイルドカードは先頭の `*.` と単独の `*`（v2.1.186+）だけであること) ※2026-11-22 確認
+- [Choose a permission mode — How auto mode evaluates actions](https://code.claude.com/docs/en/permission-modes) (Claude Code 公式 docs、`WebFetch(domain:...)` allow ルールで web-fetch サブエージェントの確認 2 つが省かれ `dontAsk` で始まること) ※2026-11-22 fetch
+  > "Claude Code can skip the first two checks when your `WebFetch(domain:...)` allow rules or the preapproved domains cover every URL in its task."
 
 **バージョン**: Claude Code v2.1.172+（WebFetch ルールのワイルドカード）。`WebFetch(domain:*)` のサンドボックスへの反映は v2.1.186+
 **確信度**: 高
-**最終更新**: 2026-11-18
+**最終更新**: 2026-11-22
 
 ---
 
@@ -5489,5 +5496,112 @@ exit 0
 **バージョン**: Claude Code（e2e 検証は 2.1.325）
 **確信度**: 高
 **最終更新**: 2026-11-19
+
+---
+
+### 66. web-fetch サブエージェントが有効なセッションでは、取得の制御と監視を CLAUDE.md や `SubagentStart` / `SubagentStop` フックではなく、`WebFetch` の permission rules と `PreToolUse` / `PostToolUse`（matcher: `WebFetch`）フックで行う
+
+claude.ai アカウントでサインインした Claude Code v2.1.287+ では、Web ページの取得は組み込みの `web-fetch` サブエージェントが行い、メイン会話・フォーク・チームメイトは `WebFetch` ツールを持たない。このサブエージェントは CLAUDE.md（組織の managed なものも含む）を読まずに起動し、`SubagentStart` / `SubagentStop` フックは managed settings に置いたものしか実行されない。プロジェクトやユーザーの設定で取得を制御・記録したいときは、`WebFetch` の permission rules と、`WebFetch` に一致する `PreToolUse` / `PostToolUse` フックを使う。
+
+**根拠**:
+- `WebFetch` の permission rules と、`WebFetch` に一致する `PreToolUse` / `PostToolUse` フックは、`web-fetch` サブエージェントが取得するページにも適用される（公式）
+- 「どのページを取得してよいか」を CLAUDE.md に書いても、サブエージェントは CLAUDE.md なしで起動するため効かない。取得先の制限は permission rules で行う（公式）
+- `PostToolUse` で `WebFetch` の結果を解析するフックは、サブエージェント経由ではページ本文、Claude が自分で `WebFetch` を呼んだ場合は質問への回答を受け取る。両方を扱えるように書く（公式）
+- `Agent` 呼び出しを全部ブロックする `PreToolUse` フックがあると、サブエージェントが起動できずページを取得できない。その構成を保つなら `Agent(web-fetch)` の deny で web-fetch サブエージェントを無効にする（公式）
+- サブエージェントが使われているかは、ターミナルの承認ダイアログのタイトルが `Fetch · from the web-fetch agent` になること、`claude -p` / Agent SDK では `system/init` イベントの `agents` に `web-fetch` があり `tools` に `WebFetch` がないことで判別できる（公式）
+- 2026-11-22 の公式 docs 更新でこの扱いが hooks / sub-agents / permission-modes の各ページに追記されたと Qiita で整理されている
+
+**コード例**:
+```jsonc
+// .claude/settings.json
+// Good: 取得先は permission rules で絞り、記録は WebFetch に一致する PreToolUse / PostToolUse で取る
+{
+  "permissions": {
+    "allow": ["WebFetch(domain:nextjs.org)", "WebFetch(domain:react.dev)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "WebFetch", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log-webfetch.sh" }] }
+    ],
+    "PostToolUse": [
+      // 結果はページ本文（サブエージェント経由）か回答（直接呼び出し）のどちらか
+      { "matcher": "WebFetch", "hooks": [{ "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/scan-webfetch-result.sh" }] }
+    ]
+  }
+}
+
+// Bad: プロジェクト設定の SubagentStart で web-fetch を監視する（managed settings 以外では実行されない）
+// { "hooks": { "SubagentStart": [{ "matcher": "web-fetch", "hooks": [{ "type": "command", "command": "..." }] }] } }
+
+// Agent 呼び出しをすべて止めるフックを維持したい場合: web-fetch サブエージェントを無効にする
+// { "permissions": { "deny": ["Agent(web-fetch)"] } }
+```
+
+**アンチパターン**:
+- CLAUDE.md の「このサイト以外は読まない」という指示で取得先を制限したつもりになる
+- `PostToolUse` の `WebFetch` フックが、結果を常にページ本文（または常に要約）だと仮定して解析する
+
+**出典引用**:
+> "Claude Code runs `SubagentStart` hooks from managed settings only. For a hook set anywhere else, match `WebFetch` in a `PreToolUse` hook instead."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "SubagentStart") ※2026-11-22に実際にfetch成功
+
+> "the main conversation has no `WebFetch` tool of its own"
+> ([Create custom subagents](https://code.claude.com/docs/en/sub-agents), セクション "Available tools") ※2026-11-22に実際にfetch成功
+
+**出典**:
+- [Tools reference — The web-fetch subagent](https://code.claude.com/docs/en/tools-reference#web-fetch-subagent) (Claude Code 公式 docs、利用条件 v2.1.287+・判別方法・"Rules, hooks, and CLAUDE.md with the web-fetch subagent" の対応表・`Agent(web-fetch)` での無効化) ※2026-11-22 fetch
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、`SubagentStart` / `SubagentStop` は web-fetch では managed settings のみ) ※2026-11-22 fetch
+- [Create custom subagents](https://code.claude.com/docs/en/sub-agents) (Claude Code 公式 docs、メイン会話・フォーク・チームメイトは `WebFetch` を持たない) ※2026-11-22 fetch
+- [11/22 の公式ドキュメント更新：web-fetch サブエージェントを軸にした権限・フック・環境変数の追記](https://qiita.com/akihidem/items/97eac4cb7a451c94a60a) (Qiita、docs 更新差分の整理) ※2026-11-22 fetch
+
+**バージョン**: Claude Code v2.1.287+（claude.ai アカウントでサインイン時）。LLM gateway 経由（v2.1.330+）や feature flag を取得しない構成（Bedrock / `DISABLE_TELEMETRY`）ではサブエージェントは使われない
+**確信度**: 高
+**最終更新**: 2026-11-22
+
+---
+
+### 67. MCP サーバーのトークンを含む設定は `claude mcp add-json <name> -` で標準入力から渡し、コマンドライン引数に書かない
+
+`claude mcp add` の `--env API_KEY=...` や `claude mcp add-json <name> '<json>'` の引数にトークンを直接書くと、シェルの履歴やプロセス一覧に値が残る。Claude Code v2.1.327 以降は `claude mcp add-json <name> -` で JSON を標準入力から読めるので、ファイルや環境変数から組み立てた JSON をパイプで渡す。この機能は Claude Code セッションの中では使えないため、ターミナルやセットアップスクリプト・CI から実行する。
+
+**根拠**:
+- v2.1.327 で `claude mcp add-json <name> -` が追加され、トークンをコマンドラインに出さずに済むようになった（公式 CHANGELOG）
+- 同じ v2.1.327 で、`--scope project` の `claude mcp add` / `claude mcp remove` が `.mcp.json` の `$schema` や他ツールの `servers` などのトップレベルキーを消す不具合が修正された。それ以前の版でチームの `.mcp.json` を編集した場合は、git diff で意図しない削除がないか確認する（公式 CHANGELOG）
+- `--env` でキーを渡す従来の書き方はシェル履歴に API キーが残ると指摘されている（Zenn 記事）
+- `add-json` には `mcpServers` のラッパーではなく、その中のサーバー 1 件分のオブジェクトを渡す（公式 docs）
+
+**コード例**:
+```bash
+# Bad: トークンがシェル履歴・プロセス一覧に残る
+claude mcp add-json sentry '{"type":"http","url":"https://mcp.example.com/mcp","headers":{"Authorization":"Bearer sk-live-xxxx"}}'
+
+# Good: 環境変数から JSON を組み立てて標準入力で渡す（jq の --arg で値をエスケープ）
+jq -n --arg token "$SENTRY_TOKEN" \
+  '{type: "http", url: "https://mcp.example.com/mcp", headers: {Authorization: ("Bearer " + $token)}}' \
+  | claude mcp add-json sentry -
+
+# Good: 秘密を含まない共有設定ファイルからパイプで渡す
+claude mcp add-json my-server - < .config/mcp/my-server.json
+```
+
+**アンチパターン**:
+- Claude Code セッションの中（Bash ツール経由）で `claude mcp add-json <name> -` を実行しようとする（セッション内では使えない）
+- v2.1.327 未満のまま `--scope project` で `claude mcp add` / `remove` を実行し、`.mcp.json` の変更を確認せずにコミットする
+
+**出典引用**:
+> "Added `claude mcp add-json <name> -` to read the server's JSON from stdin, so tokens can stay off the command line; not available inside a Claude Code session"
+> ([Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md), セクション "2.1.327") ※2026-11-22に実際にfetch成功
+
+> "この書き方だとシェルの履歴にAPIキーが残る。"
+> ([Claude CodeをMCPと組み合わせて組織で使うとき、設定保護で整理した3点](https://zenn.dev/sidejob/articles/a0af1144fa92b3351), セクション "claude mcp add-json -：stdin入力") ※2026-11-22に実際にfetch成功
+
+**出典**:
+- [Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (Claude Code 公式、2.1.327 の `add-json <name> -` 追加と `.mcp.json` のキー削除の修正) ※2026-11-22 fetch
+- [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) (Claude Code 公式 docs、`add-json` に渡す JSON の形) ※2026-11-22 fetch
+- [Claude CodeをMCPと組み合わせて組織で使うとき、設定保護で整理した3点](https://zenn.dev/sidejob/articles/a0af1144fa92b3351) (Zenn、v2.1.327 の変更点の整理) ※2026-11-22 fetch
+
+**バージョン**: Claude Code v2.1.327+
+**確信度**: 高
+**最終更新**: 2026-11-22
 
 ---

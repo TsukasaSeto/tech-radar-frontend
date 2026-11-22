@@ -132,6 +132,7 @@ INP は 200ms 以内を目標とする。長いタスクを分割し、メイン
 - 長時間のJS実行、不必要なレンダリング、大きなDOMが主な原因
 - `startTransition` のコールバックはその場で同期的に実行されるため、`startTransition(() => setResults(items.filter(...)))` の `filter` はイベントハンドラの中で走り、入力をブロックする。後回しになるのは再レンダリングだけなので、重い計算は `useDeferredValue` で遅延させた値を使ってレンダー中に行う。1 回の計算自体が長いなら Web Worker やタスク分割に移す
 - スクリプトの読み込みを「最初の操作まで」遅らせると Lighthouse の TBT・点数は改善するが、処理は最初の操作の直後に動くため、その間の 2 回目の操作が待たされる。250ms のスクリプトで、1 回目の約 80ms 後の 2 回目のクリックの入力遅延が 192〜202ms になった実測（Event Timing API、Chromium 153）が報告されている（`defer` で読んだ場合は 16ms 未満）。INP は最も遅い操作で決まるため、遅延読み込みを入れたらページを開いてすぐ 2 回続けて操作して測る
+- 入力の遅れを Playwright で実測するときは `locator.click()` を使わない。`locator.click()` は要素が Stable（2 フレーム連続で位置が変わらない）になるまで待つため、メインスレッドが長いタスクでふさがっている間は押さず、遅れが計測に現れない（`force: true` でも約 290ms 待った）。座標を指定する `page.mouse.click(x, y)` は待たずに入力を送るので、座標は重い処理の前に `boundingBox()` で取っておき、実際の押下時刻はページ内の `mousedown` で記録する、と報告されている
 
 **コード例**:
 ```tsx
@@ -177,10 +178,15 @@ function SearchResults({ items }: { items: Item[] }) {
 - [「最初の操作まで遅らせた」スクリプトは、2回目のタップを200ms待たせます【Event Timing API で実測】](https://qiita.com/Rapls/items/57322dc34308938561ad) (Qiita、操作まで遅延したスクリプトが 2 回目の操作の INP を悪化させる実測) ※2026-11-20に実際にfetch成功
   > "遅らせた処理は、最初の操作の直後に動く。そのあいだの操作は待たされる"
   > (セクション "点数と INP を両方見る")
+- [Playwright の locator.click() は、メインスレッドが空くまで押しません。反応の遅れを測るときは page.mouse.click() で押します](https://qiita.com/Rapls/items/91dad1bd8b9d5ad81944) (Qiita、`locator.click()` と `page.mouse.click()` で 2 回目の入力遅延の計測値が変わる実測) ※2026-11-22 fetch
+  > "locator.click() は、メインスレッドが空くまで押さない。force: true でも待った"
+  > (セクション "反応の遅れを Playwright で測るときに見ておくこと")
+- [Playwright Docs: Auto-waiting](https://github.com/microsoft/playwright/blob/main/docs/src/actionability.md) (Playwright 公式、Stable の定義。GitHub 上の docs ソースで取得) ※2026-11-22 fetch
+  > "Element is considered stable when it has maintained the same bounding box for at least two consecutive animation frames."
 
 **バージョン**: React 18+, Next.js 13+
 **確信度**: 高
-**最終更新**: 2026-11-20
+**最終更新**: 2026-11-22
 
 ---
 
