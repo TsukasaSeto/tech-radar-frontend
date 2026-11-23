@@ -5164,7 +5164,7 @@ exit 0
 
 ---
 
-### 61. 秘密を含むコマンドには「Yes, and don't ask again」を選ばず、`.claude/settings.local.json` はプロジェクトの `.gitignore` にも入れて追跡・履歴を点検する
+### 61. 秘密を含むコマンドには「Yes, and don't ask again」を選ばず、`.claude/settings.local.json` はプロジェクトの `.gitignore` にも入れて追跡・履歴を点検する — たまった allow は定期的に見直し、push 等は共有設定の `ask` で上書きする
 
 Bash コマンドの承認で「Yes, and don't ask again」を選ぶと、その承認は `allow` ルールとして `.claude/settings.local.json`（git リポジトリのルート）に保存される。`PGPASSWORD=... psql`・`sshpass -p ...`・`mysql -p...`・トークンを直書きした `curl` のような 1 回限りのコマンドを承認すると、パスワードや API キーがルールの文字列ごと平文で残ると報告されている。秘密は環境変数（`$DB_URL` など）経由で渡し、承認は `Bash(npm run:*)` のようなパターンで行う（パターンの書き方と範囲の切り方は #46）。
 Claude Code が自動で追加する除外は、そのマシンのグローバル git 除外ファイルへの `**/.claude/settings.local.json` であり、プロジェクトの `.gitignore` ではない。他のマシン・他の人のクローン・手で作ったファイル・既にコミット済みのファイルは守られないため、プロジェクトの `.gitignore` にも明示し、追跡と履歴を読み取り専用のコマンドで確認する。
@@ -5174,6 +5174,7 @@ Claude Code が自動で追加する除外は、そのマシンのグローバ�
 - 公式 docs: Claude Code はこのファイルを初めて書き込むとき、まだ無視されていなければ `**/.claude/settings.local.json` をグローバル git 除外ファイル（`core.excludesFile`、未設定なら `$XDG_CONFIG_HOME/git/ignore` か `~/.config/git/ignore`）に足す。手で作ったファイルは Claude Code が書き込むまで自分で `.gitignore` に足す必要がある
 - 報告: 公開 GitHub リポジトリの `settings.local.json` 104,185 件のうち 1,122 件に秘密が 1 件以上含まれていたという調査（Apiiro）が紹介されている。gitleaks / TruffleHog でも全件は検出できなかったとされ、点検は「検出 0 件＝安全」とは言えない
 - ファイルを消しても既にコミットした秘密は履歴に残るため、見つけたら先にローテーション（無効化と再発行）を行い、その後に追跡解除と削除をする
+- 「次から聞かない」の承認は秘密以外にもたまり、`git push` や `gh pr create` の allow が入っていた事例が報告されている。ルールはファイルをまたいでも deny → ask → allow の順に評価されるので、プロジェクトの `.claude/settings.json` に `"ask": ["Bash(git push *)", "Bash(git -C * push *)"]` を書けば、`settings.local.json` に残った allow より ask が優先される（公式 docs）。`/permissions` で各ルールの出どころを確認し、push・rm・reset を含む allow は消して ask に移す
 
 **コード例**:
 ```bash
@@ -5214,14 +5215,22 @@ echo ".claude/settings.local.json" >> .gitignore
 > 「問題は、ルールが「提示されたコマンドの文字列」を対象にする点です。」
 > ([Claude Code の「今後確認しない」に秘密が混ざる件を、自分の環境で点検する手順](https://zenn.dev/crossclub_lab/articles/claude-code-settings-local-secrets-check), セクション "1. 何が起きる話か") ※2026-11-16に実際にfetch成功
 
+> "The same precedence applies between ask and allow: a matching ask rule prompts even when a more specific allow rule also matches the same call."
+> ([Configure permissions](https://code.claude.com/docs/en/permissions), セクション "Manage permissions") ※2026-11-23に実際にfetch成功
+
+> 「allow に git push があっても、deny か ask に同じルールを書くと実行されなかった」
+> ([Claude Code の許可リストに git push が入っていた](https://zenn.dev/charge0315/articles/claude-code-permissions-git-push), セクション "要約") ※2026-11-23に実際にfetch成功
+
 **出典**:
 - [Settings files and precedence — Keep personal settings out of a repository](https://code.claude.com/docs/en/settings#keep-personal-settings-out-of-a-repository) (Claude Code 公式 docs、グローバル git 除外への自動追加と、手で作ったファイルは自分で `.gitignore` に足す) ※2026-11-16に実際にfetch成功
 - [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、恒久保存される承認は git リポジトリのルートの `.claude/settings.local.json` に保存) ※2026-11-16に実際にfetch成功
 - [Claude Code の「今後確認しない」に秘密が混ざる件を、自分の環境で点検する手順](https://zenn.dev/crossclub_lab/articles/claude-code-settings-local-secrets-check) (Zenn、秘密が混ざるコマンドの例・Apiiro 調査の紹介・読み取り専用の点検手順・ローテーション優先の対処順) ※2026-11-16に実際にfetch成功
+- [Configure permissions](https://code.claude.com/docs/en/permissions) (Claude Code 公式 docs、deny → ask → allow の評価順は設定スコープをまたいでも同じ) ※2026-11-23 fetch
+- [Claude Code の許可リストに git push が入っていた：deny・ask で止める権限ルールを実行して確かめる](https://zenn.dev/charge0315/articles/claude-code-permissions-git-push) (Zenn、たまった allow に push が入っていた事例と、共有設定の ask で止まることの `claude -p` での検証) ※2026-11-23 fetch
 
 **バージョン**: Claude Code（`.claude/settings.local.json` の `permissions.allow`）
-**確信度**: 中（保存先と除外の範囲は公式 docs、秘密が平文で残る点と調査件数は単一記事の報告）
-**最終更新**: 2026-11-16
+**確信度**: 中（保存先と除外の範囲・評価順は公式 docs、秘密が平文で残る点と調査件数は単一記事の報告）
+**最終更新**: 2026-11-23
 
 ---
 
@@ -5560,15 +5569,18 @@ claude.ai アカウントでサインインした Claude Code v2.1.287+ では�
 
 ---
 
-### 67. MCP サーバーのトークンを含む設定は `claude mcp add-json <name> -` で標準入力から渡し、コマンドライン引数に書かない
+### 67. MCP サーバーのトークンを含む設定は `claude mcp add-json <name> -` で標準入力から渡し、コマンドライン引数に書かない — 設定ファイルに残す値は `${VAR}` 参照にする
 
 `claude mcp add` の `--env API_KEY=...` や `claude mcp add-json <name> '<json>'` の引数にトークンを直接書くと、シェルの履歴やプロセス一覧に値が残る。Claude Code v2.1.327 以降は `claude mcp add-json <name> -` で JSON を標準入力から読めるので、ファイルや環境変数から組み立てた JSON をパイプで渡す。この機能は Claude Code セッションの中では使えないため、ターミナルやセットアップスクリプト・CI から実行する。
+どちらの方法でも、値そのものを渡すと設定ファイル（`--scope project` は `.mcp.json`、local / user は `~/.claude.json`）に平文で保存される。キーは `env` / `headers` に `${API_KEY}` の参照として書き、値は環境変数で渡す。
 
 **根拠**:
 - v2.1.327 で `claude mcp add-json <name> -` が追加され、トークンをコマンドラインに出さずに済むようになった（公式 CHANGELOG）
 - 同じ v2.1.327 で、`--scope project` の `claude mcp add` / `claude mcp remove` が `.mcp.json` の `$schema` や他ツールの `servers` などのトップレベルキーを消す不具合が修正された。それ以前の版でチームの `.mcp.json` を編集した場合は、git diff で意図しない削除がないか確認する（公式 CHANGELOG）
 - `--env` でキーを渡す従来の書き方はシェル履歴に API キーが残ると指摘されている（Zenn 記事）
 - `add-json` には `mcpServers` のラッパーではなく、その中のサーバー 1 件分のオブジェクトを渡す（公式 docs）
+- `.mcp.json` の `command` / `args` / `env` / `url` / `headers` では `${VAR}` と `${VAR:-default}` が展開される。変数が未設定で既定値もない場合はエラーにならず、`claude mcp list` で警告を出したうえで `${VAR}` の文字列のままサーバーに渡す（公式 docs）
+- Claude Code 2.1.330 で `claude mcp add -e API_KEY=値` を試した記事では、`--scope project` は `.mcp.json` にキーがそのまま入って `git add -A` でステージされ、`claude mcp remove` の後も `~/.claude/backups/` のバックアップにキーが残っていたと報告されている。値を入れてしまったら、バックアップを含めて探し、キーをローテーションする
 
 **コード例**:
 ```bash
@@ -5582,11 +5594,18 @@ jq -n --arg token "$SENTRY_TOKEN" \
 
 # Good: 秘密を含まない共有設定ファイルからパイプで渡す
 claude mcp add-json my-server - < .config/mcp/my-server.json
+
+# Bad: 値が .mcp.json に平文で書かれ、コミットされうる
+claude mcp add --scope project demo -e API_KEY=sk-live-xxxx -- npx -y demo-mcp
+
+# Good: シングルクォートでシェル展開を止め、.mcp.json には "${API_KEY}" の参照だけを残す
+claude mcp add --scope project demo -e 'API_KEY=${API_KEY}' -- npx -y demo-mcp
 ```
 
 **アンチパターン**:
 - Claude Code セッションの中（Bash ツール経由）で `claude mcp add-json <name> -` を実行しようとする（セッション内では使えない）
 - v2.1.327 未満のまま `--scope project` で `claude mcp add` / `remove` を実行し、`.mcp.json` の変更を確認せずにコミットする
+- `claude mcp remove` で消したので安心と考え、`~/.claude/backups/` を確認しない
 
 **出典引用**:
 > "Added `claude mcp add-json <name> -` to read the server's JSON from stdin, so tokens can stay off the command line; not available inside a Claude Code session"
@@ -5595,13 +5614,21 @@ claude mcp add-json my-server - < .config/mcp/my-server.json
 > "この書き方だとシェルの履歴にAPIキーが残る。"
 > ([Claude CodeをMCPと組み合わせて組織で使うとき、設定保護で整理した3点](https://zenn.dev/sidejob/articles/a0af1144fa92b3351), セクション "claude mcp add-json -：stdin入力") ※2026-11-22に実際にfetch成功
 
+> "Claude Code supports environment variable expansion in `.mcp.json` files, allowing teams to share configurations while maintaining flexibility for machine-specific paths and sensitive values like API keys."
+> ([Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp), セクション "Environment variable expansion in `.mcp.json`") ※2026-11-23に実際にfetch成功
+
+> "MCP サーバーを claude mcp add -e API_KEY=キー で登録すると、キーは設定ファイルに平文で書かれます。"
+> ([claude mcp add -e で渡した API キーは平文で残る](https://qiita.com/supportapp3/items/0b9ae8203efe03bf1805), セクション "先に結論") ※2026-11-23に実際にfetch成功
+
 **出典**:
 - [Claude Code CHANGELOG](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md) (Claude Code 公式、2.1.327 の `add-json <name> -` 追加と `.mcp.json` のキー削除の修正) ※2026-11-22 fetch
 - [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) (Claude Code 公式 docs、`add-json` に渡す JSON の形) ※2026-11-22 fetch
 - [Claude CodeをMCPと組み合わせて組織で使うとき、設定保護で整理した3点](https://zenn.dev/sidejob/articles/a0af1144fa92b3351) (Zenn、v2.1.327 の変更点の整理) ※2026-11-22 fetch
+- [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) (Claude Code 公式 docs、`.mcp.json` の `${VAR}` / `${VAR:-default}` 展開と未設定時の挙動) ※2026-11-23 fetch
+- [claude mcp add -e で渡した API キーは平文で残る](https://qiita.com/supportapp3/items/0b9ae8203efe03bf1805) (Qiita、Claude Code 2.1.330 で `-e` の値が `.mcp.json` / `~/.claude.json` / `~/.claude/backups/` に平文で残ることの検証) ※2026-11-23 fetch
 
 **バージョン**: Claude Code v2.1.327+
-**確信度**: 高
-**最終更新**: 2026-11-22
+**確信度**: 高（`${VAR}` 展開は公式 docs。バックアップに残る点は単一記事の報告）
+**最終更新**: 2026-11-23
 
 ---

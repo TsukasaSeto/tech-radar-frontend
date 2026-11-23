@@ -1093,3 +1093,65 @@ while (el) {
 **最終更新**: 2026-11-15
 
 ---
+
+### 19. 数値・長さ・色を `data-*` 属性から CSS に渡すときは型付き `attr()` を使い、`@supports` で未対応ブラウザ向けの代替を残す
+
+`attr()` は `content` 以外のプロパティでも使えるようになり、`attr(data-value type(<number>), 0)` や `attr(data-size px, 0px)` のように属性値を数値・長さ・色・`<custom-ident>` として解釈できる。要素ごとに値が違うだけのスタイルは、インラインスタイルや要素ごとのクラス・`:nth-child()` を並べず、属性 1 つと CSS ルール 1 つで書く。未対応ブラウザでは宣言全体が無効になるため、MDN の `@supports (x: attr(x type(*)))` で検出して代替を用意する。
+
+**根拠**:
+- MDN: `<attr-type>` には `raw-string`・`type(<syntax>)`・単位（`%` や `px`・`rem`・`deg`・`s` など）を書ける。省略すると従来どおり文字列（`raw-string`）として扱われ、属性が無いか型に合わないときは `<fallback-value>` が使われる
+- 単位を書く形（`attr(data-w px)`）は属性値が単位なしの数値であることを前提とする。`data-w="50px"` のように単位付きの値はフォールバックになるので、その場合は `type(<length>)` を使う（記事の検証）
+- 型を書かない `width: attr(data-w)` は文字列を返すので宣言が無効になり、既定値に戻る。「効かない」原因の多くはこれと報告されている
+- MDN: `attr()` を使った値は "attr()-tainted" として扱われ、`url()` の中で使うと宣言が無効になる（セキュリティ上の制約。`type(<url>)` も使えない）。画像の切り替えには使えない
+- MDN browser-compat-data（`css.types.attr.type_function`）: Chrome 133 / Firefox 155 / Safari 27.3 で対応。MDN の注記では `content` 以外での利用はまだ実験的扱いのため、代替を残す
+
+**コード例**:
+```html
+<!-- 値は属性だけに持たせ、読み上げ用の値は aria-label にも書く -->
+<button class="bar" data-value="64" data-hue="200" aria-label="64"></button>
+```
+
+```css
+/* Good: 属性を型付きで読み、要素ごとの値をルール 1 つで扱う */
+@supports (x: attr(x type(*))) {
+  .bar {
+    --v: attr(data-value type(<number>), 0);
+    --hue: attr(data-hue type(<number>), 30);
+    height: calc(var(--v) * 1%);
+    background: oklch(0.7 0.15 var(--hue));
+  }
+}
+
+/* 未対応ブラウザ: JS で style 属性やカスタムプロパティを設定するなどの代替 */
+@supports not (x: attr(x type(*))) {
+  .bar { height: var(--v-fallback, 50%); }
+}
+
+/* Bad: 型を書かないと文字列になり、宣言ごと無効になる */
+.bar { height: attr(data-value); }
+
+/* Bad: attr() の値は url() で使えない（宣言が無効になる） */
+.icon { background-image: url(attr(data-icon)); }
+```
+
+**アンチパターン**:
+- 単位付きの属性値（`"50px"`）に単位形式（`attr(data-w px)`）を使う
+- `content: attr(...)` で表示した文字だけに意味のある値を持たせる（記事は生成コンテンツを値の唯一の置き場所にしないよう勧めている。`aria-label` などにも書く）
+
+**出典引用**:
+> "Values that use attr() get marked as attr()-tainted, and using them as or in a <url> makes a declaration become "invalid at computed value time" (IACVT)."
+> ([attr() CSS function - MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/attr), セクション "Limitations and security") ※2026-11-23に実際にfetch成功
+
+> "A unit means "the attribute is a bare number"."
+> ([Typed CSS attr(): HTML attributes that style anything](https://dev.to/richicodes/typed-css-attr-html-attributes-that-style-anything-2kfj), セクション "Browser support and gotchas") ※2026-11-23に実際にfetch成功
+
+**出典**:
+- [attr() CSS function - MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/attr) (MDN、`<attr-type>` の構文・フォールバック・attr()-tainted・`@supports` での機能検出) ※2026-11-23 fetch
+- [mdn/browser-compat-data `css/types/attr.json`](https://github.com/mdn/browser-compat-data/blob/main/css/types/attr.json) (MDN BCD、`type_function` の対応バージョン) ※2026-11-23 fetch
+- [Typed CSS attr(): HTML attributes that style anything](https://dev.to/richicodes/typed-css-attr-html-attributes-that-style-anything-2kfj) (dev.to、単位形式と `type(<length>)` の違い・型なしで無効になる例の検証) ※2026-11-23 fetch
+
+**バージョン**: Chrome 133+ / Firefox 155+ / Safari 27.3+（型付き `attr()`、MDN BCD）
+**確信度**: 中（構文と制約は MDN。単位形式のつまずきは単一記事の検証。`content` 以外での利用は MDN 上で実験的扱い）
+**最終更新**: 2026-11-23
+
+---
