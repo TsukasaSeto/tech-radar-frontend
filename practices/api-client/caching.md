@@ -233,6 +233,7 @@ useQuery({ queryKey: ['user', id] });  // どこかで ['users', id] と書い�
   - `onSettled`: 成功・失敗に関わらず実行されるので、ここで `invalidateQueries` してサーバーの値に合わせる
 - `mutationFn` は失敗時に必ず reject させる。openapi-fetch は 4xx / 5xx でも reject しないので、`error` を throw に変換する（`practices/api-client/rest.md` #3）。変換しないと `onError` のロールバックが走らない
 - 楽観的な結果を表示する場所が 1 か所だけなら、キャッシュを書き換えずに `useMutation` が返す `variables` を描画する方法のほうが単純で、ロールバックも要らない。画面の複数箇所に反映する場合はキャッシュを書き換える
+- 同じ一覧の別々の行を続けて更新できる画面では、一覧のスナップショットをまるごと戻すと後から送った行の変更まで消え、各 mutation の `onSettled` で取り直すと送信中の行が一瞬元に戻ると報告されている。対策として、失敗した 1 件だけを変更前の値に戻し、`mutationKey` を付けて `queryClient.isMutating({ mutationKey }) === 1`（自分が最後の 1 件）のときだけ `invalidateQueries` する書き方が示されている。`isMutating` は条件に合う pending の mutation の数を返す（TanStack 公式 reference）
 
 **コード例**:
 ```tsx
@@ -298,10 +299,13 @@ export function TodoItem({ todo }: { todo: Todo }) {
 **出典**:
 - [TanStack Query: Optimistic Updates](https://tanstack.com/query/latest/docs/framework/react/guides/optimistic-updates) (TanStack公式、キャッシュを書き換える方法と `variables` で UI を更新する方法の使い分け・各コールバックの引数) ※2026-10-25 確認
 - [openapi-fetch Docs](https://openapi-ts.dev/openapi-fetch/) (openapi-ts.dev、`error` は 4xx / 5xx のときに返り値として入る) ※2026-10-25 確認
+- [React Query の楽観的更新：失敗したら戻し、最後にサーバーとそろえる](https://zenn.dev/takahkok0812/articles/7903e7ac97a414) (Zenn、連続更新時に失敗した 1 件だけ戻し、最後の mutation でだけ取り直す書き方) ※2026-11-23 fetch
+  > 「ほかの変更がまだ送信中なら取り直さない。最後の1件が終わったときにまとめて取り直す」（セクション "useMutation の3つのタイミング"）
+- [QueryClient reference](https://tanstack.com/query/latest/docs/reference/QueryClient) (TanStack 公式、`isMutating(filters)` は条件に合う pending の mutation 数を返す) ※2026-11-23 fetch
 
 **バージョン**: TanStack Query 5+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-23
 
 ---
 

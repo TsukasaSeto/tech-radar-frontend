@@ -509,3 +509,57 @@ audio/
 **バージョン**: Vercel（`rewrites` / `.vercelignore`、全プラン共通）
 **確信度**: 中（パターン1c: 公式機能の設定ファイル形式を直接検証した単独記事）
 **最終更新**: 2026-10-25
+
+---
+
+### 9. `vite build` は `NODE_ENV=production` を明示して実行し、成果物に開発用コード（`jsxDEV`）が混ざっていないかを確認する
+
+Vite のモード（`--mode`）と `NODE_ENV` は別物で、`vite build` はモードが `production` でも、シェルに `NODE_ENV=development` が残っていればそれを使う。Dev Container の `remoteEnv` / `containerEnv` や `.envrc` で `NODE_ENV=development` を入れている環境では、`npm run build` が React の開発用 JSX 変換や開発用チェックを含んだバンドルを出力し、エラーも出ない。ビルドスクリプトで `NODE_ENV=production` を固定し、成果物を検査する。
+
+**根拠**:
+- Vite 公式 docs の表では、`vite build` は NODE_ENV / モードとも `production`、`NODE_ENV=development vite build` は NODE_ENV が `development`・モードが `production` になる。`import.meta.env.PROD` / `DEV` も NODE_ENV の値に従う
+- Vite 8.3.5 / React 19.3.1 で NODE_ENV だけを変えてビルドした記事では、JS の合計が 255,286 バイトから 475,549 バイト（約 1.86 倍）になり、7 ファイル中 5 ファイルに `jsxDEV` が含まれたと報告されている。ページは普通に表示されるため気づきにくい
+- CI やホスティングのビルド環境は NODE_ENV が手元と違うことがあり、手元のビルドでだけ起きる。スクリプト側で固定すれば Dev Container・CI のどちらでも同じ結果になる
+
+**コード例**:
+```jsonc
+// package.json
+{
+  "scripts": {
+    // Good: NODE_ENV を固定する（Windows で直接実行する場合は cross-env を使う）
+    "build": "NODE_ENV=production vite build",
+    // SSR / プリレンダリング用の別ビルドにも付ける
+    "build:server": "NODE_ENV=production vite build --ssr src/entry-server.tsx --outDir dist/server"
+
+    // Bad: シェルの NODE_ENV=development をそのまま引き継ぐ
+    // "build": "vite build"
+  }
+}
+```
+
+```bash
+# ビルド後の確認: 何も出力されなければ開発用 JSX 変換は含まれていない
+grep -rl "jsxDEV" dist/
+```
+
+**アンチパターン**:
+- 「`vite build` は常に本番向け」と考え、`--mode production` を付けるだけで NODE_ENV を確認しない（モードと NODE_ENV は独立）
+- Dev Container 側の `NODE_ENV` を消して対処する（開発モードを前提にする他のツールに影響する。ビルドコマンドで指定するほうが影響範囲が小さい）
+- `jsxDEV` が無いことだけで判定を終える（依存ライブラリの開発用コードは検出できない。production ビルドとサイズを比べる）
+
+**出典引用**:
+> "It's important to note that `NODE_ENV` (`process.env.NODE_ENV`) and modes are two different concepts."
+> ([Env Variables and Modes](https://vite.dev/guide/env-and-mode), セクション "NODE_ENV and Modes") ※2026-11-23に実際にfetch成功（GitHub の docs ソース経由）
+
+> "JS の合計は約1.9倍(1.86倍)になりました。"
+> ([Dev Container の NODE_ENV=development のまま vite build すると、JS が約1.9倍になる](https://zenn.dev/carecraft/articles/devcontainer-node-env-vite-build), セクション "実測") ※2026-11-23に実際にfetch成功
+
+**出典**:
+- [Env Variables and Modes — NODE_ENV and Modes](https://vite.dev/guide/env-and-mode#node-env-and-modes) (Vite 公式 docs、コマンドごとの NODE_ENV とモードの対応表。[GitHub の docs ソース](https://github.com/vitejs/vite/blob/main/docs/guide/env-and-mode.md)で確認) ※2026-11-23 fetch
+- [Dev Container の NODE_ENV=development のまま vite build すると、JS が約1.9倍になる](https://zenn.dev/carecraft/articles/devcontainer-node-env-vite-build) (Zenn、Dev Container での発生条件・サイズの実測・`jsxDEV` での確認方法) ※2026-11-23 fetch
+
+**バージョン**: Vite 8（対応表は Vite 公式 docs の現行版で確認）
+**確信度**: 高（NODE_ENV とモードの関係は公式 docs。サイズの倍率は単一記事の実測）
+**最終更新**: 2026-11-23
+
+---
