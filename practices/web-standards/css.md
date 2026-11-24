@@ -1155,3 +1155,74 @@ while (el) {
 **最終更新**: 2026-11-23
 
 ---
+
+### 20. 固定ヘッダーがあるページでは `html` に `scroll-padding-top` をヘッダー高さと同じ変数で指定し、ページ内リンクとフォーカスの移動先を隠さない
+
+`position: sticky` / `fixed` のヘッダーがあると、`#id` へのページ内リンクや `scrollIntoView()` で移動した見出しがヘッダーの裏に入る。スクロールコンテナー（ページ全体なら `html`）に `scroll-padding-top` を指定して「上から N px は見えない領域」とブラウザーに伝え、その値はヘッダーの高さと同じ CSS 変数から読む。要素ごとに `scroll-margin-top` を付ける方法は、`id` を持つ要素の種類が増えるたびに漏れるので、特定の要素だけ余白を足したいときの補助に使う。
+
+**根拠**:
+- MDN は `scroll-padding-top` を、スクロールポートの「最適な表示領域」の上端のオフセットと定義し、固定配置のツールバーなどで隠れる領域を除外するためのプロパティとしている（Baseline: Widely available）
+- `scroll-margin-top` を `h2` だけに付けると、`id` を持つ `h3` / `dt` / `div` への移動ではまた隠れる。CMS で本文を入力するサイトではどの要素に `id` が付くかを制作側で制御できない、と報告されている
+- Chromium 158 での検証では、ヘッダーの裏（上端から 20px）にあるリンクへ Shift+Tab でフォーカスを移したとき、指定なしではスクロールせずフォーカスリングが隠れたままで、`html { scroll-padding-top: 64px }` でリンクが見える位置までスクロールした、と報告されている（WCAG 2.2 の達成基準 2.4.11 Focus Not Obscured (Minimum)（AA）に関わる）。`h2 { scroll-margin-top: 64px }` だけの場合はリンクが隠れたままだった
+- ブレークポイントでヘッダーの高さを変えたのに `scroll-padding-top` を固定値のまま残すと、見出しの上部が部分的に隠れ、確認時に見落としやすい（PC でヘッダー 88px・指定 64px で 24px 隠れた例）。お知らせ帯などで内容によってヘッダーの高さが変わる場合は、`ResizeObserver`（`browser-apis.md` Rule #2）で実測した高さを変数に書き戻す
+- 見出しの前に空要素を置いて負のマージンでずらす方法や、クリックを横取りして `window.scrollTo()` で位置を計算する古い対処が残っていると余白が二重になるので、先に外す
+
+**コード例**:
+```css
+/* Good: ヘッダーの高さとスクロールの余白を同じ変数から読む */
+:root {
+  --header-h: 64px;
+}
+@media (min-width: 768px) {
+  :root {
+    --header-h: 88px;
+  }
+}
+.site-header {
+  position: sticky;
+  top: 0;
+  height: var(--header-h);
+}
+html {
+  scroll-padding-top: var(--header-h);
+}
+
+/* Bad: 見出しにだけ付ける（id 付きの他要素やフォーカス移動では隠れる） */
+h2 {
+  scroll-margin-top: 64px;
+}
+```
+
+```ts
+// 内容で高さが変わるヘッダー: 実測値を変数に反映する
+const header = document.querySelector<HTMLElement>('.site-header')
+if (header) {
+  new ResizeObserver(([entry]) => {
+    const h = entry.borderBoxSize[0].blockSize
+    document.documentElement.style.setProperty('--header-h', `${h}px`)
+  }).observe(header)
+}
+```
+
+**アンチパターン**:
+- ヘッダーの高さと `scroll-padding-top` を別々の固定値で管理する
+- 負のマージンのダミー要素や `scrollTo()` の補正を残したまま `scroll-padding-top` を足す（二重の余白）
+- 見出しへのジャンプだけ確認して、キーボードのフォーカス移動を確認しない
+
+**出典引用**:
+> "This allows the author to exclude regions of the scrollport that are obscured by other content (such as fixed-positioned toolbars or sidebars)"
+> ([scroll-padding-top - MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-padding-top), セクション "scroll-padding-top CSS property"（冒頭の定義）) ※2026-11-24に実際にfetch成功
+
+> "フォーカスまで考えると、scroll-padding-topを基本にする理由がひとつ増えます。"
+> ([ページ内リンクの見出しが固定ヘッダーに隠れるので、scroll-padding-topとヘッダー高さの変数で直す](https://zenn.dev/nadarakainc/articles/55671503799398), セクション "キーボードで移動したときも、ヘッダーの裏に残る") ※2026-11-24に実際にfetch成功
+
+**出典**:
+- [scroll-padding-top - MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-padding-top) (MDN、スクロールポートの最適な表示領域のオフセット・固定配置の要素で隠れる領域の除外) ※2026-11-24 fetch
+- [scroll-margin-top - MDN](https://developer.mozilla.org/en-US/docs/Web/CSS/scroll-margin-top) (MDN、スナップ対象の要素側の余白) ※2026-11-24 fetch
+- [ページ内リンクの見出しが固定ヘッダーに隠れるので、scroll-padding-topとヘッダー高さの変数で直す](https://zenn.dev/nadarakainc/articles/55671503799398) (Zenn、Playwright 1.63 / Chromium 158 でのフラグメント移動・フォーカス移動の実測) ※2026-11-24 fetch
+
+**バージョン**: 全モダンブラウザー（`scroll-padding` は Baseline Widely available。フォーカス移動の挙動は Chromium 158 でのみ実測）
+**確信度**: 高（プロパティの役割は MDN。フォーカス移動の挙動は単一記事の Chromium 実測）
+**最終更新**: 2026-11-24
+
+---
