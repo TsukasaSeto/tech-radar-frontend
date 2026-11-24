@@ -335,6 +335,7 @@ npm パッケージの `postinstall` 等の install script は任意のコード
 - **自分が公開しているパッケージが乗っ取られた場合の対応は「消費者側」と手順が異なる**: 侵入経路（GitHub Actions の脆弱性等）を塞がないまま publish 権限や `latest` タグだけ戻しても、同じ経路から再度汚染される。deprecate は新規インストールの大半を防ぐが「解決策」ではなく、既存インストール済み環境には別途通知が必要
 - Vercel は 2026-11-02 から、ビルドで依存インストールの前（lockfile、ビルドキャッシュからの復元時も含む）と最中（該当する公開 npm のダウンロードをブロック）に、マルウェアや脆弱性を理由に選定した特定バージョンのブロックリストと照合する。全プランで設定不要。検知するとデプロイを失敗させ、パッケージとバージョンをエラーに表示し、汚染された可能性のあるビルドキャッシュの無効化を試みる。対応は依存を安全なバージョンへ更新し lockfile を更新して再デプロイする。ホスティング側のブロックリストは最終防衛線として働くが、チーム側の `--ignore-scripts` や lockfile 検査の代わりにはならない
 - **面接課題・他人から渡されたプロジェクトは「自分で選んでいない依存」ではなく「プロジェクト自体」が攻撃面になる**: OWASP の NPM Security Cheat Sheet は、「事前課題」として未知の Node.js パッケージや GitHub リポジトリを実行させる手口に FBI が警告を出していると述べ、初回 install の前に ①認証情報・SSH 鍵・ウォレットの無い使い捨て VM（可能ならネットワーク制限付き）で扱う、②VS Code の Restricted Mode で開く、③`.npmrc` の `registry` と Yarn の `.yarnrc.yml`（`npmRegistryServer` / `yarnPath`）を確認する、④依存の git / tarball URL・`file:` を確認する、⑤`npm install --ignore-scripts` で入れる、を挙げる。ただし ⑤ は先送りにすぎず、`npm run` / `npm start` / `npm test` はスクリプトを実行し、アプリ本体が悪意を持つ場合もある。同シートは「VM が本当の対策で、以降の手順は VM 内で動くものを減らすだけ」としている
+- **npm workspaces のモノレポでは `ignore-scripts=true` をリポジトリ直下の `.npmrc` に置く**: OWASP NPM Security Cheat Sheet は、npm はワークスペースのフォルダ内の `.npmrc` を読まず、ルートでの `npm install` は警告なしに無視し、ワークスペース内から実行したコマンドでも `ignoring workspace config at <path>/.npmrc` のログが出るだけだとしている（npm/cli の `workspaces/config/lib/index.js` でも同じ警告を出して読み飛ばす実装を確認）。パッケージ単位の `.npmrc` に書いた `ignore-scripts` は効いていない前提で、ルートの `.npmrc` と CI の `npm ci --ignore-scripts` で担保する
 
 **個人開発環境でのエイリアス例**:
 ```bash
@@ -351,6 +352,7 @@ npm ci --ignore-scripts
 
 ```ini
 # .npmrc（npm）: 永続設定。npm は .npmrc の設定を読む
+# npm workspaces ではリポジトリ直下の .npmrc に置く（workspace 配下の .npmrc は読まれない）
 ignore-scripts=true
 ```
 
@@ -627,10 +629,13 @@ npm deprecate "@scope/package@>=1.2.4 <=1.2.5" "SECURITY: malicious version, do 
 npm view @scope/package@1.2.4 version
 ```
 - [NPM Security Cheat Sheet — Inspecting a project you did not write](https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html) (OWASP Cheat Sheet Series、信頼できないプロジェクトを開く前の手順。npm の挙動の提供元ではなく、定評ある団体の解説) ※2026-11-09 fetch（GitHub raw の cheatsheets/NPM_Security_Cheat_Sheet.md を取得）
+- [NPM Security Cheat Sheet — Minimize attack surfaces by ignoring run-scripts](https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html) (OWASP Cheat Sheet Series、2026-11-23 の更新 #3028 で workspace 配下の `.npmrc` が無視される点を追記) ※2026-11-24に実際にfetch成功
+  > "npm does not read a `.npmrc` inside a workspace folder: a root `npm install` ignores it without a warning, and commands run from inside the workspace only log `ignoring workspace config at <path>/.npmrc`"
+  > (セクション "3) Minimize attack surfaces by ignoring run-scripts")
 
 **バージョン**: npm 11.10+ / yarn 4.10+ / pnpm 11+
 **確信度**: 高
-**最終更新**: 2026-11-09
+**最終更新**: 2026-11-24
 
 ---
 

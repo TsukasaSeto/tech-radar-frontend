@@ -1429,6 +1429,7 @@ hooks はイベント種別ごとに「何を目的にするか」を層で分�
 - **シェルリダイレクトは文字列パターンマッチをすり抜ける**: `rm -rf ~` は正規表現でブロックできても、`rm -rf ~ 2>/dev/null` のようにリダイレクトを付け足すと同じ正規表現が素通りする実測例が報告されている。これは自作フックだけでなく Claude Code 自身の公式許可チェックにも共通する弱点で、シェルが実際にコマンドをどう解釈するかと、文字列マッチャーがどう区切るかが一致しない箇所を突かれる。PreToolUse の正規表現は「コマンド全体の文字列」ではなく、リダイレクト・パイプ・`&&` 連結を含めてシェルが実際に解釈する形を意識して設計する
 - **hook の `matcher` を特定ツール（例: `Write|Edit`）に絞ると、AI が別ツール（`Bash`）を選んだ場合にルールが一切届かない**: 25 回の CLAUDE.md 単体指示は全 25 回遵守されたのに対し、同じ一文を `Write|Edit` にマッチする hook へ移した途端、AI が `Bash` 経由で目的を達成した 5 回すべてで hook が発火せず届かなかった実測がある（exit code は 0 のまま、エラー表示なし）。この実測は PostToolUse で指示文を差し込む方式（exit 0）での結果で、PostToolUse はツールの実行後に発火するため、差し込んだ指示はすでに行われた操作を止められず、どのツールを選ぶかという初動の判断にも効かない。一方、PreToolUse hook は `permissionDecision: "deny"` か exit code 2 を返せばツール呼び出しを実行前にブロックできる（公式 hooks リファレンス）。禁止したい操作は PreToolUse で止め、`matcher` は `Bash` などの迂回経路まで含めて設定する。初動のツール選択に影響させたい方針は CLAUDE.md 側に置く。逆向きの迂回も起きる: `matcher: "Bash"` だけのブロック用 PreToolUse hook では、`Write` ツールで同じファイルを作る操作が 3 回中 2 回素通りし、`matcher: "Bash|Write"` に広げると 0 回になった実測がある。素通りした操作は「成功・エラーなし・終了コード 0」で返るため、ログだけでは迂回に気づきにくい（matcher の迂回はこのルールを正本とし、Rule #9 からはここを参照する）
 - `Stop` フックで終了を止めるときは、問題の明細も stderr に出す。公式 hooks リファレンスでは、stdout が JSON でない（プレーンテキストか空の）フックが exit 2 で終わると「Blocking error. Your stderr is the reason」となり、Claude に渡る理由は stderr だけになる。明細を stdout、件数だけを stderr に出していた Stop フックでは、Claude に届いていたのは件数の 1 行だけだったと報告されている（人が端末で実行すると両方が同じ画面に出るため気づきにくい）。作成時に `bash hook.sh >out.txt 2>err.txt; echo "exit=$?"` のように出力先を分けて確かめる。Claude だけでは直せない条件（人が用意するファイルが要るなど）で止め続けないよう、入力の `stop_hook_active` が `true` なら差し戻さずに exit 0 するか、Rule #21 の例のように差し戻した回数を数えて打ち切る。公式の 8 回連続継続の上限（`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP` で変更可）は Claude がツールを呼ぶたびに数え直されるので、差し戻されるたびにファイルを読み直すなどツールを呼んでいると届かない。止める手段として当てにしない
+- **`PermissionRequest` フックでは exit 2 も拒否にならない**: 公式 hooks リファレンスの「Exit code 2 behavior per event」表で `PermissionRequest` は「Can block? No」とされ、exit 2 は判定として読まれない。拒否するには exit 0 で `hookSpecificOutput.decision.behavior: "deny"` を返す。`PreToolUse` 用に書いた「stderr + exit 2」のガードを `PermissionRequest` に流用すると、要求は拒否されずに通常の許可フローへ進む。`PreToolUse` は承認の要否に関係なく全ツール呼び出しで発火し、`PermissionRequest` は許可を求める直前だけ発火するので、必ず止めたい操作は `PreToolUse` 側に置く
 
 **フック層の分担**:
 | 層 | イベント | 目的 | 同期実行時の `exit 2` | `async: true` |
@@ -1624,10 +1625,16 @@ sys.exit(0)  # 問題がなければ何も返さず終了を許す
 - [Hooks reference — UserPromptSubmit](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、人の入力以外での発火場面と 30 秒の既定タイムアウト) ※2026-11-17に実際にfetch成功
   > "`UserPromptSubmit` hooks have a default timeout of 30 seconds for `command`, `http`, and `mcp_tool` types, shorter than the 600-second default for those types on most other events."
 - [11/17 の公式ドキュメント更新：サブエージェントの呼び出しと非対話実行の前提](https://qiita.com/akihidem/items/e98641f8909f1167e9f2) (Qiita akihidem、2026-11-17 の hooks ページ追記を紹介) ※2026-11-17に実際にfetch成功
+- [Hooks reference — PermissionRequest decision control](https://code.claude.com/docs/en/hooks#permissionrequest-decision-control) (Claude Code 公式 docs、`PermissionRequest` では exit 2 が判定として読まれず `decision` オブジェクトで拒否する) ※2026-11-24に実際にfetch成功
+  > "Claude Code doesn't read exit code 2 as a decision on this event. To grant or deny the request, return the `decision` object."
+  > (セクション "PermissionRequest decision control")
+- [11/24 の公式ドキュメント更新：フックの終了コード2とスキルの即時反映](https://qiita.com/akihidem/items/1184215a4e71537d6e57) (Qiita akihidem、2026-11-24 の hooks ページ追記の紹介) ※2026-11-24に実際にfetch成功
+  > "PreToolUse 向けに書いたスクリプトを PermissionRequest にそのまま流用している場合、終了コード 2 を返しても拒否にはなりません。"
+  > (セクション "PermissionRequest では終了コード 2 が判定として読まれない")
 
 **バージョン**: Claude Code（全バージョン共通。`onFailure` は v2.1.295+）
 **確信度**: 高
-**最終更新**: 2026-11-20
+**最終更新**: 2026-11-24
 
 ---
 
@@ -4706,6 +4713,7 @@ Claude Code の hook は既定では「壊れても操作が通る」fail-open �
 - stdout は `{` で始まり `}` で終わる単一 JSON のときだけ JSON として解釈される。`{"hookSpecificOutput": 1`（閉じ括弧なし）や平文は失敗ではなく plain text 扱いとなり、block 指定でも素通りする
 - 有効な allow JSON を出しても exit 1 なら失敗扱い（Node の未捕捉例外は exit 1）。exit 2 は `onFailure` に関係なく阻止され stderr が理由として表示される
 - 別環境（Claude Code 2.1.316 / Windows 11 / Git Bash）の検証でも、PreToolUse フックで操作を止めたのは exit 2 だけで、検査スクリプトが exit 1・exit 3・例外で落ちると 3 回中 3 回とも操作が実行された。`onFailure: "block"` を付けると exit 1・例外・ファイル名の打ち間違いのいずれでも 0 回（阻止）だった。「検査で見つかったら exit 1」と書いた秘密情報チェックが `git push` を止められなかった実例が報告されている
+- **Windows（Git for Windows あり）では `command` のパスを `\` 区切りで書くと hook が起動しない**: 公式 docs によると shell form の `command` は Windows では Git Bash に渡される。Git Bash は `\` をエスケープとして扱うため `C:\Users\me\hooks\deny.cmd` は存在しないコマンド名になり、空白を含むパスを引用符で囲まない場合も途中で切られる。どちらも終了コード 127（exit 0 / 2 以外の非ブロッキングエラー）で、Claude Code 2.1.330 での検証では `onFailure` なしだと書き込みが素通りしたと報告されている。パスは `/` 区切りにして `"` で囲み、`"onFailure": "block"` を併用する（`args` を使う exec form はシェルを通さない）
 - 判定スクリプトが分割モジュールの import に失敗すると、main() の try/catch に届く前に Python が exit 1 で終わる。「exit 1 だけ通し、他の非ゼロは拒否」でも、異常終了と正常な答えが同じ値になりうるため、判定スクリプトは正常に動けば常に exit 0 で `found` / `none` を出力し、フックは「exit 0 かつ `none`」のときだけ通す（通す条件を 1 つに絞る）設計が報告されている
 - `onFailure` は `command` / `http` / `mcp_tool` hook で有効（`mcp_tool` hook は v2.1.328+）。`Stop` / `SubagentStop` / `TaskCompleted` / `TeammateIdle` と `async` / `asyncRewake` hook には効かない
 - hook 定義の `if`（例: `Bash(git push *)`）による起動の絞り込みは best-effort で、Bash 入力をサブコマンドに分割できないときはパターンに関係なく hook が起動する（公式 docs）。スクリプト側は「`if` に一致したときだけ呼ばれる」前提を置かず、入力のコマンドを自分で判定する。必ず止める allow / deny は hook ではなく permissions で定義する（公式 docs）
@@ -4772,10 +4780,15 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 - [11/15 の公式ドキュメント更新：フックの実行条件・終了コードとモデル関連の記載](https://qiita.com/akihidem/items/c1affda2795eb7d78ff6) (Qiita、hooks ページの `if` 対応表と終了コード 0 / 2 以外の扱いの追記を紹介) ※2026-11-15 fetch
   > "`if` でフックの起動を絞っている場合、分割できない入力では絞り込みが効かない前提になります。"
   > (セクション "Bash フックの if 条件：分割できない入力では必ず起動する")
+- [Claude Code のフックは、Windows のパスを \ で書くと黙って動かない（終了コード 127）](https://zenn.dev/kamijo_aoto/articles/claude-code-hook-windows-path-127) (Zenn、Windows + Git Bash で `\` 区切り・未引用の空白入りパスが 127 で素通りすることの検証) ※2026-11-24に実際にfetch成功
+  > "0 と 2 以外（1 や 127 など）は「止めないエラー」"
+  > (セクション "なぜ起きるか")
+- [Hooks reference — Exec form and shell form](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、shell form の `command` は Windows では Git Bash に渡される) ※2026-11-24に実際にfetch成功
+  > "The `command` string is passed to a shell: `sh -c` on macOS and Linux, Git Bash on Windows, or PowerShell when Git Bash isn't installed."
 
 **バージョン**: Claude Code v2.1.295+（検証は 2.1.303・2.1.316 / Windows 11 / Git Bash）
 **確信度**: 中（パターン1c採用。検証環境は Windows のみ。2 つの独立した検証で exit 1 の素通りを確認。`if` の挙動は公式 docs）
-**最終更新**: 2026-11-15
+**最終更新**: 2026-11-24
 
 ---
 
@@ -5581,6 +5594,7 @@ claude.ai アカウントでサインインした Claude Code v2.1.287+ では�
 - `add-json` には `mcpServers` のラッパーではなく、その中のサーバー 1 件分のオブジェクトを渡す（公式 docs）
 - `.mcp.json` の `command` / `args` / `env` / `url` / `headers` では `${VAR}` と `${VAR:-default}` が展開される。変数が未設定で既定値もない場合はエラーにならず、`claude mcp list` で警告を出したうえで `${VAR}` の文字列のままサーバーに渡す（公式 docs）
 - Claude Code 2.1.330 で `claude mcp add -e API_KEY=値` を試した記事では、`--scope project` は `.mcp.json` にキーがそのまま入って `git add -A` でステージされ、`claude mcp remove` の後も `~/.claude/backups/` のバックアップにキーが残っていたと報告されている。値を入れてしまったら、バックアップを含めて探し、キーをローテーションする
+- `claude mcp add --header 'Authorization: Bearer <キー>'` でも同じで、Claude Code 2.1.330 の検証では登録時の画面表示は `"Authorization": "[REDACTED]"` と伏せ字になるが、`--scope project` で書かれた `.mcp.json` には値が平文で入っていたと報告されている。画面の伏せ字を「保存されていない」根拠にせず、`.mcp.json` と `~/.claude.json`（local / user スコープ）の `headers` / `env` を直接確認する
 
 **コード例**:
 ```bash
@@ -5626,9 +5640,12 @@ claude mcp add --scope project demo -e 'API_KEY=${API_KEY}' -- npx -y demo-mcp
 - [Claude CodeをMCPと組み合わせて組織で使うとき、設定保護で整理した3点](https://zenn.dev/sidejob/articles/a0af1144fa92b3351) (Zenn、v2.1.327 の変更点の整理) ※2026-11-22 fetch
 - [Connect Claude Code to tools via MCP](https://code.claude.com/docs/en/mcp) (Claude Code 公式 docs、`.mcp.json` の `${VAR}` / `${VAR:-default}` 展開と未設定時の挙動) ※2026-11-23 fetch
 - [claude mcp add -e で渡した API キーは平文で残る](https://qiita.com/supportapp3/items/0b9ae8203efe03bf1805) (Qiita、Claude Code 2.1.330 で `-e` の値が `.mcp.json` / `~/.claude.json` / `~/.claude/backups/` に平文で残ることの検証) ※2026-11-23 fetch
+- [claude mcp add --header の Authorization は画面では [REDACTED] でも .mcp.json には平文](https://qiita.com/supportapp3/items/b73c21efacc605616bf9) (Qiita、Claude Code 2.1.330 で `--header` の値が伏せ字表示のまま `.mcp.json` に平文で保存されることの検証) ※2026-11-24に実際にfetch成功
+  > "画面には "Authorization": "[REDACTED]" と伏せ字で出ます"
+  > (セクション "先に結論")
 
 **バージョン**: Claude Code v2.1.327+
 **確信度**: 高（`${VAR}` 展開は公式 docs。バックアップに残る点は単一記事の報告）
-**最終更新**: 2026-11-23
+**最終更新**: 2026-11-24
 
 ---

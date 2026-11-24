@@ -334,6 +334,7 @@ Next.js App Router (v16 時点) では、`async function Page()` のように **
 - 一方、**同期** Server Component や Client Component は通常の関数コンポーネントとして RTL でテスト可能。境界は「Server か Client か」ではなく「`async` か否か」
 - async Server Component を `renderToStaticMarkup` などで無理やり同期化する迂回はアンチパターン（Suspense / streaming 挙動が再現できず、本番と乖離する）
 - ロジックは DAL に追い出し、Server Component 自体は薄く保つことで Vitest でカバーできる範囲を最大化する設計指針が成立する
+- 「E2E に回す」の手前の選択肢として、Storybook チームの `vitest-plugin-rsc`（alpha、Vite 8+ / Vitest Browser Mode 前提）がある。README は "Test React Server Components and Next.js App Router apps in Vitest Browser Mode." とし、`renderServer({ url })` でページをブラウザ内の Next.js に描画させる。Playwright の E2E 55 件を移した Zenn の検証記事では、テストの中身を書き換えずに 53 件が通り、通らなかったのは 2 つのブラウザを使う同時編集テストと、テスト用の中継が原因で落ちる 1MB 超の送信テストだったと報告されている。本番ビルドやコンテナ間の接続は確かめられないため、E2E は本番に近い構成でしか確かめられないものに絞って残す
 
 **コード例**:
 ```text
@@ -387,12 +388,16 @@ test('does not work', async () => {
 
 **出典**:
 - [Next.jsの考え方 / RSC のテスト戦略（async Server Component）](https://zenn.dev/akfm/books/nextjs-basic-principle)
+- [async な Server Component の E2E を vitest-plugin-rsc で Vitest に移してみた](https://zenn.dev/xtm_blog/articles/vitest-plugin-rsc-async-server-component) (Zenn xtm_blog、E2E 55 件中 53 件を移行できた検証と移せないもの) ※2026-11-24に実際にfetch成功
+  > "55 件のうち 53 件が通りました。"
+  > (セクション "結果")
+- [storybookjs/vitest-plugin-rsc README](https://github.com/storybookjs/vitest-plugin-rsc) (プラグイン提供元、Vitest Browser Mode で RSC / App Router を描画する) ※2026-11-24に実際にfetch成功
 
 **取り込み元**: 別プロジェクト sstf-5461-admin-app チームドキュメント (2026-05-16 手動取り込み、akfm_sato 氏の Zenn book を原典として参照)
 
 **バージョン**: Next.js 16+
-**確信度**: 中（出典は 1 冊の Zenn book のみ）
-**最終更新**: 2026-10-25
+**確信度**: 中（主出典は 1 冊の Zenn book。`vitest-plugin-rsc` の移行結果は単一記事の検証）
+**最終更新**: 2026-11-24
 
 ---
 

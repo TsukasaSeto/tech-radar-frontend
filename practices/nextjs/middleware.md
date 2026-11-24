@@ -328,3 +328,63 @@ export const config: VercelConfig = {
 **バージョン**: Vercel デプロイ限定（セルフホストには適用されない）
 **確信度**: 高
 **最終更新**: 2026-11-20
+
+---
+
+### 7. `proxy.ts` の matcher とリダイレクト / rewrite は `next/experimental/testing/server` で単体テストし、移行前後で期待値を変えない
+
+`middleware.ts` → `proxy.ts` の移行（Rule #1）は差分がファイル名と関数名だけに見えるため、matcher の対象パスや rewrite / redirect の挙動が変わっても気づきにくい。`next/experimental/testing/server` の `unstable_doesMiddlewareMatch` で「どの URL で Proxy が走るか」を、`isRewrite` / `getRewrittenUrl` / `getRedirectUrl` で Proxy 関数の戻り値を単体テストし、移行前の `middleware.ts` に対して通したテストを、import 先だけ変えて移行後も同じ期待値で通す。
+
+**根拠**:
+- Next.js 公式の `proxy.js` リファレンスは、Next.js 15.1 以降の `next/experimental/testing/server` を Proxy の単体テスト用ユーティリティとして案内し、Proxy が意図したパスだけで走ることや独自のルーティングが意図どおり動くことを本番前に確かめられるとしている
+- Proxy 用でも関数名は `unstable_doesMiddlewareMatch` のまま（2026-11-24 時点の公式 docs のコード例）。Next.js 16.4.2 では、エージェントがドキュメントから `unstable_doesProxyMatch` という名前で書いて `TypeError: unstable_doesProxyMatch is not a function` / `TS2305` になった例が報告されている。改名直後の API は、使う前にインストール済みの `node_modules/next` の型定義（`.d.ts`）で名前の実在を確かめる
+- 同じ報告では、`runtime: 'experimental-edge'` 付きの `middleware.ts` に移行コマンドを流すと build は通るが `runtime` の行が無言で消え、`proxy.ts` に `runtime: 'edge'` を書くと build エラーになったとされる。移行前の runtime を確認し、Edge でしか成り立たない処理があるかを先に判断する（Proxy は Node.js ランタイム固定。Rule #1）
+- 移行の確認は「機械的な改名（ファイル名・関数名）」と「移行後の挙動（関連設定・実行環境・既存テスト）」を分けてレビューする、という観点も別の記事で示されている
+
+**コード例**:
+```ts
+// proxy.test.ts — Good: matcher と戻り値を単体テストする（Vitest / Jest）
+import { NextRequest } from 'next/server'
+import {
+  unstable_doesMiddlewareMatch, // Proxy 用でも関数名は Middleware のまま
+  isRewrite,
+  getRewrittenUrl,
+} from 'next/experimental/testing/server'
+import { config, proxy } from './proxy' // 移行前は './middleware' / middleware
+
+test('静的ファイルでは Proxy が走らない', () => {
+  expect(
+    unstable_doesMiddlewareMatch({ config, url: '/_next/static/chunk.js' })
+  ).toBe(false)
+})
+
+test('/docs は別ドメインへ rewrite される', async () => {
+  const response = await proxy(new NextRequest('https://nextjs.org/docs'))
+  expect(isRewrite(response)).toBe(true)
+  expect(getRewrittenUrl(response)).toBe('https://other-domain.com/docs')
+})
+
+// Bad: ドキュメントや記憶にある名前をそのまま書き、型定義で実在を確かめない
+// import { unstable_doesProxyMatch } from 'next/experimental/testing/server'
+```
+
+**アンチパターン**:
+- 移行後に matcher や redirect の期待値を書き換えてテストを通す（変えてよいのは import 先と関数名だけ）
+- codemod の実行完了を動作確認の完了とみなし、消えた行（`runtime` 指定など）を差分で確認しない
+- `x-middleware-next` のような内部ヘッダ名まで一括置換の対象に含める
+
+**出典引用**:
+> "The unstable_doesMiddlewareMatch function can be used to assert whether proxy will run for the provided URL, headers, and cookies."
+> ([proxy.js - Next.js Docs](https://nextjs.org/docs/app/api-reference/file-conventions/proxy), セクション "Unit testing (experimental)") ※2026-11-24に実際にfetch成功
+
+> "関数名は middleware のままですが、import 元の config は移行後の proxy.ts から読みます。"
+> ([なぜNext.js 16のproxy移行では、ドキュメントでなく型定義で名前を確かめるのか](https://qiita.com/YujiNaramoto/items/b809ca57c12eae0105cc), セクション "テストの実装例") ※2026-11-24に実際にfetch成功
+
+**出典**:
+- [proxy.js - Next.js Docs](https://nextjs.org/docs/app/api-reference/file-conventions/proxy) (Next.js 公式、`next/experimental/testing/server` の `unstable_doesMiddlewareMatch` / `isRewrite` / `getRewrittenUrl`) ※2026-11-24 fetch
+- [なぜNext.js 16のproxy移行では、ドキュメントでなく型定義で名前を確かめるのか](https://qiita.com/YujiNaramoto/items/b809ca57c12eae0105cc) (Qiita、16.4.2 での関数名の食い違いと `runtime` 行の消失の報告) ※2026-11-24 fetch
+- [Next.jsのmiddleware→proxy移行、「名前を変えただけ」でレビューを終えないために](https://qiita.com/DaisukeNishi/items/4f1a48b4276b761b9280) (Qiita、機械的な変更と移行後の確認を分けるレビュー観点) ※2026-11-24 fetch
+
+**バージョン**: Next.js 15.1+（テストユーティリティ）、Next.js 16+（`proxy.ts`）
+**確信度**: 高（テストユーティリティと使い方は公式 docs。16.4.2 の関数名の食い違いと `runtime` 行の消失は単一記事の報告）
+**最終更新**: 2026-11-24
