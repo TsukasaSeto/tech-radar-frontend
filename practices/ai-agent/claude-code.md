@@ -4802,6 +4802,7 @@ console.log('{"hookSpecificOutput": {"permissionDecision": "deny"');
 - 同記事では `claude doctor` の終了コードは 0 で、末尾の `N warnings found` にも数えられなかった。ツール名の綴り違い・全角括弧・余分な `)` は `doctor` に何も出なかったが `deny` は効かなかった。出力が無いことは正しいルールの証明にならない
 - 記事の検証は 2.1.293 で、公式 docs は 2.1.302 時点。他の版・OS・対話モードでの挙動は確認されていない。`ask` の閉じ忘れも効かなかったが 1 ケースのみ
 - 2.1.326 で `--allowedTools` / `--disallowedTools` / `--tools` の値に完全なルールの形でないエントリがあると起動時に警告が出るようになった（公式 CHANGELOG）。ただし 2.1.328 の `claude -p --allowedTools` の実測では、閉じ括弧なし・括弧前の空白・括弧後の余計な文字には警告が出た一方、小文字の `bash(git *)` は警告が出ないまま何も許可されず（3 回とも実行不可）、警告も標準エラーに 1 行出るだけで実行は止まらなかったと報告されている。無人実行のログに stderr を残し、ツール名は大文字始まりで書く
+- `claude -p` ではダイアログが出ず、壊れた user / project / local の設定ファイルや値をスキップして続行する。既定の `text` 出力形式なら、読み込まれなかったものとスキップされたものが stderr に列挙される。ファイル全体が読み込まれなかった場合は、そのファイルの hooks・permission rules・sandbox 設定はどれも効かない（すでに設定された環境変数は残りうる）と公式 docs は明記している。CI の `-p` 実行では stderr を保存し、実行後に `claude doctor` で落ちた設定を確認する
 
 **コード例**:
 ```jsonc
@@ -4849,10 +4850,13 @@ claude doctor | sed -n '/Invalid settings/,/^$/p'
 - [許可ルールの書き間違いに警告が出るようになったのに小文字のbashは黙って効かない](https://zenn.dev/marunage_kacho/articles/ai-trial-rule-warning) (Zenn、2.1.328 で警告の出るケース・出ないケースを実測) ※2026-11-20に実際にfetch成功
   > "ツール名を小文字でbash(git *)と書くと、警告は出ません。そして何も許可されない。"
   > (セクション "直ってないところ")
+- [Settings](https://code.claude.com/docs/en/settings) (Claude Code 公式 docs、"Broken settings in a `-p` run": `-p` での stderr への列挙と、読み込まれなかったファイルの hooks・権限ルール・sandbox が無効になること) ※2026-11-25 fetch
+  > "These settings did not load, so nothing in them is in effect, including hooks, permission rules and sandbox settings"
+  > (セクション "Broken settings in a `-p` run")
 
 **バージョン**: Claude Code 2.1.x（2.1.293 / Windows 11 で実測。公式 docs は 2.1.302 時点。CLI 値の起動時警告は 2.1.326+、小文字ツール名の実測は 2.1.328）
 **確信度**: 高（公式 docs がスキップ挙動を明記。パターン1、検証記事は補足出典）
-**最終更新**: 2026-11-20
+**最終更新**: 2026-11-25
 
 ---
 
@@ -5595,6 +5599,7 @@ claude.ai アカウントでサインインした Claude Code v2.1.287+ では�
 - `.mcp.json` の `command` / `args` / `env` / `url` / `headers` では `${VAR}` と `${VAR:-default}` が展開される。変数が未設定で既定値もない場合はエラーにならず、`claude mcp list` で警告を出したうえで `${VAR}` の文字列のままサーバーに渡す（公式 docs）
 - Claude Code 2.1.330 で `claude mcp add -e API_KEY=値` を試した記事では、`--scope project` は `.mcp.json` にキーがそのまま入って `git add -A` でステージされ、`claude mcp remove` の後も `~/.claude/backups/` のバックアップにキーが残っていたと報告されている。値を入れてしまったら、バックアップを含めて探し、キーをローテーションする
 - `claude mcp add --header 'Authorization: Bearer <キー>'` でも同じで、Claude Code 2.1.330 の検証では登録時の画面表示は `"Authorization": "[REDACTED]"` と伏せ字になるが、`--scope project` で書かれた `.mcp.json` には値が平文で入っていたと報告されている。画面の伏せ字を「保存されていない」根拠にせず、`.mcp.json` と `~/.claude.json`（local / user スコープ）の `headers` / `env` を直接確認する
+- 確認用の `claude mcp get <name>` も、値を直書きしたサーバーでは `env` / `headers` の値をそのまま表示する（Claude Code 2.1.330 での検証。`claude mcp list` は名前・コマンド・状態だけを出し、`${API_KEY}` 参照で登録したサーバーは `get` でも参照の文字列のまま出たと報告されている）。画面共有中や、出力を Issue・チャット・AI に貼るときに漏れるため、`get` の出力は伏せてから共有し、直書きのサーバーは参照に書き直す
 
 **コード例**:
 ```bash
@@ -5620,6 +5625,7 @@ claude mcp add --scope project demo -e 'API_KEY=${API_KEY}' -- npx -y demo-mcp
 - Claude Code セッションの中（Bash ツール経由）で `claude mcp add-json <name> -` を実行しようとする（セッション内では使えない）
 - v2.1.327 未満のまま `--scope project` で `claude mcp add` / `remove` を実行し、`.mcp.json` の変更を確認せずにコミットする
 - `claude mcp remove` で消したので安心と考え、`~/.claude/backups/` を確認しない
+- 接続確認のために実行した `claude mcp get <name>` の出力を、そのまま Issue やチャットに貼る
 
 **出典引用**:
 > "Added `claude mcp add-json <name> -` to read the server's JSON from stdin, so tokens can stay off the command line; not available inside a Claude Code session"
@@ -5643,9 +5649,61 @@ claude mcp add --scope project demo -e 'API_KEY=${API_KEY}' -- npx -y demo-mcp
 - [claude mcp add --header の Authorization は画面では [REDACTED] でも .mcp.json には平文](https://qiita.com/supportapp3/items/b73c21efacc605616bf9) (Qiita、Claude Code 2.1.330 で `--header` の値が伏せ字表示のまま `.mcp.json` に平文で保存されることの検証) ※2026-11-24に実際にfetch成功
   > "画面には "Authorization": "[REDACTED]" と伏せ字で出ます"
   > (セクション "先に結論")
+- [claude mcp get は MCP の API キーを画面にそのまま出す：codex mcp get は ***** でも --json では平文](https://qiita.com/supportapp3/items/d8d15ba02b2937aa293f) (Qiita、Claude Code 2.1.330 で `claude mcp get` が直書きの値を表示し、`list` は値を出さないことの検証) ※2026-11-25 fetch
+  > "登録するときは伏せ字なのに、確かめるときの claude mcp get ではキーがそのまま出ました。"
+  > (セクション "先に結論")
 
 **バージョン**: Claude Code v2.1.327+
 **確信度**: 高（`${VAR}` 展開は公式 docs。バックアップに残る点は単一記事の報告）
-**最終更新**: 2026-11-24
+**最終更新**: 2026-11-25
+
+---
+
+### 68. チームのスキルを SessionStart hook で同期するなら `reloadSkills: true` を返す — MCP サーバー経由で配るスキルは v2.1.331+ が必要で、`claude -p` では使えない
+
+Claude Code のスキル探索は通常 SessionStart hook の完了前に走るため、hook が `~/.claude/skills/` や `.claude/skills/` に書き込んだスキルは、最初のプロンプトの時点で見えないことがある。hook でスキルリポジトリを同期する場合は、同期の後に `hookSpecificOutput` で `reloadSkills: true` を返し、hook 完了後の再スキャンを要求する。
+MCP サーバーからスキルを配る方式は Claude Code v2.1.331 以降が必要で、`claude -p`（headless）では MCP サーバー由来のスキルはサポートされない。CI の `-p` 実行でスキルが効かないときは、配布方式とバージョンを先に確認する。
+
+**根拠**:
+- 公式 hooks docs は、SessionStart の出力に `reloadSkills` を追加し、`true` なら SessionStart hook の完了後にスキル・コマンドのディレクトリを再スキャンすると説明している。指定しないと、hook が書いたファイルが最初のプロンプトで欠けることがある
+- 公式 docs の例は `git -c protocol.file.allow=never clone` で同期しており、フォルダのパスからは clone できない（リポジトリ URL は HTTPS / SSH で指定する）
+- 公式 skills docs は MCP サーバー由来のスキルに v2.1.331 以降が必要と明記し、headless docs は `-p` モードでは MCP サーバー由来のスキルがサポートされないとしている。対話セッションで動いたスキルが CI の `-p` で動かない原因の候補になる
+- スキル本体の設計（description・粒度）は Rule #5、hooks の層設計は Rule #12 を参照
+
+**コード例**:
+```bash
+#!/bin/bash
+# .claude/hooks/sync-team-skills.sh（SessionStart hook）
+
+# Good: 同期の後に reloadSkills を返し、同じセッションで新しいスキルを使えるようにする
+git -C ~/.claude/skills/team-skills pull --quiet 2>/dev/null || \
+  git -c protocol.file.allow=never clone --quiet https://git.example.com/your-org/team-skills.git ~/.claude/skills/team-skills
+
+echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "reloadSkills": true}}'
+
+# Bad: 同期だけして何も返さない
+# → スキル探索が hook の完了前に終わっていると、最初のプロンプトで新しいスキルが見えない
+```
+
+**アンチパターン**:
+- SessionStart hook でスキルを同期したのに、最初のプロンプトでスキルが使えないことを「同期の失敗」と判断して同期処理をデバッグし続ける
+- MCP サーバー経由で配るスキルを、`claude -p` で動く CI ジョブの前提にする
+
+**出典引用**:
+> "Skill discovery normally runs before SessionStart hooks finish, so without it, files a hook writes into `~/.claude/skills/` or `.claude/skills/` can be missing when the first prompt runs."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "Reload skills that a hook installs") ※2026-11-25に実際にfetch成功
+
+> "Using them requires Claude Code v2.1.331 or later."
+> ([Extend Claude with skills](https://code.claude.com/docs/en/skills), セクション "Skills from MCP servers") ※2026-11-25に実際にfetch成功
+
+**出典**:
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、SessionStart の `reloadSkills` と同期スクリプトの例) ※2026-11-25 fetch
+- [Extend Claude with skills](https://code.claude.com/docs/en/skills) (Claude Code 公式 docs、MCP サーバー由来のスキルの必要バージョン) ※2026-11-25 fetch
+- [Run Claude Code programmatically](https://code.claude.com/docs/en/headless) (Claude Code 公式 docs、`-p` モードでは MCP サーバー由来のスキルがサポートされない) ※2026-11-25 fetch
+- [11/25 の公式ドキュメント更新：MCP提供スキルの対応範囲と設定の読み込み失敗](https://qiita.com/akihidem/items/19fb2e39c8ebccb016f9) (Qiita akihidem、2026-11-25 の公式 docs 追加分の整理) ※2026-11-25 fetch
+
+**バージョン**: Claude Code v2.1.331+（MCP サーバー由来のスキル）
+**確信度**: 高
+**最終更新**: 2026-11-25
 
 ---

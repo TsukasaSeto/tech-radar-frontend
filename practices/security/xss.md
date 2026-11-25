@@ -15,6 +15,7 @@ React は標準で文字列を自動エスケープするが、それを迂回�
 - DOMPurify は 250+ の攻撃ベクトルを既知パターンとして弾く、業界標準のサニタイザー
 - 自前の正規表現でサニタイズすると必ず迂回される（`<scr<script>ipt>` 等）
 - AI チャット UI などで LLM の出力を `innerHTML` に直接代入すると XSS になる（OWASP LLM05: Improper Output Handling）。LLM の出力もユーザー入力と同等の「信頼できないソース」として扱う
+- OWASP React Security Cheat Sheet は、React はどの経路でも HTML をサニタイズしないため、ref 経由の `.innerHTML` / `.outerHTML` / `.insertAdjacentHTML()` への書き込みは同じ入力の `dangerouslySetInnerHTML` と同じだけ危険だとしている（対策は API の選択ではなくサニタイズ。HTML が不要なら JSX のテキストか `textContent`）。また DOMPurify の既定設定は組み込み DOM API との衝突による DOM Clobbering しか除かないため、`SANITIZE_NAMED_PROPS: true` で `id` / `name` に接頭辞を付け、独自の変数・プロパティへの clobbering も防ぐ
 
 **コード例**:
 ```tsx
@@ -71,10 +72,13 @@ export async function savePost(formData: FormData) {
 - [DOMPurify](https://github.com/cure53/DOMPurify) (cure53)
 - [React Docs: dangerouslySetInnerHTML](https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html) (React 公式)
 - [LLMの出力をそのまま使うと危ない？OWASP LLM05 Improper Output Handlingを解説](https://zenn.dev/mapellion/articles/b4e061e030ab7c) (Zenn、LLM 出力を innerHTML に代入するとXSSになる事例と対策) ※2026-06-12に実際にfetch成功
+- [React Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/React_Security_Cheat_Sheet.md) (OWASP CheatSheetSeries、2026-11-24 公開コミット #3039。ref 経由の innerHTML と `SANITIZE_NAMED_PROPS`) ※2026-11-25 fetch
+  > "React does not sanitize HTML on any path."
+  > (セクション "Avoid Direct DOM Manipulation")
 
 **バージョン**: DOMPurify 3+
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-25
 
 ---
 
@@ -520,7 +524,8 @@ API レスポンスやユーザー入力のオブジェクトを `<input {...dat
 受け取る props は分割代入で明示し、許可した属性だけを要素に渡す。
 
 **根拠**:
-- OWASP React Security Cheat Sheet が、信頼できないオブジェクトのスプレッドを避けて明示的な分割代入を使うことを推奨している（コミット差分の要約から確認。cheat sheet 本体は未読のため確信度は中）
+- OWASP React Security Cheat Sheet が、信頼できないオブジェクトのスプレッドを避けて明示的な分割代入を使うことを推奨している（2026-11-25 に公開版の cheat sheet 本体で確認）。スプレッドされたキーがラッパーコンポーネント経由で DOM 要素に届くと、`dangerouslySetInnerHTML` で HTML を、`href` / `formAction` で任意の URL を差し込める
+- props の集合が書く時点で決まらない場合だけ、コンポーネントごとの allow list を使う。allow list は想定外のキーを落とす（fail closed）が、block list は通してしまう（fail open）。入力要素の allow list に `type` を入れるなら値も制限する（`type="image"` の input は `src` と `formAction` を受け付ける）
 - 同シートは `dangerouslySetInnerHTML` の DOMPurify 利用（Rule #1）、`javascript:` / `data:` スキームの遮断（Rule #2）と並べて、ref 経由の `innerHTML` 直接操作や `eval()` / `new Function()` の回避も挙げている
 
 **コード例**:
@@ -542,10 +547,13 @@ function Field(untrusted) {
 
 **出典**:
 - [Feat react security cheat sheet (#2196)](https://github.com/OWASP/CheatSheetSeries/commit/0c4931d2d305a6eeb872c063ebddd55a02f8975b) (OWASP CheatSheetSeries 公式リポジトリ、React Security Cheat Sheet 追加コミット) ※2026-10-01 fetch
+- [React Security Cheat Sheet](https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/React_Security_Cheat_Sheet.md) (OWASP CheatSheetSeries、2026-11-24 公開コミット #3039。allow list と block list の違い・`type` の制限) ※2026-11-25 fetch
+  > "Allow-lists fail closed: an unexpected key is dropped. Block-lists fail open: an unexpected key passes through."
+  > (セクション "Avoid Prop Injection via Spread Syntax")
 
 **バージョン**: React 全バージョン
 **確信度**: 中
-**最終更新**: 2026-10-01
+**最終更新**: 2026-11-25
 
 ---
 

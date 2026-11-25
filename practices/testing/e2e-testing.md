@@ -12,6 +12,7 @@ E2E テストはコスト（実行時間・メンテコスト）が高いため�
 - すべての機能をE2EでカバーしようとするとCI時間が数時間になる
 - テストピラミッドの最上位として、ユニット/コンポーネントテストでカバーできないフローのみ担う
 - **「破壊テスト（sabotage method）」で実効性を検証する**: テストを追加・保守する前に「このテストが対象機能を削除しても通るか？」を問う。通る場合は存在を確認しているだけの「劇場テスト」であり、削除または書き直すべきである
+- AI エージェントや Playwright のテスト用 MCP サーバーが生成したテストも同じ点検が要る。計画で「`2 items left` と表示される」と指示したのに `expect(getByTestId('todo-count')).toBeVisible()` だけが記録され、操作を 1 つ削った変異でも PASSED になった（`toHaveText('0 items left')` に直すと失敗した）と報告されている（Playwright 1.65.1）。コメントに計画の文言が残るため、レビューでは検証しているように見える
 
 **コード例**:
 ```ts
@@ -74,13 +75,16 @@ E2E テストを追加・レビューするとき:
 - [Playwright Docs: Getting Started](https://playwright.dev/docs/intro) (Playwright公式)
 - [Google Testing Blog: Just Say No to More End-to-End Tests](https://testing.googleblog.com/2015/04/just-say-no-to-more-end-to-end-tests.html)
 - [I Had 160 Playwright Tests. I Deleted All of Them. Here's Why.](https://dev.to/madan_dhoundiyal_61ef7c1e/i-had-160-playwright-tests-i-deleted-all-of-them-heres-why-2ma9) (dev.to、破壊テスト法・劇場テストの排除) ※2026-06-22に実際にfetch成功
+- [AIが生成したPlaywrightテストは「通る」けど「守らない」― toBeVisible() がバグを見逃した実験](https://zenn.dev/qingshanfeihu/articles/pw-ai-e2e-01-d3xm70) (Zenn qingshanfeihu、MCP で生成したテストの `toBeVisible()` が変異を見逃した実測) ※2026-11-25 fetch
+  > "文字列を比較していません。"
+  > (セクション "計画では「文字列を確認しろ」と書いた")
 
 > "These aren't tests. They're theater."
 > ([I Had 160 Playwright Tests. I Deleted All of Them. Here's Why.](https://dev.to/madan_dhoundiyal_61ef7c1e/i-had-160-playwright-tests-i-deleted-all-of-them-heres-why-2ma9), セクション "The Core Problem") ※2026-06-22に実際にfetch成功
 
 **バージョン**: Playwright 1.40+
 **確信度**: 高
-**最終更新**: 2026-06-22
+**最終更新**: 2026-11-25
 
 ---
 
@@ -908,5 +912,62 @@ test('今日の予約が表示される（Bad）', async ({ page }) => {
 **バージョン**: Playwright 1.45+（`page.clock`）
 **確信度**: 高
 **最終更新**: 2026-11-22
+
+---
+
+### 13. Playwright の `retries` を使うなら `flaky` 件数を集計して可視化し、定期ジョブで `--retries=0 --repeat-each=N` を回して失敗率を測る
+
+CI で `retries` を有効にすると、1 回目に失敗してリトライで通ったテストは `flaky` に分類されるが、終了コードは 0 で CI は緑になる。リトライ自体は一時的な環境要因の吸収に有効なので外さなくてよいが、`flaky` 件数を JSON / JUnit レポートから毎回数えて 0 でなければ通知する。加えて、手動・定期のジョブで `--retries=0 --repeat-each=10` を回し、テストごとの失敗率を測る。flaky を CI で失敗させたいなら `--fail-on-flaky-tests` を使う。
+
+**根拠**:
+- Playwright 公式 docs は、1 回目に失敗しリトライで通ったテストを "flaky"、全リトライで失敗したテストを "failed" に分類すると説明している。CLI には `--repeat-each <N>` と `--fail-on-flaky-tests`（既定 false）がある
+- Playwright 1.65.1 で、`waitForTimeout(800)` の後に `isVisible()` で判定するテストを `--repeat-each=20 --retries=0` で回すと 9/20 成功（失敗率 55%）だったが、同じテストを `--retries=2` で回すと `unexpected: 0`・`flaky: 7` となりパイプラインは緑だったと報告されている
+- 同じ報告では、web-first アサーション（`await expect(locator).toBeVisible()`）は 20/20 で成功した。flaky の原因が固定時間の待機であれば、リトライではなく待ち方を直す
+
+**コード例**:
+```yaml
+# .github/workflows/e2e.yml
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps chromium
+      # Good: PR ではリトライを許すが、flaky 件数を JSON レポートから数えて残す
+      - run: npx playwright test --reporter=json > results.json
+      - run: echo "flaky=$(jq '.stats.flaky' results.json)" >> "$GITHUB_STEP_SUMMARY"
+
+  # Good: 手動・定期ジョブではリトライなしで繰り返し、失敗率を測る
+  flake-hunt:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npx playwright install --with-deps chromium
+      - run: npx playwright test --repeat-each=10 --retries=0
+
+# Bad: retries: 2 を設定しただけで flaky 件数を誰も見ない
+# → 失敗率 55% のテストでも、ほとんどの実行で緑として報告される
+```
+
+**アンチパターン**:
+- CI が緑であることを「フレーキーなテストが無い」根拠にする
+- `waitForTimeout()` で待ってから `isVisible()` で判定する（記事の実測では、待たずにその瞬間の値を返す `isVisible()` は遅い画面で 0/20 成功だった）
+
+**出典引用**:
+> "tests that failed on the first run, but passed when retried"
+> ([Retries - Playwright docs (microsoft/playwright docs/src/test-retries-js.md)](https://github.com/microsoft/playwright/blob/main/docs/src/test-retries-js.md), セクション "Retries") ※2026-11-25に実際にfetch成功
+
+> "Playwright はこの 7 回を flaky に分類しますが、終了コードは 0 なので、CI 上は成功扱いになります。"
+> ([retries=2 は失敗率55%のテストを「緑」にする ― Playwrightのフレーキーを数字で測る](https://zenn.dev/qingshanfeihu/articles/pw-ai-e2e-02-56oxe8), セクション "retries=2 を付けると何が起きるか") ※2026-11-25に実際にfetch成功
+
+**出典**:
+- [Retries - Playwright docs](https://github.com/microsoft/playwright/blob/main/docs/src/test-retries-js.md) (Playwright 公式 docs のソース、passed / flaky / failed の分類) ※2026-11-25 fetch
+- [Command line - Playwright docs](https://github.com/microsoft/playwright/blob/main/docs/src/test-cli-js.md) (Playwright 公式 docs のソース、`--repeat-each` / `--fail-on-flaky-tests`) ※2026-11-25 fetch
+- [retries=2 は失敗率55%のテストを「緑」にする ― Playwrightのフレーキーを数字で測る](https://zenn.dev/qingshanfeihu/articles/pw-ai-e2e-02-56oxe8) (Zenn qingshanfeihu、Playwright 1.65.1 でリトライが flaky を隠す実測と flake-hunt ジョブ) ※2026-11-25 fetch
+
+**バージョン**: Playwright Test（実測は 1.65.1）
+**確信度**: 中（分類と CLI オプションは公式 docs。リトライで失敗率 55% のテストが緑になる実測は単一記事の報告）
+**最終更新**: 2026-11-25
 
 ---
