@@ -112,6 +112,7 @@ function UserDetails({ userPromise }: { userPromise: Promise<User> }) {
 - `use` は条件分岐の中でも呼べるので、「初期データがないときだけ SSR を止め、取得はクライアントのクエリライブラリに任せる」という条件付きの使い方ができる
 - ルーターやライブラリ側で「pathless SSR モード」のような SSR 除外パターンを組み立てやすくなる
 - 公式の制約: サーバーレンダリング時は `<Suspense>` の内側で呼ぶ（境界がないとサーバーレンダーが失敗する）。Client Component から呼ぶ。`browser()` を呼ぶだけでは何も起きず、`use` に渡す必要がある（throw もしない）
+- SSR から外したことはエラーとして数えられない: 公式 docs では、`use(browser())` でフォールバックに落ちたときサーバーの `onError` と `hydrateRoot` の `onRecoverableError` は呼ばれず、サーバーレンダラ（`renderToPipeableStream` 等）の `onBrowserBailout(error, errorInfo)` に報告される（`browser()` に渡した理由は `error.cause`、場所は `errorInfo.componentStack`）。`typeof window === 'undefined'` で throw する従来の書き方では両方に 1 件ずつ記録され、`use(browser())` では 0 件だったと react@19.3.1 の検証記事で報告されている。エラー監視のノイズを減らしたいときは throw を `use(browser())` に置き換え、SSR 除外の件数は `onBrowserBailout` で別に数える。Suspense 境界がないときは `onBrowserBailout` ではなく通常のエラーコールバックに失敗が届く
 
 **コード例**:
 ```tsx
@@ -165,11 +166,18 @@ function useBrowserQueryBad<T>(fetcher: () => Promise<T>) {
 > "SSR時にSuspenseのフォールバックUIに落ちたところがクライアント側でレンダリング成功したとしてもハイドレーションミスマッチではないので、これにより従来挙動の問題を防ぐことができます。"
 > ([React 19.3 browser() APIの使いみち〜FUNSTACK Routerの場合〜](https://zenn.dev/uhyo/articles/react-use-browser-usage), セクション "browser() APIの導入") ※2026-08-21に実際にfetch成功
 
+> "When React leaves a Suspense fallback for the browser, it does not call the server renderer’s onError callback or hydrateRoot’s onRecoverableError callback."
+> ([browser – React](https://react.dev/reference/react-dom/browser), セクション "Reporting browser-only rendering on the server") ※2026-11-26に実際にfetch成功
+
 **出典**:
 - [React Docs: browser](https://react.dev/reference/react-dom/browser) (React公式、引数は理由の文字列か関数・サーバーとブラウザでの戻り値・Suspense 境界が必須などの制約・`useBrowserQuery` の公式パターン) ※2026-10-25 確認
 - [React 19.3](https://react.dev/blog/2026/09/09/react-19-3) (React公式ブログ、19.3 で `browser()` が追加された) ※2026-10-25 確認
 - [React 19.3 browser() APIの使いみち〜FUNSTACK Routerの場合〜](https://zenn.dev/uhyo/articles/react-use-browser-usage) (Zenn、react-dom の browser() API を用いた実装例) ※2026-08-21 fetch
+- [React Docs: browser — Reporting browser-only rendering on the server](https://react.dev/reference/react-dom/browser#reporting-browser-only-rendering-on-the-server) (React公式、`onBrowserBailout` の引数と `onError` / `onRecoverableError` が呼ばれないこと) ※2026-11-26 fetch
+- [React 19.3のbrowser()入門、use(browser())でSSRを止めてもonErrorは0件だった](https://qiita.com/kai_kou/items/2bf2954c153ebd725a5b) (Qiita kai_kou、react@19.3.1 で throw 方式と `use(browser())` のコールバック件数を比較) ※2026-11-26 fetch
+  > "実測では、use(browser()) のときサーバーの onError は 0 件、hydration の onRecoverableError も 0 件でした。"
+  > (セクション "TL;DR")
 
 **バージョン**: React 19.3+ / react-dom
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-26
