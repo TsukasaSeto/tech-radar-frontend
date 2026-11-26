@@ -18,6 +18,7 @@ PR / main ブランチへの push 時に `audit` を実行し、`high` 以上の
 - `high` / `critical` レベルは即時対応が必要。`moderate` / `low` は別途トリアージ
 - CI でブロックすると「気づかないまま脆弱性のあるバージョンをリリース」を防げる
 - ただし audit は false positive も多い。`audit-ci` / `audit-resolver` で例外管理する
+- 更新しても消えない推移的依存の検出は、先に `pnpm why <pkg>` で経路を見て、親が依存を完全固定している（例: `next@15.5.28` の `"postcss": "8.4.31"`）のか、修正版が親の許す範囲外の別メジャーにしかないのかを切り分ける。対処は「同じメジャー内で更新 → 残りは親子指定（`"next>postcss"`）などスコープを絞った `overrides` → それでも無理なら親のメジャー更新」の順にし、`overrides` には外す条件を決めておく、という運用が報告されている（`overrides` の負債管理は `dx/dependency-management.md` #5）
 
 **CI 設定例**:
 ```yaml
@@ -134,10 +135,13 @@ git diff package-lock.json
 - [KEV 30%・EPSS 35%――脆弱性優先度付けスコアの重み設計と、その理由](https://zenn.dev/lumen/articles/vuln-priority-weights-kev-epss) (Zenn、KEV/EPSS を重み付けした優先度スコアの計算式) ※2026-08-18 fetch
 - [cve-lite-cliを利用してローカルで完結するフロントエンドの脆弱性管理](https://qiita.com/t_o_d/items/cd1dfcec670345495d2b) (Qiita、CI不要のローカル完結スキャン＋EPSS優先度付け＋コピペ修正コマンド) ※2026-09-19 fetch
 - [pnpm/setup](https://github.com/pnpm/setup) (pnpm 公式、`pnpm/setup@v3` は pnpm 11 以降向け、`install: false`) ※2026-10-25 確認
+- [アップデートで消えない推移的依存の脆弱性を、pnpm overrides で壊さずに潰す](https://zenn.dev/devoctane/articles/pnpm-audit-zero-transitive-overrides-nextjs) (Zenn devoctane、`pnpm why` で親の完全固定を特定し、更新 → スコープ付き overrides → メジャー更新の順で audit 0 件にした事例) ※2026-11-26 fetch
+  > "直す順番は「同じメジャーで更新 → 残りは overrides → それでも無理ならメジャー更新」"
+  > (セクション 冒頭)
 
 **バージョン**: npm 8+, pnpm 8+（CI 例は pnpm 11+ / Node.js 24）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-26
 
 ---
 

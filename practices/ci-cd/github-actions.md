@@ -160,6 +160,7 @@ jobs:
 - `cancel-in-progress: false` なら全 run が順に実行されると思い込む → 待機できるのは 1 件だけで、間の run はキャンセルされる
 - group キーが PR 単位でない → 別 PR が同じグループに入ってお互いキャンセル
 - production デプロイで cancel → 中途半端なデプロイ状態が残る
+- 連続 push のデバウンスを `cancel-in-progress: true` に任せる → キャンセルされた run の conclusion は `cancelled` で、コミット一覧のチェックアイコンでは失敗と同じ赤い ✕ に見えると報告されている。コミット一覧を健全性の指標に使うなら、待機後に `gh api repos/$GITHUB_REPOSITORY/commits/main --jq .sha` で自分のコミットが最新か確かめ、追い越されていたら exit 0 で終える形にする
 
 **判定の原則**:
 | シチュエーション | cancel-in-progress |
@@ -172,11 +173,14 @@ jobs:
 
 **出典**:
 - [GitHub: Workflow concurrency](https://docs.github.com/en/actions/using-jobs/using-concurrency) (GitHub Docs)
+- [Why GitHub shows a red X on commits whose deploys succeeded: cancel-in-progress](https://dev.to/mohamedgado/why-github-shows-a-red-x-on-commits-whose-deploys-succeeded-cancel-in-progress-9c2) (dev.to mohamedgado、cancel でデバウンスするとコミットに赤い ✕ が並ぶ事例と、キャンセルせず exit 0 で終える代替) ※2026-11-26 fetch
+  > "A GitHub Actions run cancelled by concurrency: cancel-in-progress: true puts a red X on its commit, the same mark a failed run gets."
+  > (セクション 冒頭)
 - [Control the concurrency of workflows and jobs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) (GitHub Docs、pending は既定で 1 件・`queue: max` は最大 100 件・`cancel-in-progress: true` と併用不可) ※2026-10-25 確認
 
 **バージョン**: GitHub Actions
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-26
 
 ---
 
@@ -1120,10 +1124,13 @@ jobs:
 - [なぜ GitHub Actions の無料枠対策は、テストを削る前に paths とトリガーを見直すのか](https://qiita.com/YujiNaramoto/items/331339edb8896b442a36) (Qiita、無料枠対策で workflow の `paths` を使うときの必須チェックとの衝突) ※2026-11-18 fetch
 - [Troubleshooting required status checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks) (GitHub Docs、失敗した job に依存する job はスキップされ merge を止めない場合があり、他の job に依存する必須チェックには `needs` と `always()` を使う) ※2026-11-22 確認
 - [Contexts reference — needs context](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts) (GitHub Docs、`needs.<job_id>.result` は `success` / `failure` / `cancelled` / `skipped`) ※2026-11-22 確認
+- [GitHub ActionsのCIスキップを実証。必須チェックで止まるPRと集約gateを比較した](https://qiita.com/Shiro_Shihi/items/06bd8c41baa2956dcd39) (Qiita Shiro_Shihi、workflow 単位の `paths` で必須チェックの check run が作られず `mergeable_state: blocked` になることと、`always()` + `needs.<job>.result` の集約 gate が失敗・キャンセルで fail closed になることを検証リポジトリで確認) ※2026-11-26 fetch
+  > "テストの失敗ではなく、pathsでworkflow自体が起動しなかったためです。"
+  > (セクション 冒頭)
 
 **バージョン**: GitHub Actions 全バージョン、dorny/paths-filter v4
 **確信度**: 中(コミュニティ記事、実績多数)
-**最終更新**: 2026-11-18
+**最終更新**: 2026-11-26
 
 ---
 

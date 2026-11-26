@@ -5707,3 +5707,55 @@ echo '{"hookSpecificOutput": {"hookEventName": "SessionStart", "reloadSkills": t
 **最終更新**: 2026-11-25
 
 ---
+
+### 69. 設定が効かないときは「どの層がそのキーを決めているか」を公式の優先順位で特定する — `/status` は読み込んだファイルしか示さず、キー単位の出どころは示さない
+
+Claude Code は同じキーが複数の層にあると、それを設定している最上位の層の値を使う。順位は managed settings → `--settings`（そのセッション限り）→ `.claude/settings.local.json` → `.claude/settings.json` → `~/.claude/settings.json`。ただし `permissions.allow` などのリストキーは 1 つを選ばずに合算され、環境変数や `--model` のような個別フラグはこの段に含まれない（キーごとに決まる）。
+`/status` の Setting sources 行で分かるのは「どのファイルを読んだか」までなので、値が無視されたら上位の層・環境変数・フラグ・そのファイルでは設定できない値・壊れたファイルの順に疑い、拒否されたエントリは `claude doctor` で確認する。
+
+**根拠**:
+- 公式 settings docs は、上位の層のキーが下位の同じキーを上書きし、managed のキーは自分の設定ファイルや `--settings` では上書きできないとしている。チームの `.claude/settings.json` が個人の `~/.claude/settings.json` を上書きするので、個人の値を戻すなら `.claude/settings.local.json` に書く
+- リストは合算されるので、上位のファイルで `allow` を書いても下位の `allow` は消えない。例外として `fallbackModel` は最上位ファイルの値がまるごと使われ、managed が `availableModels` を定義していると下位で足した項目は無視される（公式 docs）
+- 環境変数は層ではなくキーとの組ごとに優先が決まる: シェルで export した `ANTHROPIC_MODEL` はどのファイルの `model` よりも優先され、`--model` はそれらをそのセッションだけ上書きする（公式 docs）
+- 「そのファイルでは設定できない値」がある: `permissions.defaultMode` の `auto` / `bypassPermissions` は project / local の設定からは効かない（user か managed に書くか、`--permission-mode` を使う）。壊れた JSON のファイルは丸ごとスキップされ、不正なエントリだけのときはその値だけがスキップされる
+- `/status` はキーごとの供給元を示さないため、検証記事では公式の優先順位をスクリプトに写して層ごとの実効値と供給元を出し、Claude Code 2.1.331 の実機挙動と照合する方法が報告されている
+- 権限ルールそのものの評価順（deny → ask → allow）と書式ミスの検出は Rule #55・#61 を参照
+
+**コード例**:
+```bash
+# Good: 値が効かないときは、まず読み込まれた層を確認し、同じキーを持つファイルを洗い出す
+# 1. /status の Setting sources 行で、このセッションが読んだ設定ファイルを確認する（対話セッション内）
+# 2. 同じキーを設定している層を探す（上にあるものが勝つ。managed は OS ごとの配置場所も確認する）
+for f in .claude/settings.local.json .claude/settings.json ~/.claude/settings.json; do
+  [ -f "$f" ] && printf '%s: ' "$f" && jq -c '.model // empty' "$f"
+done
+# 3. 環境変数やフラグが同じ設定を上書きしていないか確認する
+env | grep -E '^ANTHROPIC_(DEFAULT_)?MODEL='
+# 4. 拒否・スキップされたエントリを確認する
+claude doctor
+
+# Bad: ~/.claude/settings.json の model を何度も書き換えて再起動を繰り返す
+# → プロジェクトの .claude/settings.json やシェルの ANTHROPIC_MODEL が同じ設定を決めていれば、何度書いても効かない
+```
+
+**アンチパターン**:
+- `/status` に自分の設定ファイルが表示されたことを、そのファイルの値が効いている証拠とみなす
+- 共有の `.claude/settings.json` に書かれた値を個人的に変えたくて、`~/.claude/settings.json` 側を編集する（project が user より上なので効かない）
+- `--settings` で渡した JSON がファイルに保存されると思い込む（そのセッション限りで、どのファイルにも書き込まない）
+
+**出典引用**:
+> "The line confirms which files Claude Code read; it doesn’t show which file supplied each key."
+> ([Settings files and precedence](https://code.claude.com/docs/en/settings), セクション "Confirm what loaded") ※2026-11-26に実際にfetch成功
+
+> "Claude Code uses the value from the highest level that sets it."
+> ([Claude Code の設定、どの層の値が効いている？ 5 層の優先順位をキー単位で突き止める監査スクリプトと検証ラボ（2026-11-26 検証）](https://qiita.com/akihidem/items/21c95624d729587c0f9b), セクション "優先順位の基本ルールと 5 つの層") ※2026-11-26に実際にfetch成功
+
+**出典**:
+- [Settings files and precedence](https://code.claude.com/docs/en/settings) (Claude Code 公式 docs、"Settings precedence"・"Lists merge instead of overriding"・"Troubleshoot a setting that doesn’t apply") ※2026-11-26 fetch
+- [Claude Code の設定、どの層の値が効いている？ 5 層の優先順位をキー単位で突き止める監査スクリプトと検証ラボ（2026-11-26 検証）](https://qiita.com/akihidem/items/21c95624d729587c0f9b) (Qiita akihidem、公式の優先順位を監査スクリプトに写し、Claude Code 2.1.331 の実機挙動と照合) ※2026-11-26 fetch
+
+**バージョン**: Claude Code v2.1.331 で検証（`modelPicker` は v2.1.242+、`bypassPermissions` を project / local から無効にする挙動は v2.1.257+）
+**確信度**: 高
+**最終更新**: 2026-11-26
+
+---
