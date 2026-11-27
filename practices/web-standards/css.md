@@ -503,6 +503,7 @@ form:has(input:user-invalid) .submit-button {
 - モーダル表示時の `overflow: hidden` 切り替えなど、スクロールバーの表示・非表示でページ幅が変化し CLS が発生する
 - `scrollbar-gutter: stable` はコンテンツが overflow しない場合でもスクロールバー分のスペースを確保し、幅の変動を防ぐ
 - CSS 1行で解決でき、JavaScript での `padding-right` 補正など回避策のハックが不要になる
+- 横スクロールが数 px 出る原因として、`100vw` がスクロールバーが無いものとして計算され、縦スクロールバーぶん（Chromium 実測で 15px）`100%` より広くなる点が報告されている。全幅要素は `100%` で指定し、`body { overflow-x: hidden }` で隠さず `scrollWidth === clientWidth` を複数の画面幅で確かめる。同じ記事は、ルートに `scrollbar-gutter: stable` を当てると Chromium で `100vw` が `clientWidth` と一致したと報告している（Firefox / Safari は未確認）
 - Chrome 94+、Firefox 97+、Safari 18.2+ でサポート済み（Baseline Newly available: 2024-12。Safari 18.2 未満では無視されるだけで害はない）
 
 **コード例**:
@@ -548,10 +549,12 @@ body.modal-open {
 **出典**:
 - [The Most Underrated CSS Property Nobody Talks About: scrollbar-gutter](https://medium.com/@konstantinkeylin/the-most-underrated-css-property-nobody-talks-about-scrollbar-gutter-2ca598352675) (Medium konstantinkeylin / 2026-05) ※2026-05-06に実際にfetch成功
 - [MDN: scrollbar-gutter](https://developer.mozilla.org/en-US/docs/Web/CSS/scrollbar-gutter) (MDN Web Docs、Baseline 2024 / Newly available と各ブラウザの対応版) ※2026-10-25 確認
+- [横スクロールが数px出るときの4つの原因。body に overflow-x: hidden を当てる前に測る](https://zenn.dev/seamlessly/articles/fix-horizontal-scroll-100vw) (Zenn、`100vw` がスクロールバー幅を含むことによる横はみ出しと、`scrollbar-gutter: stable` 適用時の Chromium 実測) ※2026-11-27 fetch
+  > "100vw は縦スクロールバーが無いものとして計算された幅を返します。"（セクション "原因1：100vw はスクロールバーの幅を含む"）
 
 **バージョン**: Chrome 94+, Firefox 97+, Safari 18.2+（Baseline Newly available: 2024-12）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-27
 
 ---
 
