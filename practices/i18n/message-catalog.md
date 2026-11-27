@@ -407,7 +407,12 @@ npx @lingual/i18n-check --locales messages -s en -f next-intl -u src
 # react-i18next: i18next-cli（i18next-parser は 2025-09 から deprecated で、後継は i18next-cli）
 # 未使用キーがあると非ゼロで終了するので CI のチェックにできる
 npx i18next-cli status --unused
+
+# 辞書の更新漏れを CI で検出する: --dry-run で書き込まず、--ci で更新が必要なら非ゼロ終了
+npx i18next-cli extract --ci --dry-run
 ```
+
+Babel プラグイン（`babel-plugin-i18next-extract`）での抽出は、使わない変換結果のためにトランスパイルが毎回走る。キー抽出は構文解析だけで足りるので、SWC で解析する `i18next-cli extract` に置き換える（1 社の事例では抽出全体が約 100 秒から約 19 秒に短縮したと報告されている）。
 
 **実装例（自前スクリプト）**:
 
@@ -469,10 +474,13 @@ function isValidLocale(tag: string): boolean {
 - [next-intl: TypeScript augmentation](https://next-intl.dev/docs/workflows/typescript) (next-intl 公式、`AppConfig` の `Locale` / `Messages` と JSON の default import) ※2026-10-25 確認
 - [i18next-cli](https://github.com/i18next/i18next-cli) (i18next 公式、`status --unused` が未使用キーで非ゼロ終了すること。npm の i18next-parser は "Project is deprecated, use i18next-cli instead") ※2026-10-25 確認
 - [@lingual/i18n-check](https://github.com/lingualdev/i18n-check) (README、`-u` / `-f next-intl` による未使用キー検出) ※2026-10-25 確認
+- [i18next-cli `src/cli.ts`](https://github.com/i18next/i18next-cli/blob/main/src/cli.ts) (i18next 公式、`extract` の `--ci`: "Exit with a non-zero status code if any files are updated."・`--dry-run`: "Run the extractor without writing any files to disk.") ※2026-11-27 fetch
+- [SWCベースのi18next-cliへ移行して、翻訳キーの抽出時間を約5分の1に高速化した話](https://zenn.dev/aldagram_tech/articles/5b09a02dd4c383) (Zenn アルダグラム、Babel 抽出から i18next-cli 1.68.0 への移行と `extract --ci --dry-run` による CI の辞書差分チェック) ※2026-11-27 fetch
+  > "--dry-runによってファイルへの書き込みは行わず、辞書に更新が必要な場合は--ciによって非ゼロの終了コードを返します。"（セクション "CLIで辞書の差分をチェックする"）
 
 **バージョン**: TypeScript 5+, next-intl 4+（`AppConfig`。3 系は `IntlMessages`）
 **確信度**: 高
-**最終更新**: 2026-10-25
+**最終更新**: 2026-11-27
 
 ---
 

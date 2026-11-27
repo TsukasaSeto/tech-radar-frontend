@@ -3651,6 +3651,7 @@ Claude Code の hook（`SessionStart` 等）が標準出力の JSON で返す `h
 - 公式 hooks リファレンスによると、`additionalContext` / `systemMessage` / `initialUserMessage` の文字列と hook の素の stdout はそれぞれ 10,000 文字が上限で、超過分は切り詰めではなくファイル退避 + 先頭 2,000 文字のプレビューに置き換わる。Bash 出力の上限と違い、引き上げる設定は無い。予算（`budget`）は 10,000 文字未満で設計する
 - 1 記事は、索引と各ファイルの全文を連結して返していた `SessionStart` hook が約 31 万字（上限の約 30 倍）に達しており、会話の冒頭に内容がほぼ入っていなかったと報告している。全文をやめ「1 項目 1 行の要約 + 古い順に落として省略件数を明記」に変えて上限内に収め、`claude -p` の新しい会話に冒頭の見出しが見えるかを聞いて注入を確認している（文字数は UTF-16 単位で数えたと記事が前提を明記。公式は単位を書いていない）
 - 省略が発生したことを明示しないと、後続のセッションが「見えているはずの情報が実は削られていた」ことに気づけない
+- 上限超過時に退避ファイルを読みに行くかはセッション次第で、公式も読めとは指示しない。1 記事は、上限を超えた状態の注入を受けた 16 セッションのうち 8 つが全文を読みに行かず、うち 4 つは先頭だけで作業を始めていたと報告している。`~/.claude/projects/` の transcript（`.jsonl`）で `SessionStart` の中身が `<persisted-output>` で始まっていないかを確認し、hook 側でも出力が 9,000 字を超えたら先頭に警告を出す（`wc -m` は `LC_ALL` 未設定だと日本語をバイト数で数えるので UTF-8 ロケールを指定する）
 
 **コード例**:
 ```python
@@ -3713,10 +3714,12 @@ def build_context(blocks: list[tuple[int, str]], budget: int) -> tuple[str, int]
 - [additionalContext には上限がある ── あふれたとき何を捨てるかを先に決める](https://zenn.dev/radaru/articles/claude-code-additional-context-budget) (Zenn、`SessionStart` hook の `additionalContext` 実装と優先度ベース truncate の実測) ※2026-08-02に実際にfetch成功
 - [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、hook 出力の 10,000 文字上限・超過時のファイル退避と 2,000 文字プレビュー・引き上げ設定なし) ※2026-11-12 fetch
 - [Claude Code の SessionStart hook で渡していた 31 万字は、会話にほぼ入っていなかった（上限は 1 万字）](https://zenn.dev/shogaku/articles/claude-code-hook-10k-cap) (Zenn、上限超過に気づかず全文注入していた事例と、1 行要約化・`claude -p` での注入確認) ※2026-11-12 fetch
+- [Claude Code のフックで「前回の続き」を差し込んでたら、1 万字を超えて頭だけになってた（設定とスクリプトつき）](https://zenn.dev/azarashi_ora/articles/ora-claude-code-hook-cap) (Zenn、上限超過時に半数のセッションが退避ファイルを読まなかった観測、transcript の `<persisted-output>` による検出と 9,000 字警告の実装) ※2026-11-27 fetch
+  > "残りの 8 部屋は、全文を読みに行かなかった。"（セクション "落とし穴：フックが出す文は、1 万字まで"）
 
 **バージョン**: Claude Code（`hookSpecificOutput.additionalContext` を持つ hook 全般）
 **確信度**: 高（上限値と超過時の挙動は公式 hooks リファレンスで確認。優先度付き truncate の実装は記事の実践）
-**最終更新**: 2026-11-12
+**最終更新**: 2026-11-27
 
 ---
 
@@ -5757,5 +5760,118 @@ claude doctor
 **バージョン**: Claude Code v2.1.331 で検証（`modelPicker` は v2.1.242+、`bypassPermissions` を project / local から無効にする挙動は v2.1.257+）
 **確信度**: 高
 **最終更新**: 2026-11-26
+
+---
+
+### 70. スキルの注入シェルコマンド（`` !`cmd` ``）は PreToolUse を通らない — ブロック用スクリプトは `PreSkillShellCommand`（v2.1.332+）にも登録し、設定ファイル側に置く
+
+スキルやコマンド（`/security-review` 等）の読み込み時に `` !`<command>` `` や ` ```! ` ブロックで実行される注入シェルコマンドは、ツール呼び出しではないため `PreToolUse` フックが発火しない。`PreToolUse` で危険コマンドを止めているつもりでも、スキル経由の実行は素通しになる。同じスクリプトを `PreSkillShellCommand` イベント（matcher `Bash|PowerShell`、`onFailure: "block"`）にも登録し、スキル自身の frontmatter ではなく settings ファイル（managed / project 等）かプラグインに定義する。
+
+**根拠**:
+- 公式 hooks リファレンスは、`PreToolUse` が注入コマンドで発火しないこと、ログ・ブロックしたい場合は既存スクリプトをこのイベントにも追加するよう明記している
+- v2.1.331 以前は `PreSkillShellCommand` を呼ばずに注入コマンドを実行する（設定に書くと `Unknown hook event` の警告が出るだけ）。先に Claude Code を更新し、必要なら `requiredMinimumVersion` で最低バージョンを強制する
+- スキルの注入コマンドは、セッション内で初回に読み込むときとサブエージェント内で読み込むときに、そのスキル自身の frontmatter のフックなしで実行される。止める用途のフックをスキル frontmatter に置くと効かない場面がある
+- auto mode では承認が必要なコマンドは読み込み時に実行されず、後で Claude がツール呼び出しとして実行し直すことがある。その場合は `PreToolUse` 側が発火するため、両方のイベントに同じスクリプトを残す
+- このイベントのフックはブロックしかできない（`ask` / `defer` / `updatedInput` は `deny` と同じ扱いでブロックされる）。`prompt` / `agent` 型フックは実行できず、マッチしたコマンドをすべてブロックしてしまうので、`command` / `http` / `mcp_tool` 型を使う
+- 1 記事も、公式 hooks ドキュメントを読み直した結果として「スキルが注入するシェルコマンドには PreToolUse が発火しない」点をイベント固有の注意点に挙げている
+
+**コード例**:
+```jsonc
+// Good: 同じブロック用スクリプトを PreToolUse と PreSkillShellCommand の両方に登録する（.claude/settings.json）
+// スクリプト側は JSON 応答の hookEventName を "PreToolUse" のままにすれば両イベントで共用できる
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh", "args": [], "onFailure": "block" }
+        ]
+      }
+    ],
+    "PreSkillShellCommand": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh", "args": [], "onFailure": "block" }
+        ]
+      }
+    ]
+  }
+}
+
+// Bad: PreToolUse だけに登録する — スキル読み込み時の !`rm -rf ...` は止まらない
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh", "args": [] }] }
+    ]
+  }
+}
+```
+
+**アンチパターン**:
+- 「Bash の危険コマンドは PreToolUse で全部止めている」と考え、スキル・プラグイン由来の注入コマンドを監査対象から外す
+- v2.1.331 以前の Claude Code が混在するチームで `PreSkillShellCommand` を配布し、効いたものとみなす
+- ブロック用フックを `async` にする（async フックはブロックできない）
+
+**出典引用**:
+> "hooks don't fire for injected commands. To log or block them with a script you already run on PreToolUse, add the script to this event too."
+> ([Hooks reference](https://code.claude.com/docs/en/hooks), セクション "PreSkillShellCommand") ※2026-11-27に実際にfetch成功
+
+> "スキルが注入するシェルコマンドには PreToolUse が発火しません"
+> ([Claude Code フックの三層設定を設計する: イベント・マッチャー・ハンドラーの仕様と「失敗すると素通し」になる落とし穴（2026-11-27 検証）](https://qiita.com/akihidem/items/f613d4616b9ecb1ae73a), セクション "イベント固有の注意点") ※2026-11-27に実際にfetch成功
+
+**出典**:
+- [Hooks reference](https://code.claude.com/docs/en/hooks) (Claude Code 公式 docs、"PreSkillShellCommand"・"Commands that reach a PreSkillShellCommand hook"・"PreSkillShellCommand decision control") ※2026-11-27 fetch
+- [Claude Code フックの三層設定を設計する: イベント・マッチャー・ハンドラーの仕様と「失敗すると素通し」になる落とし穴（2026-11-27 検証）](https://qiita.com/akihidem/items/f613d4616b9ecb1ae73a) (Qiita akihidem、公式 hooks ドキュメントのイベント固有の注意点の整理) ※2026-11-27 fetch
+
+**バージョン**: Claude Code v2.1.332+（デスクトップアプリ・VS Code 拡張を含む）
+**確信度**: 高
+**最終更新**: 2026-11-27
+
+---
+
+### 71. 信頼していないリポジトリでは `git status` / `git diff` / `git log` も「読み取り専用」として自動承認しない — Git はサンドボックス内で動かし、`.git/` やネストした bare リポジトリへの書き込みは承認制にする
+
+Git はリポジトリ自身の設定を読み、`core.fsmonitor`・`diff.external`・`diff.<driver>.textconv`・filter driver（`clean` / `smudge` / `process`）・`log.showSignature` + `gpg.program` などで、リポジトリが指定したプログラムを実行する。エージェントが書き込めるワークスペースや外部から取得したリポジトリでは、エージェントやエディタが自動で走らせる `git status` だけで任意コマンドが実行されうる。Git はエージェントのサンドボックス内で実行し、Git コマンドを読み取り専用扱いで自動承認せず、エージェントのファイルツールによる `.git/`・`.git` ファイル・`HEAD` / `config` / `hooks/` / `objects/` / `refs/` への書き込みは承認を必須にする。
+
+**根拠**:
+- OWASP AI Agent Security Cheat Sheet は、承認プロンプトやエディタの信頼モードは統合がその外で Git を実行すると効かず、ホスト側で Git が動けばプログラムもサンドボックスの外で動くと述べ、GitHub Copilot CLI（ネストした bare リポジトリの `core.fsmonitor`、CVE-2026-45033）・Zed（未信頼モードでの `core.fsmonitor`、CVE-2026-44465）・Docker Sandboxes（サンドボックス内で書いた Git 設定がホストで実行、CVE-2026-121614）の事例を挙げている
+- bare リポジトリはメタデータ（`HEAD`・`objects/`・`refs/`・`config`）を `.git/` 配下ではなく直下に置くため、`.git/` だけを保護するルールはワークスペース内にネストした bare リポジトリを見逃す。パスは symlink・大文字小文字・Windows の短縮名を解決した後の実体で判定する
+- `-c` オプションでリポジトリ設定を上書きする多層防御は有効だが、filter driver・hooks・指定していない他のオプションは有効なまま残るため、サンドボックスの代わりにはならない
+- 本ファイル #46 の `Bash(git diff:*)` のような前置マッチの allow は、自分たちが管理する信頼済みリポジトリに限って使う
+
+**コード例**:
+```bash
+# Good: Git はサンドボックス内で実行し、多層防御としてリポジトリ設定を -c で上書きする
+GIT_SAFE=(--no-pager --no-optional-locks -c core.fsmonitor=false -c safe.bareRepository=explicit -c log.showSignature=false)
+git "${GIT_SAFE[@]}" status
+git "${GIT_SAFE[@]}" diff --no-ext-diff --no-textconv
+# ※ filter driver・hooks は止まらない。これだけで安全とはみなさない
+
+# Bad: 外部から取得したリポジトリで Git を「読み取り専用」とみなして自動承認する
+# .claude/settings.json
+# { "permissions": { "allow": ["Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)"] } }
+```
+
+**アンチパターン**:
+- `.git/` ディレクトリへの書き込みだけを deny し、ワークスペース内の任意ディレクトリにある `config` / `HEAD` / `objects/` を見ない
+- エディタの「未信頼モード」やエージェントの承認ダイアログがあるから、ホスト側で自動実行される `git status` も安全だと考える
+- `-c core.fsmonitor=false` などを付けたことを理由にサンドボックスを外す
+
+**出典引用**:
+> "Do not auto-approve any Git command, including `git status`, `git diff`, `git log`, and `git show`, as read-only in such workspaces."
+> ([AI Agent Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html), セクション "Running Git in Repository-Controlled Workspaces") ※2026-11-27に実際にfetch成功
+
+> "Protecting only `.git/` is not enough."
+> ([AI Agent Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html), セクション "Running Git in Repository-Controlled Workspaces") ※2026-11-27に実際にfetch成功
+
+**出典**:
+- [AI Agent Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html) (OWASP Cheat Sheet Series、"Running Git in Repository-Controlled Workspaces" 節。[追加コミット](https://github.com/OWASP/CheatSheetSeries/commit/4395341e58fd8136c4155b874a0907b874ea9129) を RSS で検知し、本文は raw.githubusercontent.com の `cheatsheets/AI_Agent_Security_Cheat_Sheet.md` から取得) ※2026-11-27 fetch
+
+**バージョン**: Git 全般、コーディングエージェント全般（Claude Code / Codex CLI / Copilot CLI 等）
+**確信度**: 高
+**最終更新**: 2026-11-27
 
 ---
